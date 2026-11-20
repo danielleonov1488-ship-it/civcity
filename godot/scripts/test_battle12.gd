@@ -3,7 +3,7 @@ extends Node
 
 const View = preload("res://scripts/legion_battle_view.gd")
 const EnemyTest = preload("res://scripts/test_enemy3d.gd")
-const OUT := "D:/CivCity/.work/stage7/battle12b/shots/"
+const OUT := "D:/CivCity/.work/stage7/battle12c/shots/"
 const HD := Vector2i(1920, 1080)
 const SMALL := Vector2i(1280, 720)
 const SEED := 532
@@ -29,15 +29,28 @@ var multi := 0
 var two_on_one: Array[float] = []
 var three_on_one: Array[float] = []
 var heights := PackedFloat32Array()
+var ally_boxes: Array[float] = []
+var big_boxes: Array[float] = []
+var flank_samples := [0, 0]
+var flank_clear := [0, 0]
+var battle_flanks := [0, 0]
+var battle_groups := [0, 0]
+var numbers_peak := 0
+var numbers_per_target := 0
+var numbers_overlap := 0.0
 var forest_before: Image
 var forest_after: Image
 var multi_shot := false
+var busy_shot := false
+var compare_sample := 0
 
 
 func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			output = arg.trim_prefix("out=").trim_suffix("/") + "/"
+		elif arg.begins_with("compare="):
+			compare_sample = int(arg.trim_prefix("compare="))
 	get_window().content_scale_size = Vector2i.ZERO
 	get_window().size = HD
 	Game.boot = {"new": "1", "hour": "11"}
@@ -122,19 +135,25 @@ func _run() -> void:
 		_put(compared, forest_after, Vector2i(HD.x, 0))
 		_save("7_before_after.png", compared)
 	await _play("gaul", _campaign("gaul", ["gaul", "gaul", "gaulArcher"], ["vercingetorix", "druid"]), SMALL, 2.0, "", 1)
-	await _play("carthage", _campaign("carthage", ["mercenary", "slinger"], ["elephant", "mercenary"]), HD, 1.0, "3_battle_carthage.png", 1)
+	await _play("carthage", _campaign("carthage", ["mercenary", "slinger"], ["elephant", "mercenary"]), HD, 1.0, "4_carthage_elephant.png", 1)
 	await _play("britannia", _campaign("britannia", ["briton", "druid"], ["chariot", "charioteer", "briton"]), SMALL, 3.0, "4_battle_chariots.png", 1)
 	await _play("parthia", _campaign("parthia", ["horseArcher", "numidian", "cataphractFoe"],
 		["cataphract", "horseArcher"]), HD, 3.0, "5_battle_ranged.png", 0)
 	var pvp := await _play("pvp", _pvp(), SMALL, 2.0, "6_pvp.png", 0)
 	check(not pvp.is_empty(), "PvP replay finished")
 	check(multi_shot, "three attackers shot")
+	check(busy_shot, "busy damage numbers shot")
+	for i in 2:
+		print("BATTLE12 FLANKS %d-on-1 separated=%d/%d" % [i + 2, flank_clear[i], flank_samples[i]])
+		check(flank_samples[i] > 0 and flank_clear[i] * 100 >= flank_samples[i] * 95,
+			"%d-on-1 far side or diagonal in at least 95%% of contact samples" % (i + 2))
 	_check_boxes()
 	await _fort()
 	await _benchmark()
 	var contacts := EnemyTest.new()
 	contacts.run_suite = false
 	add_child(contacts)
+	get_window().size = HD
 	await contacts.battle12_contacts(game, output)
 	check(contacts.fails == 0, "Britannia and Africa contact regressions")
 	print("BATTLE12 CONTACTS fails=", contacts.fails)
@@ -179,6 +198,13 @@ func _play(name_: String, setup: Dictionary, resolution: Vector2i, speed: float,
 	rear_min = INF
 	multi = 0
 	heights.clear()
+	ally_boxes.clear()
+	big_boxes.clear()
+	battle_flanks = [0, 0]
+	battle_groups = [0, 0]
+	numbers_peak = 0
+	numbers_per_target = 0
+	numbers_overlap = 0.0
 	get_window().size = resolution
 	battle = LegionBattle.open(game, setup.duplicate(true), Callable(),
 		{"legion": game.city.legion, "speed": speed, "auto": false, "legacy_layout": before})
@@ -191,26 +217,33 @@ func _play(name_: String, setup: Dictionary, resolution: Vector2i, speed: float,
 	var shown := false
 	var samples := 0
 	var view := battle.battle_view
+	if name_ == "gaul":
+		_number_fixture(view._fighters[0])
 	while battle.sim.result.is_empty() and samples < 1801:
 		# Одинаковые шаги симуляции даже при медленном видеодрайвере.
 		for step in 6:
 			battle._process(0.1 / (6.0 * speed))
 		samples += 1
 		var meeting := _measure(view)
+		if not before:
+			_measure_numbers()
+		if name_ == "gaul" and compare_sample == samples:
+			_save("gaul_after.png", await _capture())
 		if meeting != null and not multi_shot and not before and name_ != "forest":
-			await _save_meeting(view, meeting)
+			await _save_meeting(view, meeting, samples)
+		if not before and not busy_shot and battle.sim.wave_idx >= 1 and battle.bars.floats.size() >= 8:
+			_save("3_numbers.png", await _capture())
+			busy_shot = true
 		var forest_sample := (name_ == "forest" or before) and samples == 60
 		if forest_sample:
 			if before:
 				forest_before = await _capture()
 			else:
 				forest_after = await _capture()
-		if not shown and file != "" and battle.sim.wave_idx >= wave and (meeting != null or
-				(samples >= 28 and _wave_in_contact(view, wave))):
+		if not shown and file != "" and battle.sim.wave_idx >= wave and _shot_ready(view, wave):
 			_save(file, await _capture())
 			shown = true
-		if samples % 20 == 0:
-			await get_tree().process_frame
+		await get_tree().process_frame
 	check(not battle.sim.result.is_empty(), "full battle " + label)
 	if file != "":
 		check(shown, "battle screenshot " + file)
@@ -221,6 +254,19 @@ func _play(name_: String, setup: Dictionary, resolution: Vector2i, speed: float,
 		[label, resolution.x, resolution.y, speed, samples, median * 100, overlap_pct, overlaps, pairs, low, strikes, requests,
 		air, event_air, multi, rear_min, rear_misses, rear_samples, bounds_misses])
 	if not before:
+		var allies := _p95(ally_boxes)
+		var big := _p95(big_boxes)
+		print("BATTLE12 SEPARATION %s allies_p95=%.3f (%d) big_p95=%.3f (%d)" %
+			[label, allies, ally_boxes.size(), big, big_boxes.size()])
+		print("BATTLE12 NUMBERS %s max_overlap=%.3f per_target=%d total=%d" %
+			[label, numbers_overlap, numbers_per_target, numbers_peak])
+		print("BATTLE12 GROUPS %s 2=%d/%d 3=%d/%d" %
+			[label, battle_flanks[0], battle_groups[0], battle_flanks[1], battle_groups[1]])
+		check(not ally_boxes.is_empty() and allies <= 0.25, label + " ally screen boxes p95 <= 0.25")
+		check(big <= 0.20, label + " long body screen boxes p95 <= 0.20")
+		if name_ in ["carthage", "britannia", "parthia"]:
+			check(not big_boxes.is_empty(), label + " long model samples")
+		check(numbers_overlap <= 0.20 and numbers_per_target <= 3 and numbers_peak > 0, label + " readable damage numbers")
 		check(median >= 0.15 and median <= 0.21, label + " figure height")
 		check(overlap_pct <= 1.0 and low == 0, label + " overlap")
 		check(strikes > 0 and air == 0, label + " melee contact")
@@ -232,11 +278,56 @@ func _play(name_: String, setup: Dictionary, resolution: Vector2i, speed: float,
 	return result
 
 
-func _wave_in_contact(view: View, wave: int) -> bool:
+func _shot_ready(view: View, wave: int) -> bool:
 	for f: View.Fighter in view._fighters:
 		if f.unit.alive and f.unit.wave == wave and not f.unit.entering:
-			return true
+			if label not in ["britannia", "carthage"]:
+				return true
+			if f.unit.key == ("charioteer" if label == "britannia" else "elephant"):
+				for ally: View.Fighter in view._fighters:
+					if ally.unit.side == "ally" and _engaged(ally, f) and ally.attack_left > 0.0:
+						return true
 	return false
+
+
+func _number_fixture(target: View.Fighter) -> void:
+	var bars := battle.bars
+	bars.float_value(target, 25, "hurt", 0.0)
+	bars.float_value(target, 37, "crit", 0.15)
+	bars.float_value(target, 18, "heal", 0.15)
+	check(bars.floats.size() == 2 and bars.floats[0].caption == "62!"
+		and bars.floats[1].caption == "+18", "merge hits within 0.15s, preserve crit and heal")
+	bars.float_value(target, 40, "hurt", 0.151)
+	check(bars.floats.size() == 3 and bars.floats[2].caption == "40", "hit outside the merge window")
+	bars.float_value(target, 12, "hurt", 0.50)
+	bars.age_floats(0.2)
+	check(bars.floats.size() == 3 and bars.floats[0].caption == "+18"
+		and bars.floats[0].age > bars.floats[2].age, "cap at three and fade earlier numbers faster")
+	bars.floats.clear()
+
+
+func _measure_numbers() -> void:
+	battle.bars.layout_floats()
+	var counts := {}
+	var boxes := battle.bars.floats
+	numbers_peak = maxi(numbers_peak, boxes.size())
+	for i in boxes.size():
+		var current := boxes[i]
+		counts[current.id] = int(counts.get(current.id, 0)) + 1
+		numbers_per_target = maxi(numbers_per_target, int(counts[current.id]))
+		for j in i:
+			numbers_overlap = maxf(numbers_overlap, _overlap(current.box, boxes[j].box))
+
+
+func _overlap(a: Rect2, b: Rect2) -> float:
+	return a.intersection(b).get_area() / maxf(1.0, minf(a.get_area(), b.get_area()))
+
+
+func _p95(readings: Array[float]) -> float:
+	if readings.is_empty():
+		return 0.0
+	readings.sort()
+	return readings[ceili(readings.size() * 0.95) - 1]
 
 
 func _screen_box(view: View, f: View.Fighter) -> Rect2:
@@ -252,7 +343,7 @@ func _engaged(attacker: View.Fighter, target: View.Fighter) -> bool:
 		and attacker.slot < 4 and attacker.can_strike(target)
 
 
-func _save_meeting(view: View, target: View.Fighter) -> void:
+func _save_meeting(view: View, target: View.Fighter, sample: int) -> void:
 	var box := _screen_box(view, target)
 	var count := 0
 	for f: View.Fighter in view._fighters:
@@ -270,7 +361,8 @@ func _save_meeting(view: View, target: View.Fighter) -> void:
 	canvas.fill(Color("221913"))
 	_put(canvas, whole, Vector2i(0, (canvas.get_height() - whole.get_height()) / 2))
 	_put(canvas, close_up, Vector2i(whole.get_width(), (canvas.get_height() - close_up.get_height()) / 2))
-	_save("1_two_on_one.png", canvas)
+	_save("1_three_on_one.png", canvas)
+	print("BATTLE12 THREE ", label, " sample=", sample, " t=", battle.sim.t, " target=", target.unit.key)
 	multi_shot = true
 
 
@@ -279,8 +371,7 @@ func _check_boxes() -> void:
 		var readings := two_on_one if attackers == 2 else three_on_one
 		if not check(not readings.is_empty(), "%d-on-1 box samples" % attackers):
 			continue
-		readings.sort()
-		var p95 := readings[ceili(readings.size() * 0.95) - 1]
+		var p95 := _p95(readings)
 		print("BATTLE12 BOXES %d-on-1 p95=%.3f samples=%d" % [attackers, p95, readings.size()])
 		check(p95 <= 0.35, "%d-on-1 box overlap p95 <= 0.35" % attackers)
 
@@ -288,10 +379,13 @@ func _check_boxes() -> void:
 func _measure(view: View) -> View.Fighter:
 	var living: Array[View.Fighter] = []
 	var boxes: Array[Rect2] = []
+	var projected: Array[Rect2] = []
 	for f: View.Fighter in view._fighters:
 		if f.unit.alive:
 			living.append(f)
 			boxes.append(_screen_box(view, f))
+			if not legacy:
+				projected.append(f.screen_box())
 	var meeting: View.Fighter
 	var meeting_size := 0
 	for i in living.size():
@@ -305,6 +399,7 @@ func _measure(view: View) -> View.Fighter:
 		var rear := INF
 		var box := boxes[i]
 		var ratios: Array[float] = []
+		var attackers: Array[View.Fighter] = []
 		var swinging := 0
 		for j in living.size():
 			if i == j:
@@ -317,12 +412,17 @@ func _measure(view: View) -> View.Fighter:
 				pairs += 1
 				overlaps += int(distance < width * 0.5)
 				low += int(distance < width * 0.3)
+				if not legacy:
+					var same_side := f.unit.side == other.unit.side
+					if same_side and f.unit.side == "ally":
+						ally_boxes.append(_overlap(projected[i], projected[j]))
+					if not same_side and (not f.long_model.is_empty() or not other.long_model.is_empty()):
+						big_boxes.append(_overlap(projected[i], projected[j]))
 			if f.rear and not other.rear and f.unit.side == other.unit.side:
 				rear = minf(rear, (foot.x - other_foot.x) * f.side_dir / (f.beam * view.world.scale.x))
 			if _engaged(other, f):
-				var other_box := boxes[j]
-				var common := box.intersection(other_box).get_area()
-				ratios.append(common / minf(box.get_area(), other_box.get_area()))
+				attackers.append(other)
+				ratios.append(_overlap(box, boxes[j]) if legacy else _overlap(projected[i], projected[j]))
 				if other.attack_left > 0.0 and other.sample >= 0.08:
 					swinging += 1
 		if rear < INF:
@@ -335,10 +435,38 @@ func _measure(view: View) -> View.Fighter:
 				two_on_one.append_array(ratios)
 			else:
 				three_on_one.append_array(ratios)
+			if not legacy and attackers.size() <= 3:
+				var index := attackers.size() - 2
+				flank_samples[index] += 1
+				var clear := _has_flank(f, attackers)
+				flank_clear[index] += int(clear)
+				battle_groups[index] += 1
+				battle_flanks[index] += int(clear)
 			if swinging > 0 and ratios.max() <= 0.35 and ratios.size() > meeting_size:
 				meeting = f
 				meeting_size = ratios.size()
 	return meeting
+
+
+func _has_flank(target: View.Fighter, attackers: Array[View.Fighter]) -> bool:
+	var primary: View.Fighter
+	for f in attackers:
+		if f.slot == 1:
+			primary = f
+			break
+	if primary == null:
+		primary = attackers[0]
+	var front := primary.visible_foot() - target.visible_foot()
+	for f in attackers:
+		if f == primary:
+			continue
+		var d := f.visible_foot() - target.visible_foot()
+		if front.x * d.x < 0.0 and absf(d.x) >= target.body_width() * 0.30:
+			return true
+		var diagonal := absf(front.y - d.y) >= 25.0 and absf(d.y) >= 23.0
+		if diagonal and _overlap(primary.screen_box(), f.screen_box()) <= 0.25:
+			return true
+	return false
 
 
 func _fort() -> void:

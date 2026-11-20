@@ -17,6 +17,7 @@ var squad: Array[Dictionary]
 var deaths: Dictionary = {}
 var releases: Dictionary = {}
 var run_suite := true
+var report_full_contact := false
 
 
 func _ready() -> void:
@@ -53,6 +54,7 @@ func _ready() -> void:
 func battle12_contacts(test_game: Game, shots: String) -> void:
 	game = test_game
 	out = shots
+	report_full_contact = true
 	var saved_v2 := Legion.V2
 	var forced_v2 := Legion.v2_test
 	Legion.V2 = true
@@ -578,7 +580,10 @@ func _depth_order(view: View, label: String, require_rear := false) -> void:
 			if not require_rear:
 				var other := broad[j]
 				var feet_gap := wide.body_ground().distance_to(other.body_ground())
-				check(feet_gap >= minf(wide.body_width(), other.body_width()) * 0.48, "separate wide actors " + label)
+				var required_gap := minf(wide.body_width(), other.body_width()) * 0.48
+				if not check(feet_gap >= required_gap, "separate wide actors " + label):
+					print("ENEMY3D WIDE %s/%s gap=%.1f required=%.1f at %s/%s" %
+						[wide.unit.key, other.unit.key, feet_gap, required_gap, wide.position, other.position])
 		for f: View.Fighter in small:
 			var dy := f.visible_foot().y - wide_feet
 			if not wide_box.intersects(boxes[f.unit.id][0]) or is_zero_approx(dy):
@@ -682,6 +687,8 @@ func _contact_shot(key: String, file: String) -> void:
 	var gap := _front_gap(f, ally) * battle.battle_view.world.scale.x
 	print("ENEMY3D CONTACT ", key, " signed gap=", snappedf(gap, 0.1), " screen px")
 	await shot(file, _fight_crop(f, ally))
+	if report_full_contact and key == "charioteer":
+		await shot("2_chariots.png")
 	battle.paused = false
 
 func _fps() -> void:

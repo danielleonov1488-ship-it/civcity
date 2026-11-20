@@ -61,7 +61,10 @@ var _trail_y := 0.72
 var _trail_depth := 51.0
 var _field_bounds := Rect2()
 var _fighters: Array[Fighter] = []
+var _wide_fighters: Array[Fighter] = []
 var _layout_step := -1
+var _layout_time := 0.0
+var _layout_sim_time := 0.0
 # Старый кадр для сравнения и замера скорости.
 var legacy_layout := false
 var _zoom := 1.0
@@ -115,11 +118,7 @@ func set_zoom(value: float) -> void:
 		var ratio := clampf(_zoom, 0.94, 1.07) / clampf(value, 0.94, 1.07)
 		for f in _fighters:
 			f.scale *= ratio
-			f.body_half *= ratio
-			f.muzzle *= ratio
-			f.rump *= ratio
-			f.beam *= ratio
-			f.strike_distance *= ratio
+			f.measure_body()
 	_layout_step = -1
 	_zoom = value
 	_fit()
@@ -324,11 +323,11 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 	f.view = self
 	if not legacy_layout:
 		f.scale *= FIGURE_SCALE / clampf(_zoom, 0.94, 1.07)
+	f.face(u.side == "enemy" and (not u.entering or u.enter_dir < 0.0))
 	f.measure_body()
 	f.position = f.layout_point(u.x, u.z)
 	if not legacy_layout:
 		f.position = _fit_foot(f, f.position)
-	f.face(u.side == "enemy" and (not u.entering or u.enter_dir < 0.0))
 	_place_actor(f)
 	views[u.id] = f
 	_fighters.append(f)
@@ -444,142 +443,255 @@ func request_strike(source: Fighter, target: Fighter, action := "") -> void:
 
 
 func _fit_foot(f: Fighter, pos: Vector2) -> Vector2:
-	var margin := maxf(f.body_half, f.muzzle) + 23.0
-	var left := maxf(_field_bounds.position.x + margin, -f.front_limit) if f.side_dir < 0.0 else _field_bounds.position.x + margin
-	var right := minf(_field_bounds.end.x - margin, f.front_limit) if f.side_dir > 0.0 else _field_bounds.end.x - margin
+	var left := _field_bounds.position.x - f.outline.position.x + 12.0
+	var right := _field_bounds.end.x - f.outline.end.x - 12.0
+	var rear_edge := REAR_X - (210.0 if f.wide else 78.0)
+	if f.side_dir < 0.0:
+		left = maxf(left, -f.front_limit)
+		if f.rear:
+			right = clampf(-rear_edge, left, right)
+	else:
+		right = minf(right, f.front_limit)
+		if f.rear:
+			left = clampf(rear_edge, left, right)
 	return Vector2(clampf(pos.x, left, right), clampf(pos.y, -_trail_depth, _trail_depth))
 
 
 func _plan_layout() -> void:
-	# За краями полосы 3D-слой пуст.
 	var ally_rear := INF
 	var enemy_rear := INF
 	for f in _fighters:
+		f.approachers.clear()
+		f.primary_attacker = null
+		f.contact_front = null
+		f.visit = 0
+		f.contact_blend = 0.0
 		if not f.unit.alive or not f.rear:
 			continue
 		var u := f.unit
 		f.goal = _fit_foot(f, f.layout_point(u.x, u.z))
-		var alongside := minf(f.goal.x * f.side_dir, f.position.x * f.side_dir)
-		var gate := alongside - f.rear_spacing()
+		var gate := minf(f.goal.x * f.side_dir, f.position.x * f.side_dir) - f.rear_spacing()
 		if f.side_dir < 0.0:
 			ally_rear = minf(ally_rear, gate)
 		else:
 			enemy_rear = minf(enemy_rear, gate)
 	for f in _fighters:
-		f.front = null
-		f.upper = null
-		f.lower = null
+		var previous := f.layout_target
 		f.layout_target = null
-		f.contact_front = null
-		f.slot = 0
-		f.visit = 0
-		f.contact_blend = 0.0
-		if not f.unit.alive:
-			f.goal = f.position
-			continue
-		if not f.rear:
-			f.front_limit = ally_rear if f.side_dir < 0.0 else enemy_rear
-			f.goal = _fit_foot(f, f.layout_point(f.unit.x, f.unit.z))
-	for f in _fighters:
 		if not f.unit.alive or f.rear:
+			f.slot = 0
 			continue
+		f.front_limit = ally_rear if f.side_dir < 0.0 else enemy_rear
 		var u := f.unit
+		f.goal = _fit_foot(f, f.layout_point(u.x, u.z))
 		var target: Fighter = views.get(u.target.id) if u.target != null and u.target.alive else null
-		var in_pose := f.attack_left > 0.0 or (f.sprite != null and f.sprite.animation == &"attack" and f.sprite.is_playing())
-		if (f.strike_pending or in_pose) and is_instance_valid(f.strike_target):
-			target = f.strike_target
+		var striking := f.attack_left > 0.0 or (f.sprite != null and f.sprite.animation == &"attack" and f.sprite.is_playing())
+		if (target == null or f.long_model.is_empty()) and (f.strike_pending or striking) and is_instance_valid(f.strike_target):
+			if f.strike_target.unit.alive or (f.strike_pending and f.can_strike(f.strike_target)):
+				target = f.strike_target
 		if target == null or u.entering:
+			f.slot = 0
 			continue
 		var reach := u.range_m + 0.35 * (u.size + target.unit.size - 2.0)
 		f.contact_blend = 1.0 - smoothstep(reach + 0.32, reach + 2.1, LegionSim.dist(u, target.unit))
-		if f.strike_pending or in_pose:
+		if f.strike_pending or striking:
 			f.contact_blend = 1.0
 		if f.contact_blend > 0.0:
 			f.layout_target = target
-	# Места меняются с шагом боя, ноги движутся плавно каждый кадр.
+			target.approachers.append(f)
+		if f.layout_target != previous:
+			f.slot = 0
+	for target in _fighters:
+		if not target.approachers.is_empty():
+			if target.approachers.size() >= 2:
+				target.goal.y = clampf(target.goal.y, -_trail_depth + 35.0, _trail_depth - 35.0)
+			_reserve_spots(target)
 	for f in _fighters:
 		var target := f.layout_target
-		if target == null:
+		if target == null or target.layout_target != f or f.slot != 1 or target.slot != 1 or f.unit.id > target.unit.id:
 			continue
-		if target.layout_target == f:
-			target.front = f
-			f.slot = 1
-			if f.unit.id < target.unit.id:
-				var center := (f.goal + target.goal) * 0.5
-				center.y = clampf(center.y, -8.0, 8.0)
-				var space := minf(f.front_clearance(), target.front_clearance())
-				var dir := f.side_dir
-				var gap := space + f.muzzle + target.edge_toward(dir)
-				f.goal = f.goal.lerp(_fit_foot(f, center + Vector2(f.side_dir * gap * 0.5, 0)), f.contact_blend)
-				f.visit = 2
-	for priority in 2:
-		for f in _fighters:
-			var target := f.layout_target
-			if target == null or f.slot != 0:
-				continue
-			var urgent := f.attack_left > 0.0 or f.strike_pending
-			if urgent != (priority == 0):
-				continue
-			if target.front == null:
-				target.front = f
-				f.slot = 1
-			elif target.upper == null and (target.lower != null or f.goal.y <= target.goal.y):
-				target.upper = f
-				f.slot = 2
-			elif target.lower == null:
-				target.lower = f
-				f.slot = 3
-			else:
-				f.slot = 4
-	for f in _fighters:
-		if f.upper != null or f.lower != null:
-			# Оставляем место для двух флангов даже у края тропы.
-			f.goal.y = clampf(f.goal.y, -_trail_depth + 30.0, _trail_depth - 38.0)
+		# Взаимная пара встречается посередине между исходными местами.
+		var center := (f.goal + target.goal) * 0.5
+		center.y = clampf(center.y, -_trail_depth * 0.30, _trail_depth * 0.30)
+		var gap := f.edge_toward(-f.side_dir) + target.edge_toward(f.side_dir) + minf(f.front_clearance(), target.front_clearance())
+		var blend := minf(f.contact_blend, target.contact_blend)
+		f.goal = f.goal.lerp(_fit_foot(f, center + Vector2(f.side_dir * gap * 0.5, 0.0)), blend)
+		target.goal = target.goal.lerp(_fit_foot(target, center - Vector2(f.side_dir * gap * 0.5, 0.0)), blend)
+		f.visit = 2
+		target.visit = 2
+		if not f.long_model.is_empty() and target.long_model.is_empty():
+			target.contact_front = f
+		elif not target.long_model.is_empty() and f.long_model.is_empty():
+			f.contact_front = target
 	for f in _fighters:
 		if f.unit.alive:
 			_engagement_goal(f)
-		var guard := f.layout_target
-		if guard != null and not guard.wide and not guard.rear and f.slot < 4 and not f.long_model.is_empty():
-			# Если к одному бойцу подъехали две колесницы, передний край задаёт босс.
-			if guard.contact_front == null or (f.unit.boss and not guard.contact_front.unit.boss):
-				guard.contact_front = f
+
+
+func _reserve_spots(target: Fighter) -> void:
+	var at := target.goal if target.unit.alive else target.position
+	var first: Fighter
+	var best := INF
+	for f in target.approachers:
+		var cost := f.position.distance_to(_spot(f, target, at, 1))
+		if f.slot == 1:
+			cost -= 85.0
+		if target.layout_target == f:
+			cost -= 240.0
+		if f.unit.boss and not f.long_model.is_empty():
+			cost -= 480.0
+		if cost < best:
+			first = f
+			best = cost
+	first.slot = 1
+	target.primary_attacker = first
+	if not first.long_model.is_empty() and target.long_model.is_empty():
+		target.contact_front = first
+	var used := 0
+	var first_flank: Fighter
+	var second_flank: Fighter
+	for count in mini(2, target.approachers.size() - 1):
+		var selected: Fighter
+		var spot := 0
+		best = INF
+		for f in target.approachers:
+			if f == first or f == first_flank:
+				continue
+			for slot_index in range(2, 4):
+				if slot_index == used:
+					continue
+				var p := _spot(f, target, at, slot_index)
+				var cost := f.position.distance_to(p)
+				# Обход вокруг корпуса длиннее прямого пути.
+				if (f.position.x - at.x) * (p.x - at.x) < 0.0:
+					cost += target.body_width() * 0.48
+				if slot_index == 2 and count == 0 and not target.wide and not f.wide:
+					cost -= 255.0
+				if f.slot == slot_index:
+					cost -= 105.0
+				if cost < best:
+					best = cost
+					selected = f
+					spot = slot_index
+		selected.slot = spot
+		if count == 0:
+			first_flank = selected
+			used = spot
+		else:
+			second_flank = selected
+	for f in target.approachers:
+		if f != first and f != first_flank and f != second_flank:
+			f.slot = 4
+
+
+func _spot(f: Fighter, target: Fighter, at: Vector2, slot: int) -> Vector2:
+	var dir := f.side_dir
+	if f.unit.side == "enemy" and f.unit.enter_dir > 0.0:
+		dir = -1.0
+	var our_long := f.wide
+	var their_long := target.wide
+	# У длинной модели переднее место всегда у морды.
+	if not target.long_model.is_empty() and not our_long:
+		dir = -1.0 if target.flip_h else 1.0
+	var depth := at.y
+	var source_edge := f.edge_toward(-dir) if our_long and f.long_model.is_empty() else f.muzzle
+	var space := f.front_clearance()
+	if their_long and not our_long:
+		space = 8.0
+	if slot == 2 and not their_long and not our_long:
+		dir = -dir
+		depth -= f.strike_distance * 0.70
+		space *= 0.64
+	elif slot == 2 or slot == 3:
+		var lane := -1.0 if slot == 2 else 1.0
+		if lane * at.y > _trail_depth - 35.0:
+			lane = -lane
+		depth += lane * minf(56.0, f.strike_distance * 0.72)
+		if their_long or our_long:
+			space = f.strike_distance * (0.48 if their_long else 0.10)
+		else:
+			space = 3.0
+	elif slot >= 4:
+		space += maxf(64.0, f.body_width())
+		depth = f.goal.y
+	var target_edge := target.edge_toward(dir)
+	if not target.long_model.is_empty() and not our_long:
+		target_edge = target.muzzle
+	var distance := source_edge + target_edge + space
+	var x := at.x + dir * distance
+	if x * f.side_dir > f.front_limit and not their_long:
+		x = at.x - dir * distance
+	return _fit_foot(f, Vector2(x, depth))
+
+
+func _engagement_goal(f: Fighter) -> void:
+	if f.visit != 0:
+		return
+	f.visit = 1
+	var target := f.layout_target
+	if target != null and target.visit != 1:
+		_engagement_goal(target)
+		var at := target.goal if target.unit.alive else target.position
+		f.goal = f.goal.lerp(_spot(f, target, at, f.slot), f.contact_blend)
+	f.visit = 2
 
 
 func _layout(weight: float) -> void:
+	_wide_fighters.clear()
+	for f in _fighters:
+		if not f.unit.alive:
+			continue
+		var goal := f.goal
+		f.passing = false
+		var front := f.contact_front
+		if front != null:
+			# Линия держится по спроецированной морде ведущей повозки.
+			var dir := -1.0 if front.flip_h else 1.0
+			var x := front.position.x + dir * (front.muzzle + f.edge_toward(-dir) + front.front_clearance())
+			goal.x = lerpf(goal.x, x, front.contact_blend)
+			if f.layout_target == front:
+				goal.y = lerpf(goal.y, front.position.y, front.contact_blend * 0.65)
+			goal = _fit_foot(f, goal)
+		if f.spawn_pending:
+			f.spawn_pending = false
+			f.position = _fit_foot(f, f.position)
+		f.travel = f.position
+		var path := _around(f, goal) if not f.wide and not f.rear else goal
+		f.next_foot = _fit_foot(f, f.position.lerp(path, minf(1.0, weight * 2.0) if f.passing else weight))
+		if f.wide:
+			_wide_fighters.append(f)
 	for f in _fighters:
 		if f.unit.alive:
-			if f.spawn_pending:
-				f.position = f.goal
-				f.spawn_pending = false
-			var goal := f.goal
-			var front := f.contact_front
-			f.guarding_contact = false
-			if front != null:
-				# После разведения двух крупных моделей боец держит линию по видимой морде.
-				var dir := 1.0 if front.position.x > f.position.x else -1.0
-				var x := front.position.x - dir * (front.muzzle + f.edge_toward(dir) + front.front_clearance())
-				if absf(x - goal.x) < front.strike_distance * 1.6:
-					f.guarding_contact = front.contact_blend >= 0.95
-					goal.x = lerpf(goal.x, x, front.contact_blend)
-					goal.y = lerpf(goal.y, front.position.y, front.contact_blend * 0.65)
-					goal = _fit_foot(f, goal)
-			var before := f.position
-			f.position = f.position.lerp(goal, weight)
-			f.travel = f.position - before
+			f.position = f.next_foot
+	_space_wide()
+	for f in _fighters:
+		var front := f.contact_front
+		if not f.unit.alive or front == null or not front.unit.alive or front.contact_blend < 0.95:
+			continue
+		var dir := -1.0 if front.flip_h else 1.0
+		var contact := front.position.x + dir * (front.muzzle + f.edge_toward(-dir) + front.front_clearance())
+		var pull := minf(1.0, weight * 2.5)
+		if f.guard_priority() == 2 and absf(f.position.x - contact) < f.body_width():
+			pull = 1.0
+		f.position = _fit_foot(f, Vector2(lerpf(f.position.x, contact, pull), f.position.y))
 	_separate()
 	for f in _fighters:
 		if not f.unit.alive:
 			continue
+		f.travel = f.position - f.travel
 		var u := f.unit
 		var aim := f.aim_target if f.aim_target != null and f.aim_target.alive else u.target
 		var target: Fighter = views.get(aim.id) if aim != null and aim.alive else f.layout_target
-		if is_instance_valid(f.strike_target) and (f.strike_pending or f.attack_left > 0.0):
-			target = f.strike_target
+		var follow_strike := (f.layout_target == null or f.long_model.is_empty()) and (f.strike_pending or f.attack_left > 0.0)
+		if follow_strike and is_instance_valid(f.strike_target):
+			if f.strike_target.unit.alive or f.can_strike(f.strike_target):
+				target = f.strike_target
 		if target != null and not u.entering:
 			f.aim_at(target)
 		else:
 			f.aim_depth = 0.0
 			f.face(u.enter_dir < 0.0 if u.entering else f.side_dir > 0.0)
+		f.update_outline()
 	for f in _fighters:
 		if not f.unit.alive or f.rear:
 			continue
@@ -591,7 +703,7 @@ func _layout(weight: float) -> void:
 			else:
 				f.sprite.play(&"idle")
 		if f.strike_pending:
-			if not is_instance_valid(f.strike_target):
+			if not is_instance_valid(f.strike_target) or (not f.strike_target.unit.alive and f.layout_target != f.strike_target):
 				f.strike_pending = false
 			elif f.slot > 0 and f.slot < 4 and f.can_strike(f.strike_target):
 				f.strike_pending = false
@@ -599,107 +711,156 @@ func _layout(weight: float) -> void:
 				melee_pose.emit(f, f.strike_target)
 
 
-func _engagement_goal(f: Fighter) -> void:
-	if f.visit != 0:
-		return
-	f.visit = 1
-	var target := f.layout_target
-	if target != null and target.visit != 1 and f.slot > 0:
-		_engagement_goal(target)
-		var at := target.goal
-		# Верхний боец дальше от цели, нижний ближе.
-		var y := at.y
-		var space := f.front_clearance()
-		if f.slot == 2:
-			space = f.strike_distance * 0.84
-			y = maxf(at.y - f.strike_distance * 0.35, -_trail_depth)
-		elif f.slot == 3:
-			space = f.strike_distance * 0.48
-			y = minf(at.y + f.strike_distance * 0.72, _trail_depth)
-		elif f.slot == 4:
-			space += maxf(55.0, f.body_width())
-			y = f.goal.y
-		if f.slot < 4 and not f.long_model.is_empty():
-			space = f.front_clearance()
-		var dir := f.side_dir
-		if f.unit.side == "enemy" and f.unit.enter_dir > 0.0:
-			dir = -1.0
-		var edge := f.muzzle + target.edge_toward(dir)
-		var x := at.x + dir * (edge + space)
-		if x * f.side_dir > f.front_limit:
-			# Если враг прорвался к стрелкам, догоняем его со стороны своего строя.
-			dir = -dir
-			x = at.x + dir * (f.muzzle + target.edge_toward(dir) + space)
-		f.goal = f.goal.lerp(_fit_foot(f, Vector2(x, y)), f.contact_blend)
-	f.visit = 2
+func _around(f: Fighter, goal: Vector2) -> Vector2:
+	var from := f.position
+	if absf(goal.x - from.x) < 32.0:
+		f.bypass = null
+		return goal
+	var direction := signf(goal.x - from.x)
+	var nearest := absf(goal.x - from.x)
+	var obstacle: Fighter
+	var passage := Rect2()
+	for other in _fighters:
+		if other == f or not other.unit.alive:
+			continue
+		var x := other.position.x
+		var left := x + other.outline.position.x - f.outline.end.x * 0.63 - 6.0
+		var right := x + other.outline.end.x - f.outline.position.x * 0.63 + 6.0
+		# Обходим препятствие, если путь ведёт на другую сторону.
+		var approach := left if direction > 0.0 else right
+		var exit_ := right if direction > 0.0 else left
+		if (x - from.x) * direction <= 0.0 or (goal.x - x) * direction < 25.0:
+			continue
+		var at_x := clampf(approach, minf(from.x, goal.x), maxf(from.x, goal.x))
+		var dist := absf(at_x - from.x)
+		if dist >= nearest:
+			continue
+		var at_y := lerpf(from.y, goal.y, dist / absf(goal.x - from.x))
+		var radius := 40.0 if not other.wide else 47.0
+		if absf(at_y - other.position.y) >= radius and f.bypass != other:
+			continue
+		var top := other.position.y - radius
+		var bottom := other.position.y + radius
+		if top < -_trail_depth and bottom > _trail_depth:
+			continue
+		nearest = dist
+		obstacle = other
+		passage = Rect2(approach, top, exit_ - approach, bottom - top)
+	if obstacle == null:
+		f.bypass = null
+		return goal
+	if f.bypass != obstacle:
+		f.bypass = obstacle
+		var bottom := passage.end.y
+		var top := passage.position.y
+		f.bypass_lower = top < -_trail_depth or (bottom <= _trail_depth and
+			absf(from.y - bottom) + absf(goal.y - bottom) < absf(from.y - top) + absf(goal.y - top))
+	var lane := passage.end.y + 3.0 if f.bypass_lower else passage.position.y - 3.0
+	var ahead := maxf(0.0, (passage.position.x - from.x) * direction)
+	var x := passage.end.x + direction * 6.0
+	f.passing = not obstacle.wide and absf(from.y - lane) <= 7.0
+	if absf(from.y - lane) > 7.0:
+		x = from.x + direction * ahead
+	return _fit_foot(f, Vector2(x, lane))
+
+
+func _wide_order(f: Fighter) -> float:
+	# Колесничий, который ведёт атаку, остаётся впереди второй повозки.
+	if f.unit.key == "charioteer":
+		return _field_bounds.position.x if f.side_dir > 0.0 else _field_bounds.end.x
+	if f.rear:
+		return f.position.x + _field_bounds.size.x * f.side_dir
+	return f.position.x
+
+
+func _space_wide() -> void:
+	_wide_fighters.sort_custom(func(a: Fighter, b: Fighter) -> bool: return _wide_order(a) < _wide_order(b))
+	# Сначала уступает задний корпус. У края поля освобождаем место спереди.
+	for i in range(1, _wide_fighters.size()):
+		var a := _wide_fighters[i - 1]
+		var b := _wide_fighters[i]
+		var gap := _wide_gap(a, b)
+		b.position = _fit_foot(b, Vector2(maxf(b.position.x, a.position.x + gap), b.position.y))
+	for i in range(_wide_fighters.size() - 2, -1, -1):
+		var a := _wide_fighters[i]
+		var b := _wide_fighters[i + 1]
+		var gap := _wide_gap(a, b)
+		a.position = _fit_foot(a, Vector2(minf(a.position.x, b.position.x - gap), a.position.y))
+
+
+func _wide_gap(a: Fighter, b: Fighter) -> float:
+	var min_width := minf(a.body_width(), b.body_width())
+	var edges := a.outline.end.x - b.outline.position.x
+	var overlap := minf(a.outline.size.x, b.outline.size.x) * (0.42 if _wide_fighters.size() > 2 else 0.25)
+	return clampf(edges - overlap, min_width * 0.53, min_width * 0.92)
 
 
 func _separate() -> void:
-	# Взаимная пара держит центр линии и сохраняет место перед целью.
-	for pass_index in 3:
+	# Раздвигаем экранные корпуса, сохраняя контакт ведущей модели.
+	for pass_index in 6:
 		var moved := false
-		var i := 0
-		while i < _fighters.size():
+		for i in _fighters.size():
 			var a := _fighters[i]
 			if not a.unit.alive:
-				i += 1
 				continue
-			var j := 0
-			while j < i:
+			for j in i:
 				var b := _fighters[j]
-				j += 1
-				if not b.unit.alive and (b.death < 0.48 or b.modulate.a < 0.25):
+				if not b.unit.alive:
 					continue
-				var both := b.unit.alive
 				var d := a.position - b.position
-				var a_radius := a.body_half
-				var b_radius := b.body_half
-				if both and absf(d.y) >= 18.0:
-					# Край соседней дорожки занимает поперечник, а не вся длина повозки.
-					if a.guarding_contact and b.wide and b != a.contact_front:
-						b_radius = minf(b_radius, maxf(a_radius, b.beam * 0.5))
-					elif b.guarding_contact and a.wide and a != b.contact_front:
-						a_radius = minf(a_radius, maxf(b_radius, a.beam * 0.5))
-				var space := (a_radius + b_radius) * (0.59 if both else 0.40)
-				if absf(d.x) >= space or absf(d.y) >= space or d.length_squared() >= space * space:
+				var a_box := a.outline
+				var b_box := b.outline
+				var a_wide := a.wide
+				var b_wide := b.wide
+				if a_wide and b_wide:
 					continue
-				var distance := d.length()
-				var direction := d / distance if distance > 0.01 else Vector2(a.side_dir * 0.6, 0.8)
-				if not both and pass_index > 0:
+				var same_side := a.unit.side == b.unit.side
+				var feet := minf(a.body_width(), b.body_width()) * 0.55
+				if absf(d.x) >= maxf(feet, maxf(b_box.end.x - a_box.position.x, a_box.end.x - b_box.position.x)):
 					continue
-				var push := (space - distance) * (1.0 if both else 0.13)
-				if push < 0.75:
+				var dx := sqrt(maxf(0.0, feet * feet - d.y * d.y)) - absf(d.x)
+				var side := signf(d.x) if absf(d.x) > 0.01 else a.side_dir
+				var passing := (a.passing and a.bypass == b or b.passing and b.bypass == a) and absf(d.y) >= 35.0
+				if not passing:
+					var height := minf(d.y + a_box.end.y, b_box.end.y) - maxf(d.y + a_box.position.y, b_box.position.y)
+					if height > 0.0:
+						var min_area := minf(a_box.get_area(), b_box.get_area())
+						var tolerance := 0.13 if same_side else (0.08 if a_wide or b_wide else 0.20)
+						var permitted := min_area * tolerance / height
+						if permitted < minf(a_box.size.x, b_box.size.x):
+							var facing := d.x + a_box.get_center().x - b_box.get_center().x
+							# У повозки порядок берём по центру проекции.
+							var box_side := signf(facing) if absf(facing) > 0.01 else side
+							if a.contact_front == b:
+								box_side = -1.0 if b.flip_h else 1.0
+							elif b.contact_front == a:
+								box_side = 1.0 if a.flip_h else -1.0
+							var edge := b_box.end.x - a_box.position.x if box_side > 0.0 else a_box.end.x - b_box.position.x
+							var push := edge - d.x * box_side - permitted
+							if push > dx:
+								dx = push
+								side = box_side
+				if dx <= 0.34:
 					continue
-				var share := 1.0 if not both else clampf(b.body_half / (a.body_half + b.body_half), 0.24, 0.76)
-				if both and a.wide and b.wide:
-					# На узкой тропе длинные корпуса расходятся вдоль поля.
-					var a_contact := a.slot > 0 and a.slot < 4
-					var b_contact := b.slot > 0 and b.slot < 4
-					if a_contact != b_contact:
-						share = 0.0 if a_contact else 1.0
-					var dx := sqrt(maxf(0.0, space * space - d.y * d.y)) - absf(d.x)
-					var side := 1.0 if d.x >= 0.0 else -1.0
-					var x_a := a.position.x
-					var x_b := b.position.x
-					a.position = _fit_foot(a, a.position + Vector2(side * dx * share, 0))
-					b.position = _fit_foot(b, b.position - Vector2(side * dx - (a.position.x - x_a), 0))
-					var residual := dx - side * (a.position.x - x_a + x_b - b.position.x)
-					if residual > 0.75:
-						a.position = _fit_foot(a, a.position + Vector2(side * residual, 0))
-					moved = true
-					continue
-				if both and a.guarding_contact != b.guarding_contact:
-					# Боец у морды держит линию. Сосед обходит его сбоку.
-					share = 0.0 if a.guarding_contact else 1.0
-				elif both and a.slot != 0 and b.slot == 0:
-					share *= 0.45
-				elif both and b.slot != 0 and a.slot == 0:
-					share = lerpf(share, 1.0, 0.55)
-				a.position = _fit_foot(a, a.position + direction * (push * share))
-				if both:
-					b.position = _fit_foot(b, b.position - direction * (push * (1.0 - share)))
+				var share := 0.5
+				var a_priority := a.guard_priority()
+				var b_priority := b.guard_priority()
+				if a_wide != b_wide:
+					share = 0.0 if a_wide else 1.0
+				elif a_priority != b_priority:
+					share = 0.0 if a_priority > b_priority else 1.0
+				elif a.rear != b.rear:
+					share = 0.15 if a.rear else 0.85
+				var old_a := a.position.x
+				var old_b := b.position.x
+				a.position = _fit_foot(a, a.position + Vector2(dx * side * share, 0.0))
+				var remaining := dx - (a.position.x - old_a) * side
+				if not b_wide and (a_wide or b_priority <= a_priority):
+					b.position = _fit_foot(b, b.position - Vector2(side * remaining, 0.0))
+				remaining -= (old_b - b.position.x) * side
+				if remaining > 0.34 and not a_wide and (b_wide or a_priority <= b_priority):
+					a.position = _fit_foot(a, a.position + Vector2(side * remaining, 0.0))
 				moved = true
-			i += 1
 		if not moved:
 			break
 
@@ -842,10 +1003,15 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 		_people_time = fposmod(_people_time, interval)
 		people_layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	if not legacy_layout and weight > 0.0:
-		if _layout_step != sim.steps:
-			_plan_layout()
-			_layout_step = sim.steps
-		_layout(1.0 - exp(-gdt * 14.0))
+		_layout_time += dt
+		_layout_sim_time += gdt
+		if _layout_time >= 1.0 / 60.0:
+			if _layout_step != sim.steps:
+				_plan_layout()
+				_layout_step = sim.steps
+			_layout(1.0 - exp(-_layout_sim_time * 14.0))
+			_layout_time = fposmod(_layout_time, 1.0 / 60.0)
+			_layout_sim_time = 0.0
 	var started := Time.get_ticks_usec() if profile_poses else 0
 	for id in views:
 		var f: Fighter = views[id]
@@ -924,7 +1090,10 @@ func clear() -> void:
 			child.queue_free()
 	views.clear()
 	_fighters.clear()
+	_wide_fighters.clear()
 	_layout_step = -1
+	_layout_time = 0.0
+	_layout_sim_time = 0.0
 	_enemy_variants.clear()
 	shots.clear()
 	_bursts.clear()
@@ -951,12 +1120,17 @@ class Fighter extends Node2D:
 	var front_limit := INF
 	var strike_distance := 55.0
 	var aim_depth := 0.0
-	var front: Fighter
-	var upper: Fighter
-	var lower: Fighter
+	var approachers: Array[Fighter] = []
+	var primary_attacker: Fighter
+	var outline := Rect2()
+	var hull_points := PackedVector3Array()
+	var hull_angle := INF
+	var bypass: Fighter
+	var bypass_lower := false
+	var passing := false
+	var next_foot := Vector2.ZERO
 	var layout_target: Fighter
 	var contact_front: Fighter
-	var guarding_contact := false
 	var strike_target: Fighter
 	var strike_pending := false
 	var strike_action := ""
@@ -1020,10 +1194,15 @@ class Fighter extends Node2D:
 		var front_edge := 0.0
 		if actor != null and (wide or boss_model != null):
 			var bounds := AABB()
+			hull_points.clear()
 			for part: MeshInstance3D in actor.find_children("*", "MeshInstance3D", true, false):
 				if part.visible and part.mesh != null:
-					var hull := actor.global_transform.affine_inverse() * part.global_transform * part.mesh.get_aabb()
+					var local := actor.global_transform.affine_inverse() * part.global_transform
+					var mesh_bounds := part.mesh.get_aabb()
+					var hull := local * mesh_bounds
 					bounds = hull if not bounds.has_volume() else bounds.merge(hull)
+					for corner in 8:
+						hull_points.append(local * mesh_bounds.get_endpoint(corner))
 			var angle := deg_to_rad(yaw)
 			breadth = maxf(breadth, bounds.size.x)
 			torso = maxf(torso, bounds.size.x * absf(cos(angle)) + bounds.size.z * absf(sin(angle)))
@@ -1042,14 +1221,51 @@ class Fighter extends Node2D:
 		if unit.key == "spearman" or weapon in ["spear", "pike", "falx", "axe", "staff"]:
 			strike_distance += 18.0
 
+		hull_angle = INF
+		update_outline()
+
+	func update_outline() -> void:
+		if hull_points.is_empty():
+			outline = Rect2(-body_half, -body_height(), body_width(), body_height())
+			return
+		var left := flip_h != (shoot_turn >= 0.5)
+		var angle := -yaw if left else yaw
+		if absf(angle - hull_angle) < 2.0:
+			return
+		hull_angle = angle
+		var rot := Basis(Vector3.UP, deg_to_rad(angle))
+		var tilt := deg_to_rad(PEOPLE_TILT)
+		var pixels := model_height() / (1.79 * cos(tilt))
+		var vertical := Vector3(0.0, -cos(tilt), sin(tilt))
+		outline = Rect2()
+		for corner in hull_points:
+			var p := rot * corner
+			outline = outline.expand(Vector2(p.x, p.dot(vertical)) * pixels)
+		if not long_model.is_empty():
+			# Углы AABB выступают перед мордой при повороте. Передний край задан на модели.
+			if left:
+				outline = Rect2(-muzzle, outline.position.y, outline.end.x + muzzle, outline.size.y)
+			else:
+				outline.size.x = muzzle - outline.position.x
+
+	func screen_box() -> Rect2:
+		var scale_ui := view.world.scale
+		return Rect2(view.screen(visible_foot() + outline.position), outline.size * scale_ui)
+
 	func body_width() -> float:
 		return body_half * 2.0
 
 	func rear_spacing() -> float:
-		# Веер вокруг цели: верхнее место дальше, нижнее ближе.
-		return maxf(beam * 2.55, 142.0)
+		return maxf(beam * 2.80, 154.0)
+
+	func guard_priority() -> int:
+		if contact_front == null:
+			return 0
+		return 2 if contact_front.unit.key == "charioteer" else 1
 
 	func edge_toward(dir: float) -> float:
+		if wide and long_model.is_empty() and not hull_points.is_empty():
+			return -outline.position.x if dir < 0.0 else outline.end.x
 		return muzzle if (dir < 0.0) == flip_h else rump
 
 	func front_clearance() -> float:
@@ -1057,8 +1273,28 @@ class Fighter extends Node2D:
 
 	func can_strike(target: Fighter) -> bool:
 		var d := target.body_ground() - body_ground()
-		var gap := Vector2(maxf(0.0, absf(d.x) - muzzle - target.edge_toward(-d.x)), d.y)
-		return gap.length_squared() <= strike_distance * strike_distance and flip_h == (d.x < 0.0)
+		var source_edge := edge_toward(d.x) if wide and long_model.is_empty() else muzzle
+		var gap := Vector2(maxf(0.0, absf(d.x) - source_edge - target.edge_toward(-d.x)), d.y)
+		if gap.length_squared() > strike_distance * strike_distance or flip_h != (d.x < 0.0):
+			return false
+		if view == null or view.legacy_layout:
+			return true
+		var relative_box := Rect2(outline.position - d, outline.size)
+		var shared := relative_box.intersection(target.outline).get_area()
+		if shared > minf(outline.get_area(), target.outline.get_area()) * 0.29:
+			return false
+		if layout_target == target and slot in [2, 3]:
+			var primary := target.primary_attacker
+			if is_instance_valid(primary) and primary != self and primary.unit.alive:
+				var front := primary.position - target.position
+				if front.x * -d.x < 0.0 and absf(d.x) >= target.body_width() * 0.30:
+					return true
+				var delta := position - primary.position
+				var local_box := Rect2(outline.position + delta, outline.size)
+				var common := local_box.intersection(primary.outline).get_area()
+				var separated := common <= minf(local_box.get_area(), primary.outline.get_area()) * 0.22
+				return separated and absf(delta.y) >= 27.0 and absf(d.y) >= 24.0
+		return true
 
 	func aim_at(target: Fighter) -> void:
 		var d := target.body_ground() - body_ground()
