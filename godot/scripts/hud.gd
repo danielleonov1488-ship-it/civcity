@@ -5237,7 +5237,7 @@ func _fill_info_body() -> void:
 		info_box.add_child(_hire_row(b, members))
 	if String(b["type"]) == "bakery" and c.legion.v3():
 		var ration_k: float = (float(b.get("staff", 0.0)) if b.get("active", false) else 0.0) if c.manual_hiring() else 1.0
-		info_box.add_child(_card_row("legion", "Пайки Легиону", "+%d в день" % int(round(Legion.RATION_BAKERY * ration_k)), C_GOOD))   # Легион 3.0: хлеб кормит лагерь
+		info_box.add_child(_card_row("legion", "Еда Легиону", "+%d в день" % int(round(Legion.RATION_BAKERY * ration_k)), C_GOOD))   # Легион 3.0: хлеб кормит лагерь
 	info_panel.tooltip_text = String(d.get("desc", ""))
 	if String(b.get("gift", "")) != "":         # подарок друга (SocialNet)
 		info_box.add_child(_card_row("mail", "Подарок", "из «%s»" % String(b["gift"]), C_GOOD))
