@@ -3,6 +3,7 @@ extends Node
 ##   bash .work/py/gpu_run.sh res://test_perf.tscn -- mode=regress          — для regress.sh: в конце «PERF DONE fails=0»
 ##   … -- mode=measure q=high,medium,low,verylow [city=new|путь] [views=имя:x:z:yaw:pitch:dist,…] [n=120 warm=60 settle=20]
 ##   … -- mode=shots out=ПАПКА [ref=ПАПКА] [q=high,medium]                 — снимки (и сверка с эталоном)
+##   … -- mode=shots [diff_mean=1] [legion=1] [profile=1]                 — снимки и замеры PERF13
 ##   … -- mode=hitch q=low [frames=1200]                                    — рывки кадра (с автосохранением и ходом дня)
 ##   … -- mode=menu q=high,medium                                           — меню с витриной
 ##   … -- mode=menu boot_q=verylow q=verylow                                — меню, запущенное на этом качестве (лёгкий городок)
@@ -43,6 +44,7 @@ var A := {}
 var vp: RID
 var fails := 0
 var city_src := ""
+var _extra_viewports: Array[SubViewport] = []
 
 
 func _ready() -> void:
@@ -51,6 +53,8 @@ func _ready() -> void:
 		A[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	var mode: String = A.get("mode", "regress")
 	People.anim_batch = A.get("pvat", "1") != "0"    # PERF3, вариант B: ручная скелетная анимация
+	if A.has("s9base"):
+		_perf13_optimizations(false)
 	if A.get("freebuild", "1") == "0":
 		Game.FREE_BUILD = false                        # свободная стройка выключена — как CIVCITY_FREEBUILD=0 (для сравнения замеров)
 	# plain=1 — Synty без наполнения (CatDress, CatDressCivic): снимки «было» для сравнения детальных проходов
@@ -82,7 +86,7 @@ func _ready() -> void:
 
 
 func _boot(m: String) -> void:
-	Game.boot = {m: "1", "hour": str(A.get("hour", "9"))}
+	Game.boot = {m: "1", "hour": str(A.get("hour", "9")), "nologin": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 
@@ -125,6 +129,7 @@ func _run(mode: String) -> void:
 		await frames(5)
 	print("PERF ready: город готов через %.1f с после запуска" % (Time.get_ticks_msec() / 1000.0))
 	game.can_save = mode == "hitch"           # копия города — только в своей папке запуска; пишем лишь в замере рывков
+	game.settings["quality_user"] = true       # автонастройка не должна сменить пресет и отключить замер GPU
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	vp = get_viewport().get_viewport_rid()
 	RenderingServer.viewport_set_measure_render_time(vp, true)
@@ -132,6 +137,9 @@ func _run(mode: String) -> void:
 	print("PERF adapter: %s | %s | type %d | window %s | city %s | buildings %d residents %d" % [RenderingServer.get_video_adapter_name(),
 		RenderingServer.get_video_adapter_vendor(), RenderingServer.get_video_adapter_type(), str(get_window().size),
 		city_src if city_src != "" and mode != "menu" else ("menu" if mode == "menu" else "new"), game.city.buildings.size(), game.people.residents.size()])
+	if A.has("paired") or A.has("warm_assets"):
+		await _perf13_wait_icons()
+		RenderingServer.viewport_set_measure_render_time(vp, true)
 	match mode:
 		"measure": await _measure_all()
 		"shots": await _shots_mode()
@@ -150,7 +158,16 @@ func _run(mode: String) -> void:
 		"procab": await _procab()
 		"lifeab": await _lifeab()
 		"offer": await _offer()
+		"s9ab": await _perf13_ab()
 		_: await _regress()
+	if A.has("profile"):
+		await _perf13_profile()
+	if A.has("hitch"):
+		game.can_save = true
+		await _hitch()
+		game.can_save = false
+	if A.has("legion"):
+		await _perf13_legion()
 	print("PERF DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -189,6 +206,8 @@ func _measure(tag: String) -> Dictionary:
 	var gpu := PackedFloat32Array()
 	var ft := PackedFloat32Array()
 	var rc := PackedFloat32Array()
+	var extra_gpu := PackedFloat32Array()
+	var extra_cpu := PackedFloat32Array()
 	_proc_ms = PackedFloat32Array()
 	_rec = true
 	var t_prev := Time.get_ticks_usec()
@@ -199,6 +218,14 @@ func _measure(tag: String) -> Dictionary:
 		t_prev = tn
 		gpu.append(RenderingServer.viewport_get_measured_render_time_gpu(vp))
 		rc.append(RenderingServer.viewport_get_measured_render_time_cpu(vp))
+		if not _extra_viewports.is_empty():
+			var gpu_ms := 0.0
+			var cpu_ms := 0.0
+			for sub: SubViewport in _extra_viewports:
+				gpu_ms += RenderingServer.viewport_get_measured_render_time_gpu(sub.get_viewport_rid())
+				cpu_ms += RenderingServer.viewport_get_measured_render_time_cpu(sub.get_viewport_rid())
+			extra_gpu.append(gpu_ms)
+			extra_cpu.append(cpu_ms)
 	_rec = false
 	People.perf = old_pperf
 	Gfx.perf = old_gperf
@@ -223,6 +250,9 @@ func _measure(tag: String) -> Dictionary:
 	print("PERF %-22s gpu %5.2f (p10 %5.2f) | cpu %5.2f (proc %5.2f rcpu %5.2f) | frame %5.2f p95 %5.2f p99 %5.2f max %5.1f fps %5.1f | dc %4d + shadow %4d | tris %5.2fM + shadow %5.2fM | vram %d MB (tex %d) | people %d" % [
 		tag, r["gpu"], r["p10"], r["cpu"], r["proc"], r["rcpu"], r["frame"], r["p95"], r["p99"], r["max"], 1000.0 / maxf(0.01, r["frame"]),
 		r["vis_d"], r["sh_d"], r["vis_p"] / 1.0e6, r["sh_p"] / 1.0e6, r["vram"], r["tex"], r["people"]])
+	if not extra_gpu.is_empty():
+		print("PERF LEGION %s subviewports | gpu %.2f | rcpu %.2f | %s" % [tag,
+			_pct(extra_gpu, 0.5), _pct(extra_cpu, 0.5), str(_extra_viewports)])
 	return r
 
 
@@ -244,12 +274,232 @@ func _settle() -> void:
 func _measure_all() -> void:
 	await _settle()
 	var views := _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)
-	for q: String in str(A.get("q", "high,medium,low,verylow")).split(","):
+	var qualities := str(A.get("q", "high,medium,low,verylow")).split(",")
+	if A.has("paired"):
+		await _perf13_matrix(qualities, views)
+		return
+	for q: String in qualities:
 		_quality(q)
 		for v: Array in views:
 			_view(v)
 			game._set_hour(float(A.get("hour", "9")))
 			await _measure("%s %s" % [v[0], q])
+
+
+func _perf13_wait_icons() -> void:
+	var expected := 0
+	for type: String in Defs.B:
+		if not bool(Defs.B[type].get("hidden", false)):
+			expected += 1
+	var deadline := Time.get_ticks_msec() + 90000
+	while game.hud.icons.size() < expected and Time.get_ticks_msec() < deadline:
+		await frames(10)
+	print("PERF warm icons %d/%d" % [game.hud.icons.size(), expected])
+	if game.hud.icons.size() < expected:
+		fail("картинки карточек ещё рисуются")
+
+
+static func _perf13_optimizations(enabled: bool) -> void:
+	Gfx.short_low_shadows = enabled
+	Gfx.earlier_verylow_lod = enabled
+	Gfx.skip_hidden_city_anims = enabled
+	City.cache_road_connectivity = enabled
+
+
+func _perf13_matrix(qualities: PackedStringArray, views: Array) -> void:
+	for pass_no in 2:
+		for q: String in qualities:
+			for v: Array in views:
+				for enabled: bool in ([false, true] if pass_no == 0 else [true, false]):
+					_perf13_optimizations(enabled)
+					_quality(q)
+					_view(v)
+					game._set_hour(float(A.get("hour", "9")))
+					await _measure("%s %s %s r%d" % [v[0], q, "B" if enabled else "A", pass_no + 1])
+		qualities.reverse()
+		views.reverse()
+	_perf13_optimizations(true)
+
+
+func _perf13_profile() -> void:
+	_quality("high")
+	_view(_views(VIEWS_OWNER)[0])
+	game._set_hour(9.0)
+	var mixers: Array[AnimationMixer] = []
+	for node: Node in game.find_children("*", "AnimationMixer", true, false):
+		var mixer := node as AnimationMixer
+		if mixer.active and mixer.callback_mode_process == AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE:
+			mixers.append(mixer)
+	print("PERF PROFILE auto mixers=%d" % mixers.size())
+	var rows := []
+	for key: String in ["mixers", "shadows", "hud"]:
+		var on: Array[Dictionary] = []
+		var off: Array[Dictionary] = []
+		for enabled: bool in [true, false, false, true]:
+			match key:
+				"mixers": _anim_cb(mixers, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE if enabled else AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL)
+				"shadows": game.sun.shadow_enabled = enabled
+				"hud": game.hud.set_process(enabled)
+			var m := await _measure("profile %s %s" % [key, "on" if enabled else "off"])
+			(on if enabled else off).append(m)
+		rows.append([key, on, off])
+	for row: Array in rows:
+		var on: Array = row[1]
+		var off: Array = row[2]
+		print("PERF PROFILE %s savings | scripts %.3f | rcpu %.3f | gpu %.3f | frame %.3f" % [row[0],
+			_profile_delta(on, off, "proc"), _profile_delta(on, off, "rcpu"), _profile_delta(on, off, "gpu"),
+			_profile_delta(on, off, "frame")])
+
+
+static func _profile_delta(on: Array, off: Array, key: String) -> float:
+	return (float(on[0][key]) + float(on[1][key]) - float(off[0][key]) - float(off[1][key])) * 0.5
+
+
+func _perf13_legion() -> void:
+	_quality("medium")
+	game.hud.set_speed(1.0)
+	game.city.cozy_v = maxi(1, int(game.city.cozy_v))
+	game.city.legion_v = 3
+	var legion: Legion = game.city.legion
+	legion.army_off = false
+	legion.free_mode = true
+	legion.soldiers.clear()
+	legion.squad3.fill(0)
+	legion.fort = {"money": 1000000.0, "know": {}, "exp": 0, "plots": [], "next_id": 0, "up": {}}
+	legion._fort_add_plot("hq", 2)
+	legion._fort_add_plot("forge", 1)
+	legion._fort_add_plot("barracks", 1)
+	legion._fort_fill_grid()
+	legion._ensure_hero3()
+	for i in range(legion.soldiers.size(), 30):
+		legion._add_soldier({"name": "PERF %d" % i, "cls": "legionary", "look_seed": 5130 + i})
+	var camp := CampUI.attach(game.hud)
+	legion.fort["newcomers"] = []
+	legion.flags["fort_guide_v"] = 2
+	legion.flags["fort_guide"] = Legion.FortGuide.DONE
+	camp.open()
+	await frames(20)
+	var fort := camp.diorama as FortCutaway
+	if fort == null or fort.figures.size() != 30:
+		fail("форт PERF13: ожидали 30 человек, получили %d" % (fort.figures.size() if fort != null else 0))
+	else:
+		await _perf13_measure_legion("fort 30 medium", [fort.sub, fort.people_layer.viewport])
+	camp.close()
+	await frames(10)
+	var squad := []
+	var wave := []
+	var allies := ["legionary", "archer", "spearman", "cavalry"]
+	var enemies := ["gaul", "gaulArcher", "briton", "horseArcher"]
+	for i in 16:
+		squad.append(Legion.unit_stats(allies[i % allies.size()], 5))
+		wave.append(Legion.enemy_stats(enemies[i % enemies.size()], 1.0))
+	for stat: Dictionary in squad + wave:
+		stat["hp"] = float(stat["hp"]) * 1000.0
+	var setup := {"kind": "campaign", "stage": {"r": 0, "s": 0, "name": "PERF13", "boss": true},
+		"seed": 532, "squad": squad, "waves": [wave], "rations_paid": true, "perks": {}}
+	var battle := LegionBattle.open(game, setup, Callable(), {"legion": legion, "speed": 1.0, "auto": false})
+	battle.set_process(false)
+	await frames(10)
+	if battle.sim == null:
+		fail("бой PERF13 не открылся")
+		battle.abort()
+		return
+	battle.fade.hide()
+	# Одинаковый момент боя до первого кадра замера.
+	for i in 420:
+		battle._process(1.0 / 60.0)
+	if battle.views.size() != 32:
+		fail("бой PERF13: ожидали 32 бойца, получили %d" % battle.views.size())
+	else:
+		battle.set_process(true)
+		await _perf13_measure_legion("battle 16v16 x1 medium", [battle.battle_view.people_layer.viewport])
+		if battle.views.size() != 32:
+			fail("бой PERF13: состав изменился во время замера")
+	battle.abort()
+
+
+func _perf13_measure_legion(tag: String, extra: Array[SubViewport]) -> void:
+	_extra_viewports = extra
+	for sub: SubViewport in extra:
+		RenderingServer.viewport_set_measure_render_time(sub.get_viewport_rid(), true)
+	if A.has("paired"):
+		var before: Array[Dictionary] = []
+		var after: Array[Dictionary] = []
+		for turn in 2:
+			for enabled: bool in ([false, true] if turn == 0 else [true, false]):
+				Gfx.skip_hidden_city_anims = enabled
+				var m := await _measure("%s %s r%d" % [tag, "B" if enabled else "A", turn + 1])
+				(after if enabled else before).append(m)
+		print("PERF AB %s hidden animations | anims %.3f | scripts %.3f | frame %.3f" % [tag,
+			_profile_delta(before, after, "anims"), _profile_delta(before, after, "proc"),
+			_profile_delta(before, after, "frame")])
+		Gfx.skip_hidden_city_anims = true
+	else:
+		for turn in 3:
+			await _measure("%s r%d" % [tag, turn + 1])
+	for sub: SubViewport in extra:
+		RenderingServer.viewport_set_measure_render_time(sub.get_viewport_rid(), false)
+	_extra_viewports = []
+
+
+func _perf13_ab() -> void:
+	await _settle()
+	var views := _views(VIEWS_OWNER)
+	for entry: Array in [["shadow", "low", 0], ["shadow", "low", 1], ["lod", "verylow", 0], ["lod", "verylow", 2]]:
+		var id: String = entry[0]
+		var q: String = entry[1]
+		var v: Array = views[int(entry[2])]
+		var tag := "s9ab %s %s %s" % [id, q, v[0]]
+		_quality(q)
+		_view(v)
+		await frames(4)
+		var on: Array[Dictionary] = []
+		var off: Array[Dictionary] = []
+		for enabled: bool in [false, true, true, false]:
+			Gfx.short_low_shadows = id == "shadow" and enabled
+			Gfx.earlier_verylow_lod = id == "lod" and enabled
+			_quality(q)
+			game._set_hour(9.0)
+			var m := await _measure("%s %s" % [tag, "B" if enabled else "A"])
+			(on if enabled else off).append(m)
+		print("PERF AB %s savings | scripts %.3f | people %.3f | anims %.3f | rcpu %.3f | gpu %.3f | frame %.3f" % [tag,
+			_profile_delta(off, on, "proc"), _profile_delta(off, on, "ppl"), _profile_delta(off, on, "anims"),
+			_profile_delta(off, on, "rcpu"), _profile_delta(off, on, "gpu"), _profile_delta(off, on, "frame")])
+	_perf13_optimizations(not A.has("s9base"))
+	_quality("low")
+	await _perf13_roads()
+
+
+func _perf13_roads() -> void:
+	var city: City = game.city
+	var before := PackedFloat32Array()
+	var after := PackedFloat32Array()
+	var expected := {}
+	game.hud.set_speed(0.0)
+	for round_no in 5:
+		for enabled: bool in ([false, true] if round_no % 2 == 0 else [true, false]):
+			City.cache_road_connectivity = enabled
+			city.compute(true)
+			await frames(2)
+			var t := Time.get_ticks_usec()
+			city.compute(true)
+			var sample := (Time.get_ticks_usec() - t) / 1000.0
+			if enabled:
+				after.append(sample)
+			else:
+				before.append(sample)
+			for bid: int in city.buildings:
+				var b: Dictionary = city.buildings[bid]
+				if not b.has("road"):
+					continue
+				if round_no == 0 and not enabled:
+					expected[bid] = b["road"]
+				elif b["road"] != expected.get(bid):
+					fail("связь с дорогой изменилась у постройки %d" % bid)
+	print("PERF AB roads compute(true) | A %s | B %s | median %.3f → %.3f ms" %
+		[str(Array(before)), str(Array(after)), _pct(before, 0.5), _pct(after, 0.5)])
+	City.cache_road_connectivity = not A.has("s9base")
+	game.hud.set_speed(1.0)
 
 
 func _menu() -> void:
@@ -267,14 +517,23 @@ func _menu() -> void:
 ## Рывки кадра: 1200 кадров подряд на одной графике; посередине — автосохранение, и игровой час кончается (ход дня)
 func _hitch() -> void:
 	await _settle()
-	var q: String = A.get("q", "low")
+	var q: String = A.get("hitch_q", A.get("q", "low"))
 	_quality(q)
 	_view(_views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0])
 	game.hud.set_speed(1.0)
+	game.settings["autosave"] = true
+	var midnight := A.has("midnight")
+	if midnight:
+		game.clock_hours = true                # hour= в загрузке отключает смену даты для снимков
+		game._set_hour(23.6)
 	await frames(120)
+	var day_before: int = game.city.day
+	var gen_before: int = game._save_gen
 	var n := int(A.get("frames", "1200"))
 	var dts := PackedFloat32Array()
 	var big := []
+	var hour_peak := 0.0
+	var save_peak := 0.0
 	if not get_tree().process_frame.is_connected(_on_frame):
 		get_tree().process_frame.connect(_on_frame)
 		RenderingServer.frame_pre_draw.connect(_on_pre_draw)
@@ -283,18 +542,24 @@ func _hitch() -> void:
 	var t_prev := Time.get_ticks_usec()
 	for i in n:
 		if i == n / 3:                                       # через пару кадров — новый час: ход дня (city.sim_day)
+			game.sim_ms = 0.0
 			if game.clock_hours:
-				game._set_hour(floorf(game.hour) + 0.995)
+				game._set_hour(23.995 if midnight else floorf(game.hour) + 0.995)
 			else:
 				game.day_t = Game.DAY_LEN / 24.0 - 0.05
 		if i == n / 2:
+			game.save_ms = 0.0
 			game.autosave_t = 1000.0                         # автосохранение в этом кадре
 		await get_tree().process_frame
 		var tn := Time.get_ticks_usec()
 		var d := (tn - t_prev) / 1000.0
 		t_prev = tn
 		dts.append(d)
-		if d > 33.0:
+		if i >= n / 3 and i < n / 3 + 30:
+			hour_peak = maxf(hour_peak, d)
+		if i >= n / 2 and i < n / 2 + 10:
+			save_peak = maxf(save_peak, d)
+		if d > 25.0:
 			# из чего рывок: скрипты и анимации (кадр до отрисовки), отрисовка на процессоре, видеокарта
 			var pm := _proc_ms[_proc_ms.size() - 1] if not _proc_ms.is_empty() else -1.0
 			big.append("%d:%.0f(скр %.0f, отр %.0f, вк %.0f)" % [i, d, pm, RenderingServer.viewport_get_measured_render_time_cpu(vp), RenderingServer.viewport_get_measured_render_time_gpu(vp)])
@@ -303,6 +568,15 @@ func _hitch() -> void:
 	print("HITCH q=%s frames=%d p50=%.1f p95=%.1f p99=%.1f max=%.1f  >25ms=%d >33ms=%d >50ms=%d  spikes(i:ms)=%s  | ход дня %.1f мс, сохранение %.1f мс" % [q, n,
 		_pct(dts, 0.5), _pct(dts, 0.95), _pct(dts, 0.99), _pct(dts, 1.0), over.call(25.0), over.call(33.0), over.call(50.0), " ".join(big.slice(0, 40)),
 		float(game.get("sim_ms")) if game.get("sim_ms") != null else -1.0, float(game.get("save_ms")) if game.get("save_ms") != null else -1.0])
+	if A.has("strict"):
+		print("HITCH events hour frame=%d peak=%.2f ms autosave frame=%d peak=%.2f ms day=%d→%d save_gen=%d→%d" % [
+			n / 3, hour_peak, n / 2, save_peak, day_before, int(game.city.day), gen_before, int(game._save_gen)])
+		if game.sim_ms <= 0.0 or (midnight and int(game.city.day) <= day_before):
+			fail("в замере рывков не прошёл ход дня")
+		if game.save_ms <= 0.0 or int(game._save_gen) == gen_before:
+			fail("в замере рывков не прошло автосохранение")
+		if over.call(25.0) > 0:
+			fail("в замере рывков есть кадры дольше 25 мс")
 
 
 ## 15.11 (владелец: «подлагивает»): чьи скрипты дают рывки — по очереди выключаем обработку кадра у узлов одного сценария
@@ -1166,15 +1440,20 @@ func _save_set(shots: Dictionary, dir: String) -> void:
 
 
 ## Сверка с эталоном: снимки должны совпасть в пределах шума отрисовки (_same)
-func _compare_golden(shots: Dictionary, ref: String) -> void:
+func _compare_golden(shots: Dictionary, ref: String, mean_limit := -1.0) -> void:
+	var presets := str(A.get("ref_q", "high,medium,low,verylow,medium_light,medium_full")).split(",")
 	for k: String in shots:
+		if A.has("ref_q") and not k.get_slice("/", 0) in presets:
+			continue
 		var p := ref.path_join(k.replace("/", "_") + ".png")
 		if not FileAccess.file_exists(p):
 			print("PERF golden %s: нет эталона %s" % [k, p])
+			if mean_limit >= 0.0:
+				fail("нет эталона %s" % p)
 			continue
 		var r := _same(shots[k], Image.load_from_file(p))
 		print("PERF golden %-14s %s" % [k, r["info"]])
-		if not r["same"]:
+		if (mean_limit < 0.0 and not r["same"]) or (mean_limit >= 0.0 and float(r["mean"]) > mean_limit):
 			fail("снимок %s не совпал с эталоном (%s) — графика «%s» изменилась" % [k, r["info"], k.split("/")[0]])
 
 
@@ -1193,7 +1472,7 @@ func _shots_mode() -> void:
 		_save_set(shots, out)
 		print("PERF saved ", shots.size(), " shots to ", out)
 	if A.has("ref") and not A.has("rec"):
-		_compare_golden(shots, str(A["ref"]))
+		_compare_golden(shots, str(A["ref"]), float(A.get("diff_mean", -1.0)))
 	_unfreeze()
 
 

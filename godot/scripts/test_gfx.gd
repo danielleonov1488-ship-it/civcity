@@ -317,7 +317,7 @@ func _run() -> void:
 	var vp := get_viewport()
 	check(game.settings["quality"] == "verylow" and bool(game.settings.get("quality_user", false)), "«Очень низкая» нажата: выбор игрока (quality_user)")
 	check(not game.sun.shadow_enabled and game.people.max_vis == 40 and vp.msaa_3d == Viewport.MSAA_DISABLED and is_equal_approx(vp.scaling_3d_scale, 0.5)
-		and not (game.far_forest[0] as Node3D).visible and is_equal_approx(vp.mesh_lod_threshold, 4.0),
+		and not (game.far_forest[0] as Node3D).visible and is_equal_approx(vp.mesh_lod_threshold, 12.0),
 		"«Очень низкая»: без теней солнца, 40 прохожих, без MSAA, FSR 0.5, без дальних лесов, LOD раньше",
 		[game.sun.shadow_enabled, game.people.max_vis, vp.msaa_3d, vp.scaling_3d_scale])
 	var nf := await _swap_wait() + 3
@@ -340,9 +340,10 @@ func _run() -> void:
 		("копия с диска — та же картинка (%.0f мс вместо %.0f мс из файла 4096²)" % [hit_ms, miss_ms]))
 	await _press(sp.find_child("q_low", true, false))
 	check(game.sun.shadow_enabled and is_equal_approx(game.sun.light_angular_distance, 0.0) and game.people.max_vis == 70
-		and is_equal_approx(game.sun.directional_shadow_max_distance, 175.0) and vp.msaa_3d == Viewport.MSAA_DISABLED
+		and is_equal_approx(game.sun.directional_shadow_max_distance, 128.0) and vp.msaa_3d == Viewport.MSAA_DISABLED
+		and game.sun.directional_shadow_mode == DirectionalLight3D.SHADOW_ORTHOGONAL
 		and (game.chunk_nodes.values()[0] as GeometryInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
-		"«Низкая»: резкие тени (без PCSS) до 175 м, без MSAA, 70 прохожих, земля без тени")
+		"«Низкая»: одна полоса резких теней до 128 м, без MSAA, 70 прохожих, земля без тени")
 	await _press(sp.find_child("q_high", true, false))
 	var cast_ok := true
 	for m: GeometryInstance3D in game.far_near:

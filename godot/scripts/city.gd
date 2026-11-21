@@ -1139,11 +1139,22 @@ func shop_needed(h: Dictionary, d: Dictionary) -> bool:
 	return cozy_v < 1 or d.get("sub", "") in Defs.needs_for(String(def(h)["cls"]), level)
 
 
+# Дороги у входов те же, пока не менялись здания и проходимость земли.
+static var cache_road_connectivity := true
+var _road_cache := {}
+var _road_cache_place := -1
+var _road_cache_land := -1
+
+
 ## same_place — постройки и земля те же: проверки места перестройки — из запаса.
 ## instant_homes — этаж или перестройка: этим домам сразу показываем новый результат.
 func compute(same_place := false, instant_homes: Array = []) -> void:
 	if not same_place:
 		place_gen += 1
+	if cache_road_connectivity and (_road_cache_place != place_gen or _road_cache_land != land.gen):
+		_road_cache.clear()
+		_road_cache_place = place_gen
+		_road_cache_land = land.gen
 	var roster: Array = _staff_roster() if manual_hiring() else []
 	var houses := []
 	var residents := {}
@@ -1172,7 +1183,12 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 				if d.has("mon"):
 					prem.append(b)
 				continue
-		b["road"] = house_connected(b) if is_house(b) else d["kind"] in ["farm", "center"] or d.get("noroad", false) or _road_near(door_point(b), 1.7, b["cells"])
+		if cache_road_connectivity and _road_cache.has(id):
+			b["road"] = _road_cache[id]
+		else:
+			b["road"] = house_connected(b) if is_house(b) else d["kind"] in ["farm", "center"] or d.get("noroad", false) or _road_near(door_point(b), 1.7, b["cells"])
+			if cache_road_connectivity:
+				_road_cache[id] = b["road"]
 		if d.has("jobs") and b["road"] and not oc.has(int(id)):
 			var jb := jobs_of(b)
 			for c in jb:
