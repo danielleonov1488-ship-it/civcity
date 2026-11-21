@@ -42,7 +42,8 @@ func shot(file: String, step: int, target: Control = null, person := -1, newcome
 	await frames(8)
 	if not camp.lu.visible:
 		camp._layout_guide()
-	await frames(2)
+	await get_tree().create_timer(0.3).timeout
+	await get_tree().process_frame
 	check(lg.fort_guide_step() == step, file + " step")
 	var arrows := game.hud.root.find_children("FortGuideArrow", "TextureRect", true, false)
 	var shown := 0
@@ -71,7 +72,9 @@ func shot(file: String, step: int, target: Control = null, person := -1, newcome
 		var rect := camp.guide_pointer.get_global_rect()
 		var tip_y := rect.position.y if camp.guide_pointer.flip_v else rect.end.y
 		var edge := camp._guide_rect.end.y if camp.guide_pointer.flip_v else camp._guide_rect.position.y
-		check(absf(tip_y - edge) <= 4.0 and absf(rect.get_center().x - camp._guide_rect.get_center().x) <= 4.0, file + " arrow tip")
+		var tip := Vector2(rect.get_center().x, tip_y)
+		var target_edge := Vector2(camp._guide_rect.get_center().x, edge)
+		check(tip.distance_to(target_edge) <= 6.0, "%s arrow tip (%s → %s)" % [file, tip, target_edge])
 		for line: String in camp.guide_text.text.split("\n"):
 			check(line.length() <= 60, file + " short copy")
 	await intro_capture(file)

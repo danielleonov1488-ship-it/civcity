@@ -21,7 +21,9 @@ const LANES = [0.0, -1.1, 1.1, -2.1, 2.1, -0.55, 0.55];
 const ENEMY_LANES = [0.0, -1.2, 1.2, -2.2, 2.2, -0.6, 0.6];
 const PERK_K = { oil: [3.0, 0.15], burn: [0.4, 0.15], volley: [1.2, 0.15], testudo: [0.35, 0.04], bandage: [0.18, 0.03], horn: [1.3, 0.05] };
 const PERKS = { oil: { cd: 14.0 }, testudo: { cd: 20.0 }, bandage: { cd: 22.0 }, volley: { cd: 18.0 }, horn: { cd: 25.0 } };
-const PERK_MAX = 5, MAX_LEVEL = 40;
+const PERK_MAX = 5, LEGACY_MAX_LEVEL = 40, MAX_LEVEL = 50;
+const FORT_SNAPSHOT = 2;
+const FORT_UNITS = ['legionary', 'archer', 'priest', 'cavalry'];
 
 // бойцы Легиона — как Legion.UNITS (только то, что нужно бою)
 const UNITS = {
@@ -30,6 +32,8 @@ const UNITS = {
   archer: { hp: 150, atk: 19, armor: 10, range: 7.5, rate: 1.15, speed: 1.5, shot: 'arrow', vs: { ranged: 1.35, swift: 1.35 }, tags: ['human', 'ranged'] },
   ballista: { hp: 220, atk: 50, armor: 22, range: 13.0, rate: 3.0, speed: 0.0, shot: 'bolt', pierce: true, vs: { armored: 1.6, giant: 1.5 }, tags: ['machine', 'armored'] },
   catapult: { hp: 240, atk: 40, armor: 22, range: 14.0, min_range: 2.5, rate: 4.0, speed: 0.0, shot: 'stone', splash: 1.6, vs: { swarm: 1.4, human: 1.15 }, tags: ['machine'] },
+  priest: { hp: 170, atk: 10, armor: 12, range: 6.0, rate: 1.4, speed: 1.4, shot: 'sling', heal: 3.0, heal_every: 3.0, vs: {}, tags: ['human', 'ranged', 'support'] },
+  cavalry: { hp: 240, atk: 24, armor: 22, range: 1.2, rate: 1.0, speed: 2.6, backline: true, vs: { ranged: 1.3 }, tags: ['human', 'cavalry', 'swift'] },
 };
 
 // свой герой (Д11) — как Legion.HERO, Legion.HERO_CITY, Hero.KIT_ATK, Hero.KIT_ARMOR; уровень города и Склада оружия
@@ -79,13 +83,14 @@ class Rng {
 /* ---------- бойцы ---------- */
 
 // Legion.unit_stats
-function unitStats(type, lvl, atkB = 0, hpB = 0) {
+function unitStats(type, lvl, atkB = 0, hpB = 0, armorB = 0) {
   const U = UNITS[type];
   const hpK = 1.0 + 0.19 * (lvl - 1) + hpB;
   const atkK = 1.0 + 0.22 * (lvl - 1) + atkB;
-  return { key: type, level: lvl, hp: roundi(U.hp * hpK), atk: roundi(U.atk * atkK), armor: U.armor + 6.0 * (lvl - 1),
+  return { key: type, level: lvl, hp: roundi(U.hp * hpK), atk: roundi(U.atk * atkK), armor: U.armor + 6.0 * (lvl - 1) + armorB,
     range: U.range, min_range: U.min_range || 0.0, rate: U.rate, speed: U.speed, shot: U.shot || '', pierce: !!U.pierce,
-    splash: U.splash || 0.0, vs: U.vs, tags: U.tags, size: 1.0, boss: false };
+    splash: U.splash || 0.0, vs: U.vs, tags: U.tags, size: 1.0, boss: false,
+    ...(U.heal ? { heal: U.heal, heal_every: U.heal_every } : {}), ...(U.backline ? { backline: true } : {}) };
 }
 
 // Legion.hero_unit_stats в бою с городом (Legion.snap_hero): уровень — Казармы, город прибавляет HERO_CITY урона
@@ -164,6 +169,19 @@ class Sim {
   }
 
   _placeFormation(list, side) {
+    if (list.some(s => s.row !== undefined)) {
+      const rows = [[], []];
+      for (const s of list) rows[(s.row ?? (s.range > 3 ? 1 : 0)) >= 1 ? 1 : 0].push(s);
+      const sgn = side === 'ally' ? -1 : 1;
+      for (const [row, arr] of rows.entries()) {
+        const step = Math.min(1.1, 4.8 / Math.max(1.0, arr.length - 1.0));
+        for (const [i, s] of arr.entries()) {
+          const u = this._add(side, s, sgn * [4.6, 6.0][row], (i - (arr.length - 1) * 0.5) * step);
+          Object.assign(u, { row, home_x: u.x, home_z: u.z, has_home: true, wave: side === 'ally' ? -1 : 0 });
+        }
+      }
+      return;
+    }
     const key = s => (num(s.range) > 3.0 ? 1 : 0) * 2 + (num(s.speed) === 0.0 ? 1 : 0);
     const order = list.slice().sort((a, b) => key(a) - key(b));      // устойчивая, как вставки Godot
     const sgn = side === 'ally' ? -1.0 : 1.0;
@@ -206,6 +224,14 @@ class Sim {
     u.tags = s.tags || [];
     u.boss = !!s.boss;
     u.size = s.size === undefined ? 1.0 : num(s.size);
+    u.row = 0;
+    u.backline = !!s.backline;
+    u.heal_pow = s.heal ?? 0.0;
+    u.heal_k = s.heal_k ?? 1.0;
+    u.heal_t = u.heal_pow > 0.0 ? 2.0 : 0.0;
+    u.kite = s.set_kite && u.range_m > 3.0 ? 4.0 : (s.kite ?? 0.0);
+    for (const k of ['stun', 'rage', 'reflect', 'drain', 'revive']) u[`set_${k}`] = !!s[`set_${k}`];
+    u.stun_t = 0.0;
     u.timer = 0.3 + this.rng.randf() * 0.6;
     this.units.push(u);
     return u;
@@ -239,6 +265,10 @@ class Sim {
       const r = foes.filter(o => o.ranged());
       if (r.length) pool = r;
     }
+    if (u.backline) {
+      const back = pool.filter(o => o.row === 1 || o.ranged());
+      if (back.length) pool = back;
+    }
     if (u.pierce) {
       const big = foes.filter(o => o.boss || o.tags.includes('armored') || o.tags.includes('giant'));
       if (big.length) pool = big;
@@ -270,15 +300,41 @@ class Sim {
     if (!tg.alive) return;
     const crit = this.rng.randf() < 0.08;
     let d = atk * Sim._mult(vs, tg) * (0.9 + this.rng.randf() * 0.2) * k * (crit ? 1.6 : 1.0);
+    if (from?.set_rage && from.hpFrac() < 0.3) d *= 1.25;
     d *= 1.0 - tg.armor / (tg.armor + 100.0);
     if (tg.testudo > this.t) d *= 1.0 - tg.testudo_k;
     const dmg = Math.max(1, roundi(d));
     tg.hp -= dmg;
+    if (from?.set_stun && !from.stunned_one) {
+      from.stunned_one = true;
+      tg.stun_t = this.t + 1.0;
+      tg.timer = Math.max(tg.timer, 1.0);
+    }
+    if (tg.set_reflect && from?.alive && from !== tg) {
+      from.hp -= Math.max(1, roundi(dmg * 0.1));
+      if (from.hp <= 0.0) this._kill(from);
+    }
     if (tg.hp <= 0.0) this._kill(tg);
   }
 
   _kill(tg) {
     if (!tg.alive) return;
+    if (tg.set_revive && !tg.revived) {
+      tg.revived = true;
+      tg.hp = tg.max_hp * 0.3;
+      tg.burn = 0.0;
+      return;
+    }
+    if (tg.side === 'enemy') {
+      for (const a of this.units) {
+        if (!a.alive || !a.set_drain || dist(a, tg) >= 3.0) continue;
+        for (const o of this.units) {
+          if (o.alive && o.side === a.side && dist(o, a) < 2.2 && o.hp < o.max_hp) {
+            o.hp += Math.min(roundi(o.max_hp * 0.05 * o.heal_k), Math.ceil(o.max_hp - o.hp));
+          }
+        }
+      }
+    }
     tg.alive = false;
     tg.hp = 0.0;
     tg.target = null;
@@ -369,7 +425,7 @@ class Sim {
         break;
       case 'bandage':
         for (const u of allies) {
-          const h = roundi(u.max_hp * (PERK_K.bandage[0] + PERK_K.bandage[1] * (lvl - 1)));
+          const h = roundi(u.max_hp * (PERK_K.bandage[0] + PERK_K.bandage[1] * (lvl - 1)) * u.heal_k);
           u.hp = Math.min(u.max_hp, u.hp + h);
         }
         break;
@@ -416,6 +472,22 @@ class Sim {
     }
   }
 
+  _priestHeal(u, dt) {
+    u.heal_t -= dt;
+    if (u.heal_t > 0.0) return;
+    let wounded = null, low = 1.0;
+    for (const o of this.units) {
+      if (!o.alive || o.side !== u.side || o.hp >= o.max_hp || dist(u, o) > u.range_m || o.hpFrac() >= low) continue;
+      low = o.hpFrac();
+      wounded = o;
+    }
+    if (!wounded) { u.heal_t = 0.5; return; }
+    u.heal_t = 3.0;
+    u.timer = Math.max(u.timer, 0.6);
+    const h = Math.min(roundi(u.heal_pow * u.atk * u.heal_k), Math.ceil(wounded.max_hp - wounded.hp));
+    if (h > 0) wounded.hp += h;
+  }
+
   step(dt = DT) {
     if (this.result) return;
     this.t += dt;
@@ -439,6 +511,8 @@ class Sim {
         if (u.x < 3.5 + (u.ranged() ? 1.8 : 0.0)) u.entering = false;
         continue;
       }
+      if (u.heal_pow > 0.0) this._priestHeal(u, dt);
+      if (u.stun_t > this.t) continue;
       u.retarget -= dt;
       if (u.target === null || !u.target.alive || u.retarget <= 0.0) {
         u.target = this._pickTarget(u);
@@ -463,9 +537,16 @@ class Sim {
         if (u.charge && d < 4.0 && u.charge_cd <= 0.0) {
           u.charge_cd = 7.0;
           this._damage(u.atk, u.vs, u, tg, 1.8);
-          tg.x += sign(tg.x - u.x) * 1.2;
+          tg.x = clamp(tg.x + sign(tg.x - u.x) * 1.2, FIELD_X0, FIELD_X1);
         }
       } else {
+        const kdir = u.side === 'ally' ? -1.0 : 1.0;
+        if (u.kite > 0.0 && (kdir > 0.0 ? u.x < FIELD_X1 - 0.6 : u.x > FIELD_X0 + 0.6) &&
+            this.units.some(o => o.alive && o.side !== u.side && !o.ranged() && o.speed > 0.0 && dist(u, o) < 2.0)) {
+          const back = Math.min(u.speed * fast * dt, u.kite);
+          u.x += back * kdir;
+          u.kite -= back;
+        }
         if (u.min_range > 0.0 && d < u.min_range) u.timer = Math.max(u.timer, 0.2);
         u.timer -= dt * fast;
         if (u.timer <= 0.0 && d <= reach + 0.05) {
@@ -550,8 +631,31 @@ function cleanInputs(list) {
     if (!Number.isInteger(st) || st < 0 || st < last || st > 6000) return null;
     last = st;
     if (e[1] === 'auto') out.push([st, 'auto', !!e[2]]);
-    else if (typeof e[1] === 'string' && PERKS[e[1]]) out.push([st, e[1]]);
+    else if (typeof e[1] === 'string' && own(PERKS, e[1])) out.push([st, e[1]]);
     else return null;
+  }
+  return out;
+}
+
+// Поля снаряжения — как Legion.gear_snapshot_stats.
+function gearSnapshotStats(raw) {
+  const out = {};
+  for (const k of ['hp', 'atk', 'armor', 'rate', 'range', 'speed', 'heal', 'heal_every', 'heal_k', 'row', 'place']) {
+    if (Number.isFinite(raw[k])) out[k] = clamp(raw[k], k === 'rate' ? 0.05 : 0.0, 1000000.0);
+  }
+  for (const k of ['hp', 'atk', 'row', 'place']) if (own(out, k)) out[k] = Math.trunc(out[k]);
+  for (const k of ['stun', 'rage', 'reflect', 'drain', 'kite', 'revive']) {
+    if (raw[`set_${k}`] === true) out[`set_${k}`] = true;
+  }
+  if (raw.vs && typeof raw.vs === 'object' && !Array.isArray(raw.vs)) {
+    out.vs = Object.fromEntries(Object.entries(raw.vs).filter(([, v]) => Number.isFinite(v)).map(([k, v]) => [k, clamp(v, 0, 10)]));
+  }
+  if (Array.isArray(raw.tags)) out.tags = raw.tags.filter(v => typeof v === 'string');
+  if (raw.gear_look && typeof raw.gear_look === 'object' && !Array.isArray(raw.gear_look)) {
+    out.gear_look = {};
+    for (const slot of ['weapon', 'offhand', 'helmet', 'armor']) {
+      if (own(raw.gear_look, slot)) out.gear_look[slot] = clamp(Math.trunc(num(raw.gear_look[slot])), 0, 4);
+    }
   }
   return out;
 }
@@ -559,25 +663,30 @@ function cleanInputs(list) {
 // Бойцы снимка отряда — как Legion.snapshot_stats.
 function snapStats(snap) {
   const ab = clamp(num(snap.atk_b), 0.0, 0.6), hb = clamp(num(snap.hp_b), 0.0, 0.6);
+  const fort = snap.v === FORT_SNAPSHOT;
+  const max = fort ? MAX_LEVEL : LEGACY_MAX_LEVEL;
   const out = [];
   (Array.isArray(snap.squad) ? snap.squad : []).forEach(e => {
     if (!e || typeof e !== 'object' || Array.isArray(e)) return;
-    function add(stats) {
-      if (Number.isInteger(e.place) && e.place >= 0 && e.place < 5) {
-        stats.place = e.place;
-        stats.row = e.place < 3 ? 0 : 1;
-      }
-      out.push(stats);
-    }
+    const level = clamp(Math.trunc(num(e.level)) || 1, 1, max);
+    let stats;
     if (e.type === 'hero') {
-      if (e.hero_v === 3 && own(UNITS, e.unit)) {
-        add(Object.assign(unitStats(e.unit, clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), ab, hb), { key: 'hero' }));
-        return;
-      }
-      add(heroStats(clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), clamp(Math.trunc(num(e.city)), 0, CITY_MAX), clamp(Math.trunc(num(e.kit)), 0, KIT_MAX), ab, hb));
+      stats = e.hero_v === 3 && FORT_UNITS.includes(e.unit)
+        ? Object.assign(unitStats(e.unit, level, ab, hb), { key: 'hero' })
+        : heroStats(level, clamp(Math.trunc(num(e.city)), 0, CITY_MAX), clamp(Math.trunc(num(e.kit)), 0, KIT_MAX), ab, hb);
     } else if (typeof e.type === 'string' && own(UNITS, e.type)) {
-      add(unitStats(e.type, clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), ab, hb));
+      stats = unitStats(e.type, level, ab, hb);
     }
+    if (!stats) return;
+    // Маршруты сохраняют здесь только числа, пересчитанные по облаку.
+    if (e.gear_v === 1 && e.stats3 && typeof e.stats3 === 'object' && !Array.isArray(e.stats3)) {
+      Object.assign(stats, gearSnapshotStats(e.stats3));
+    }
+    if (Number.isInteger(e.place) && e.place >= 0 && e.place < 5) {
+      stats.place = e.place;
+      stats.row = e.place < 3 ? 0 : 1;
+    }
+    out.push(stats);
   });
   return out;
 }
@@ -588,7 +697,7 @@ function pvpSetup(att, def, seed) {
   const stats = snapStats;
   const perks = p => {
     const o = {};
-    for (const id of Object.keys(p && typeof p === 'object' ? p : {})) if (PERKS[id]) o[id] = clamp(Math.trunc(num(p[id])), 0, PERK_MAX);
+    for (const id of Object.keys(p && typeof p === 'object' ? p : {})) if (own(PERKS, id)) o[id] = clamp(Math.trunc(num(p[id])), 0, PERK_MAX);
     return o;
   };
   return { squad: stats(att), waves: [stats(def)], perks: perks(att.perks), enemy_perks: perks(def.perks), enemy_auto: true,
@@ -600,4 +709,5 @@ function replayPvp(att, def, seed, inputs) {
   return sim.run(inputs);
 }
 
-module.exports = { Sim, Rng, unitStats, heroStats, snapStats, vlen, cleanInputs, pvpSetup, replayPvp, DT, TIME_LIMIT, CITY_MAX, KIT_MAX };
+module.exports = { Sim, Rng, unitStats, heroStats, snapStats, vlen, cleanInputs, pvpSetup, replayPvp, DT, TIME_LIMIT,
+  CITY_MAX, KIT_MAX, LEGACY_MAX_LEVEL, MAX_LEVEL, FORT_SNAPSHOT, FORT_UNITS };

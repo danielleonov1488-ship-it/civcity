@@ -1,115 +1,213 @@
 'use strict';
-// Проверка событий недели (server/events.js): node server/test_events.js — свой сервер, своя новая папка данных.
-// Правило недели на отряд (сверка с облаком), враг недели один на всех, попытки в сутки, победу сервер повторяет сам
-// (тест считает тот же бой у себя), слишком быстрый итог не засчитан, награда за первую победу на сложности, таблица.
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const sim = require('./legion_sim');
-const ev = require('./events');
+// Локальный HTTP-тест. Каждое правило получает собственный город и неделю.
+const assert = require('node:assert/strict');
+const { spawn } = require('node:child_process');
+const { mkdirSync } = require('node:fs');
+const path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
+const { RULES, enemyOf, scoreOf } = require('./events');
+const { FORT_SNAPSHOT, replayPvp } = require('./legion_sim');
 
 const DATA = process.env.TEST_DATA_DIR || path.join(__dirname, '..', '.work', 'srvtest_events', String(Date.now()));
 const PORT = +process.env.TEST_PORT || 3016;
 const API = `http://127.0.0.1:${PORT}/api`;
-let fails = 0;
-const ok = (c, msg, extra) => { console.log((c ? 'OK   ' : 'FAIL ') + msg + (c || extra === undefined ? '' : '  ' + JSON.stringify(extra))); if (!c) fails++; };
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+const DAY = 864e5;
+const NOW = Date.UTC(2026, 10, 2, 12);
+const AUTO = [[0, 'auto', true]];
 
-function start() {
+function start(data, week) {
   return new Promise((resolve, reject) => {
-    const p = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', path.join(__dirname, 'index.js')], {
-      env: { ...process.env, PORT: String(PORT), DATA_DIR: DATA, ORIGINS: '*', SMTP_HOST: '', SMTP_PASS: '' },
-      stdio: ['ignore', 'pipe', 'pipe'] });
-    let done = false;
-    p.stdout.on('data', d => { if (!done && /server on/.test(String(d))) { done = true; resolve(p); } });
+    const boot = [
+      'Date.now = () => Number(process.env.TEST_NOW);',
+      'let seed = 0; require("node:crypto").randomInt = () => ++seed;',
+      'require(process.argv[1]);',
+    ].join(' ');
+    const p = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', '-e',
+      boot, path.join(__dirname, 'index.js')], {
+      env: { ...process.env, PORT: String(PORT), DATA_DIR: data, ORIGINS: '*', SMTP_HOST: '', SMTP_PASS: '',
+        TEST_NOW: String(NOW), EVENT_WEEK_MS: String(7 * DAY), EVENT_EPOCH_MS: String(NOW - (7 * week + 1) * DAY) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    p.stdout.on('data', d => { if (/server on/.test(String(d))) resolve(p); });
     p.stderr.on('data', d => process.stderr.write('[srv] ' + d));
-    p.on('exit', c => { if (!done) reject(new Error('server exit ' + c)); });
+    p.on('error', reject);
+    p.on('exit', c => reject(new Error('server exit ' + c)));
   });
 }
-const stop = p => new Promise(r => { p.on('exit', r); p.kill(); });
-async function call(method, p, body, token) {
+
+const stop = p => new Promise(resolve => {
+  if (p.exitCode !== null || p.signalCode !== null) return resolve();
+  p.once('exit', resolve);
+  p.kill();
+});
+
+async function call(method, route, body, token, status = 200) {
   const headers = {};
   if (token) headers.Authorization = 'Bearer ' + token;
-  let b;
-  if (body !== undefined) { headers['Content-Type'] = 'application/json'; b = JSON.stringify(body); }
-  const r = await fetch(API + p, { method, headers, body: b });
-  let data = null;
-  try { data = await r.json(); } catch (e) { /* */ }
-  return { status: r.status, data };
-}
-function city({ level, buildings, levels, progress = 40 }) {
-  return JSON.stringify({ version: 2, money: 9000, day: 30, level, research: ['legion'], next_id: buildings.length + 1,
-    buildings: buildings.map((t, i) => ({ id: i + 1, type: t, tier: 1, x: 100 + i * 4, z: 90, pop: 0 })),
-    legion: { v: 1, levels, upg: {}, squad: [], defense: [], perks: { oil: 3, testudo: 2 }, progress, built: [], glory: 10 } });
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const reply = await fetch(API + route, { method, headers, body: JSON.stringify(body) });
+  const result = await reply.json();
+  assert.equal(reply.status, status, `${method} ${route}: ${JSON.stringify(result)}`);
+  return result;
 }
 
-(async () => {
-  fs.mkdirSync(DATA, { recursive: true });
-  // правило и враг — чистые функции
-  const w = ev.weekAt(Date.now());
-  const rule = ev.ruleOf(w);
-  ok(ev.enemyOf(w, 1).squad.length === 4 && JSON.stringify(ev.enemyOf(w, 2)) === JSON.stringify(ev.enemyOf(w, 2)), 'week enemy: deterministic, 4 units on tier 1');
-  const r0 = ev.applyRule({ id: 'infantry', types: ['legionary', 'spearman'] }, { squad: [{ type: 'hero', level: 9, city: 3, kit: 1 }, { type: 'archer', level: 5 }, { type: 'spearman', level: 4 }], perks: { oil: 2 } });
-  ok(r0.squad.length === 2 && r0.squad[0].type === 'legionary' && r0.squad[0].level === 9 && r0.perks.oil === 2, 'rule «infantry»: hero → legionary, archer dropped', r0);
-  ok(ev.applyRule({ perks: false }, { squad: [{ type: 'archer', level: 3 }], perks: { oil: 3 } }).perks.oil === undefined, 'rule «no perks»');
-  ok(ev.applyRule({ max: 3 }, { squad: [1, 2, 3, 4].map(() => ({ type: 'legionary', level: 2 })) }).squad.length === 3, 'rule «trio»');
-  const srv = await start();
-  let r;
+function fortCity() {
+  const classes = ['legionary', 'cavalry', 'priest', 'archer', 'archer'];
+  const items = [];
+  const soldiers = classes.map((cls, place) => {
+    const id = place + 1;
+    const gear = {};
+    for (const slot of ['weapon', 'offhand', 'helmet', 'armor']) {
+      const item = { id: items.length + 1, on: id, cls, slot, tier: 10, rarity: 4 };
+      gear[slot] = item.id;
+      items.push(item);
+    }
+    return { id, cls, rank: 49, stars: 5, hero: place === 3, gear };
+  });
+  return {
+    version: 2, level: 6, legion_v: 3, money: 9000, research: [], buildings: [],
+    hero: { m: { pn: 'Гай Валерий', sx: 0, look: {} } },
+    legion: {
+      v: 3, fort: { roles_v: 1, plots: [{ b: 'hq', lv: 6 }, { b: 'barracks', lv: 10 }] },
+      squad3: soldiers.map(s => s.id), perks: { oil: 3, testudo: 2 }, flags: { camp_open: true }, soldiers, items,
+    },
+  };
+}
+
+function fortSnapshot(city) {
+  const squad = city.legion.soldiers.map((s, place) => ({
+    sid: s.id, place, type: s.hero ? 'hero' : s.cls, level: s.rank + 1,
+    ...(s.hero ? { unit: s.cls, hero_v: 3 } : {}),
+  }));
+  return { v: FORT_SNAPSHOT, squad, perks: city.legion.perks };
+}
+
+// Сдвигаем время начала только в БД теста. Так обе ветки проверки времени не зависят от скорости ПК.
+function ageBattle(data, battle, seconds) {
+  const db = new DatabaseSync(path.join(data, 'civcity.db'));
   try {
-    r = await call('POST', '/register', { email: 'a@events.test', password: 'secreta' });
-    const tok = r.data.token;
-    r = await call('GET', '/health');
-    ok(r.data.events === true, 'health: events');
-    r = await call('GET', '/events/state', undefined, tok);
-    ok(r.status === 200 && r.data.rule.id === rule.id && r.data.tiers.length === 3 && r.data.me.tries_left === 5 && r.data.top.length === 0,
-      `state: rule «${r.data && r.data.rule.name}», 3 tiers, 5 tries`, r.data);
-    const all = ['barracks', 'range', 'spearcamp', 'ballistae', 'catapults'];
-    r = await call('PUT', '/save?game=rome2', { data: city({ level: 6, buildings: all, levels: { legionary: 20, archer: 20, spearman: 20, ballista: 20, catapult: 20 } }), force: true }, tok);
-    ok(r.status === 200, 'cloud city with a strong legion');
-    const snap = { squad: [['legionary', 25], ['archer', 20], ['spearman', 20], ['ballista', 20], ['catapult', 20], ['archer', 20], ['legionary', 20]].map(([type, level]) => ({ type, level })), perks: { oil: 3, testudo: 2 } };
-    r = await call('POST', '/events/trial/attack', { tier: 1, snapshot: snap }, tok);
-    ok(r.status === 200 && r.data.battle && r.data.enemy.squad.length === 4 && r.data.attack.squad.every(e => e.level <= 20) && r.data.tries_left === 4,
-      'attack tier 1: battle, week enemy, squad clamped to cloud levels and the rule applied', r.data && Object.assign({}, r.data, { enemy: undefined }));
-    const A = r.data;
-    const inputs = [[0, 'auto', true]];
-    const rp = sim.replayPvp(A.attack, A.enemy, A.seed, inputs);
-    ok(rp && rp.win, `test replays the same battle: win in ${rp && rp.time.toFixed(1)} s`);
-    // слишком рано — не засчитан
-    r = await call('POST', '/events/trial/result', { battle: A.battle, win: true, inputs }, tok);
-    const early = (rp.time / 3 - 2) > 0.5;
-    if (early) ok(r.data.accepted === false && r.data.score === 0 && /быстрее/.test(r.data.reason), 'too fast → not counted', r.data);
-    else ok(r.data.accepted && r.data.score > 1000, 'short battle counted', r.data);
-    // второй бой — честно ждём
-    r = await call('POST', '/events/trial/attack', { tier: 1, snapshot: snap }, tok);
-    const B = r.data;
-    const rp2 = sim.replayPvp(B.attack, B.enemy, B.seed, inputs);
-    await sleep(Math.max(0, (rp2.time / 3 - 2) * 1000) + 300);
-    r = await call('POST', '/events/trial/result', { battle: B.battle, win: true, inputs }, tok);
-    ok(r.data.accepted && r.data.win && r.data.score === ev.scoreOf(1, rp2) && r.data.score > 1000, `win counted: ${r.data.score} points`, r.data);
-    const firstReward = early ? (r.data.reward.money === 800 && r.data.first) : true;
-    ok(firstReward, 'first win on tier 1 this week: 800 denarii', r.data.reward);
-    ok(r.data.me.best === r.data.score && r.data.top.length === 1 && r.data.top[0].score === r.data.score && r.data.me.place === 1, 'best score and table');
-    r = await call('POST', '/events/trial/result', { battle: B.battle, win: true, inputs }, tok);
-    ok(r.data.repeat === true, 'same battle again → repeat');
-    // сочинённая победа — не сходится
-    r = await call('POST', '/events/trial/attack', { tier: 3, snapshot: { squad: [{ type: 'legionary', level: 1 }] } }, tok);
-    const C = r.data;
-    const rp3 = sim.replayPvp(C.attack, C.enemy, C.seed, []);
-    await sleep(500);
-    r = await call('POST', '/events/trial/result', { battle: C.battle, win: true, inputs: [] }, tok);
-    ok(rp3 && !rp3.win && r.data.accepted === false && r.data.score === 0, 'fake win of a weak squad → not counted', r.data.reason);
-    // попытки
-    r = await call('POST', '/events/trial/attack', { tier: 1, snapshot: snap }, tok);
-    r = await call('POST', '/events/trial/attack', { tier: 1, snapshot: snap }, tok);
-    ok(r.status === 200 && r.data.tries_left === 0, 'fifth try of the day is the last');
-    r = await call('POST', '/events/trial/attack', { tier: 1, snapshot: snap }, tok);
-    ok(r.status === 429, 'five tries a day', r.data);
-  } catch (e) {
-    console.error(e);
-    fails++;
+    const update = db.prepare('UPDATE event_battles SET created = ? WHERE token = ?');
+    assert.equal(update.run(NOW - Math.ceil(seconds * 1000), battle).changes, 1);
+  } finally {
+    db.close();
+  }
+}
+
+async function testWeek(rule, week) {
+  const data = path.join(DATA, rule.id);
+  mkdirSync(data, { recursive: true });
+  const srv = await start(data, week);
+  try {
+    assert.equal((await call('GET', '/health')).events, true);
+    const { token } = await call('POST', '/register', { email: 'fort@events.test', password: 'fort-test-pass' });
+    const state = await call('GET', '/events/state', undefined, token);
+    assert.equal(state.week, week);
+    assert.equal(state.rule.id, rule.id);
+    assert.equal(state.tiers.length, 3);
+    assert.equal(state.me.tries_left, 5);
+    assert.deepEqual(state.top, []);
+
+    const city = fortCity();
+    const snapshot = fortSnapshot(city);
+    await call('PUT', '/save?game=rome2', { data: JSON.stringify(city), force: true }, token);
+    const attack = (tier, squad = snapshot, status = 200) =>
+      call('POST', '/events/trial/attack', { tier, snapshot: squad }, token, status);
+    const report = bt => call('POST', '/events/trial/result', { battle: bt.battle, win: true, inputs: AUTO }, token);
+
+    const cavalry = { ...snapshot, squad: [snapshot.squad[1]] };
+    if (rule.types) {
+      await attack(1, cavalry, 409);
+      assert.equal((await call('GET', '/events/state', undefined, token)).me.tries_left, 5);
+    }
+
+    const first = await attack(1);
+    assert.equal(first.rule.id, rule.id);
+    assert.equal(first.tries_left, 4);
+    assert.equal(first.attack.v, FORT_SNAPSHOT);
+    assert.deepEqual(first.enemy, enemyOf(week, 1));
+    const expectedPlaces = { infantry: [0], ranged: [3, 4], trio: [0, 1, 2] };
+    assert.deepEqual(first.attack.squad.map(e => e.place), expectedPlaces[rule.id] || [0, 1, 2, 3, 4]);
+    assert.deepEqual(first.attack.perks, rule.perks === false ? {} : snapshot.perks);
+    for (const e of first.attack.squad) {
+      const source = snapshot.squad[e.place];
+      assert.equal(e.type, source.type);
+      assert.equal(e.unit, source.unit);
+      assert.equal(e.level, rule.maxlvl || 50);
+      assert.equal(e.stats3.row, e.place < 3 ? 0 : 1);
+      assert.ok(Number.isFinite(e.stats3.atk) && e.stats3.atk > 0 && e.stats3.hp > 0);
+      assert.equal(e.sid, undefined);
+    }
+    if (rule.maxlvl) {
+      // Казарма X, ранг 14, пять звёзд и оружие X, легендарное.
+      assert.equal(first.attack.squad[0].stats3.atk, 182);
+    }
+    const replay = replayPvp(first.attack, first.enemy, first.seed, AUTO);
+    assert.ok(replay.win, 'fully equipped fort wins the starter trial');
+    const early = replay.time > 6;
+    const immediate = await report(first);
+    if (early) {
+      assert.equal(immediate.accepted, false);
+      assert.match(immediate.reason, /быстрее/);
+      assert.equal(immediate.score, 0);
+    } else {
+      assert.equal(immediate.accepted, true);
+      assert.equal(immediate.first, true);
+    }
+
+    const second = await attack(1);
+    const replay2 = replayPvp(second.attack, second.enemy, second.seed, AUTO);
+    assert.ok(replay2.win);
+    ageBattle(data, second.battle, replay2.time / 3);
+    const win = await report(second);
+    assert.equal(win.accepted, true);
+    assert.equal(win.win, true);
+    assert.equal(win.score, scoreOf(1, replay2));
+    assert.equal(win.first, early);
+    assert.deepEqual(win.reward, early ? { money: 800, glory: 4 } : {});
+    assert.equal(win.me.best, win.top[0].score);
+    assert.equal(win.me.place, 1);
+    assert.equal((await report(second)).repeat, true);
+
+    const weakType = rule.id === 'ranged' ? 'archer' : 'legionary';
+    const weak = await attack(3, { squad: [{ type: weakType, level: 1 }] });
+    assert.equal(weak.attack.v, 1);
+    assert.equal(weak.attack.squad[0].type, weakType);
+    assert.equal(replayPvp(weak.attack, weak.enemy, weak.seed, AUTO).win, false);
+    const rejected = await report(weak);
+    assert.equal(rejected.accepted, false);
+    assert.equal(rejected.score, 0);
+    assert.match(rejected.reason, /не сходится/);
+    if (!rule.types) {
+      const cav = await attack(1, cavalry);
+      assert.deepEqual(cav.attack.squad.map(e => e.type), ['cavalry']);
+      assert.ok(Number.isFinite(replayPvp(cav.attack, cav.enemy, cav.seed, AUTO).time));
+    } else {
+      await attack(1);
+    }
+    assert.equal((await attack(1)).tries_left, 0);
+    await attack(1, snapshot, 429);
+    console.log(`OK   ${rule.id}: fort and legacy squads, replay, reward, score and daily limit`);
+    return early;
   } finally {
     await stop(srv);
   }
-  console.log(fails ? `${fails} FAILED` : 'ALL OK');
-  process.exit(fails ? 1 : 0);
+}
+
+(async () => {
+  let failed = 0;
+  let checkedEarly = false;
+  for (const [week, rule] of RULES.entries()) {
+    try {
+      checkedEarly = await testWeek(rule, week) || checkedEarly;
+    } catch (error) {
+      failed++;
+      console.error('FAIL ' + rule.id, error);
+    }
+  }
+  if (!checkedEarly) {
+    failed++;
+    console.error('FAIL every winning replay completed in 6 seconds or less');
+  }
+  console.log(failed ? `${failed} FAILED` : 'ALL OK');
+  process.exitCode = failed ? 1 : 0;
 })();

@@ -16,6 +16,8 @@ const SHOTS := "D:/CivCity/.work/gd/b/"
 
 var game
 var fails := 0
+var profile := ""
+var out := SHOTS
 
 
 func check(ok: bool, what: String, extra = null) -> bool:
@@ -32,18 +34,46 @@ func frames(n: int) -> void:
 
 func shot(name: String) -> void:
 	await frames(6)
-	DirAccess.make_dir_recursive_absolute(SHOTS)
-	get_viewport().get_texture().get_image().save_png(SHOTS + name)
-	print("SHOT ", SHOTS + name)
+	DirAccess.make_dir_recursive_absolute(out)
+	var path := out.path_join(name)
+	if check(get_viewport().get_texture().get_image().save_png(path) == OK, "снимок " + name):
+		print("SHOT ", path)
 
 
 func _ready() -> void:
+	_start.call_deferred()
+
+
+func _start() -> void:
+	profile = GamePaths.save_dir().path_join("gfx_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()])
+	out = OS.get_environment("CIVCITY_GFX_SHOTS")
+	if out.is_empty():
+		out = SHOTS
+	if not check(DirAccess.make_dir_recursive_absolute(profile) == OK, "папка настроек проверки"):
+		_finish()
+		return
+	var f := FileAccess.open(profile.path_join("settings.json"), FileAccess.WRITE)
+	if not check(f != null, "файл настроек проверки"):
+		_finish()
+		return
+	f.store_string(JSON.stringify({"quality": "high", "autosave": false, "fullscreen": false, "lang": "ru", "ui_scale": 1.0}))
+	f.close()
+	GamePaths._dir = profile
+	Gfx._tdir = profile.path_join("tex2k")
+	DirAccess.make_dir_recursive_absolute(Gfx._tdir)
+	OS.set_environment("CIVCITY_HEROSCREEN", "0")
+	var main := load("res://main.tscn") as PackedScene
+	if main != null and main.can_instantiate():
+		game = main.instantiate() as Game
+	if not check(game != null, "главная сцена игры загрузилась"):
+		_finish()
+		return
 	_table()
 	_decide()
-	Game.boot = {"new": "1", "hour": "11"}
-	game = (load("res://main.tscn") as PackedScene).instantiate()
+	Game.boot = {"new": "1", "hour": "11", "nologin": "1"}
+	game.can_save = false
 	add_child(game)
-	_run()
+	await _run()
 
 
 ## Таблица: название видеокарты → уровень
@@ -154,7 +184,7 @@ func _vram_copy() -> void:
 			img.set_pixel(x, y, Color(float(x % 64) / 64.0, float(y % 32) / 32.0, 0.5 if (x / 128 + y / 128) % 2 == 0 else 0.2, 1.0))
 	img.generate_mipmaps()
 	var err := img.compress(Image.COMPRESS_BPTC)
-	var dir := "user://test_gfx_ctex"
+	var dir := profile.path_join("ctex")
 	DirAccess.make_dir_recursive_absolute(dir)
 	var p0 := dir.path_join("bc7.ctex")
 	_write_ctex(p0, img, 0)
@@ -197,8 +227,6 @@ func _vram_copy() -> void:
 			"Basis: карта рельефа (RG), обрезанный файл и испорченное оглавление — копии нет (оригинал), без чтения с видеокарты")
 	else:
 		print("GFX note: картинки Synty не в Basis (deploy/tex_vram.py status) — проверки файла Basis пропущены")
-	for f in DirAccess.get_files_at(dir):
-		DirAccess.remove_absolute(dir.path_join(f))
 
 
 func _put(path: String, b: PackedByteArray) -> void:
@@ -255,9 +283,18 @@ func _press(b: BaseButton) -> void:
 
 
 func _run() -> void:
-	while not game.ready_done:
-		await frames(5)
+	var deadline := Time.get_ticks_msec() + 120_000
+	while not game.ready_done and Time.get_ticks_msec() < deadline:
+		await get_tree().process_frame
+	if not check(game.ready_done, "игра готова"):
+		_finish()
+		return
 	await frames(30)
+	# Сторож и совет о графике ждут завершения обучения.
+	game.tutorial.finish()
+	game.hud.set_speed(0.0)
+	game.settings["advisor_off"] = false
+	game.hud.advisor_panel.hide()
 	var gfx: Gfx = game.gfx
 	var hud = game.hud
 	check(gfx != null and str(game.settings.get("quality_auto", "")) == "kept" and game.settings["quality"] == "high",
@@ -283,7 +320,6 @@ func _run() -> void:
 	var path: String = mat.albedo_texture.resource_path if mat else ""
 	var ctex := Gfx._ctex(path)
 	var cache := Gfx._cache_file(path, ctex)
-	DirAccess.remove_absolute(cache)
 	var t0 := Time.get_ticks_usec()
 	var a := Gfx._from_ctex(ctex)
 	var miss_ms := (Time.get_ticks_usec() - t0) / 1000.0
@@ -378,6 +414,7 @@ func _run() -> void:
 	# сторож кадров: 20 с в среднем меньше 40 кадров на «Высокой» — один совет с кнопкой
 	game.settings["quality"] = "high"
 	game.settings.erase("tip_q_low")
+	var normal_skip_size: int = hud.adv_skip.get_theme_font_size("font_size")
 	game._apply_quality()
 	gfx.auto_on = true
 	hud.advisor_panel.visible = false            # приветствие советника закрыли — совет сторожа ждёт, пока советник свободен
@@ -396,7 +433,8 @@ func _run() -> void:
 		"«Включить «Низкую»»: включилась, это выбор игрока")
 	hud.advisor("Проверка", "обычный совет")
 	check(hud.adv_skip.text == "Пропустить обучение" and not hud.adv_skip.visible and hud.adv_ok.text == "Понятно"
-		and hud.adv_skip.get_theme_font_size("font_size") == 14, "следующий совет — с прежними кнопками («Понятно»)")
+		and hud.adv_skip.get_theme_font_size("font_size") == normal_skip_size, "следующий совет — с прежними кнопками («Понятно»)",
+		[hud.adv_skip.text, hud.adv_skip.visible, hud.adv_ok.text, hud.adv_skip.get_theme_font_size("font_size")])
 	hud.advisor_panel.visible = false
 	for i in 400:
 		gfx._watch_step(0.05)
@@ -444,6 +482,12 @@ func _run() -> void:
 		"всё записано в settings.json (уровень и флаги советов)", saved)
 	_medium_light()
 	_vram_copy()
-	game.can_save = false
+	await _finish()
+
+
+func _finish() -> void:
+	if is_instance_valid(game):
+		game.queue_free()
+		await frames(2)
 	print("GFX DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)

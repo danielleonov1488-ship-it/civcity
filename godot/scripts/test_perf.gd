@@ -30,7 +30,7 @@ const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## 12.11 позже: фонтан, нимфей и арка снова Synty, детали Synty в своих зданиях, своя станция — golden_s8 (сборка 52)
 ## 12.11 «Высокая» облегчена для всех (без SDFGI/SSIL, атлас 4096, MSAA 2x), «Средняя» — атлас 4096 и мягкость низкая:
 ## эталон записан заново (golden_p1, ветка perf-120 от сборки 52); golden_s8 остаётся у линий без этой правки
-const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s9"
+const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s9c"
 const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22,whole:192:160:15:55:240"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)
@@ -1389,6 +1389,7 @@ func _freeze(citizens := false) -> void:
 		n.visible = false
 	Engine.time_scale = 0.0
 	MeadowNature.freeze(true)                 # листва, мельницы и течение ручьёв качаются по TIME шейдера — замирают
+	_freeze_wheat(true)
 
 
 func _unfreeze() -> void:
@@ -1401,6 +1402,7 @@ func _unfreeze() -> void:
 		_people_frozen = false
 	Engine.time_scale = 1.0
 	MeadowNature.freeze(false)
+	_freeze_wheat(false)
 	for n in _hidden:
 		if is_instance_valid(n):
 			(n as Node3D).visible = true
@@ -1408,6 +1410,16 @@ func _unfreeze() -> void:
 	game.hud.visible = true
 	game.rig.cine = false
 	game.hud.set_speed(1.0)
+
+
+# TIME шейдера не останавливается вместе с городом.
+func _freeze_wheat(on: bool) -> void:
+	for key: String in [CatCivic.WHEAT, CatCivic.WHEAT_DENSE]:
+		var mesh := Parts._special_mesh(key)
+		var mat := mesh.surface_get_material(0) as ShaderMaterial
+		if not mat.has_meta("sway0"):
+			mat.set_meta("sway0", mat.get_shader_parameter("sway"))
+		mat.set_shader_parameter("sway", 0.0 if on else float(mat.get_meta("sway0")))
 
 
 func _snap() -> Image:

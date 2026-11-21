@@ -222,12 +222,18 @@ func run() -> void:
 	check(hud.pointer_target == hud.badges[badge_key]["n"], "pointer on nearest fitting home")
 	check(hud.badges[badge_key]["n"].texture == MapBadge.badge_texture("home_room"), "home_room badge")
 	await pointer_shot(hud.badges[badge_key]["n"], "05_settle_home.png")
-	check(game._settle_into(fitting[0]), "settle chosen family")
-	check(tut.cur_id() == "house" and hud.pointer_target == null and not hud.pointer.visible, "assignment completes step and hides arrow immediately")
-	await shot("05_assignment_no_arrow.png")
+	var reserved: Dictionary = fitting[0]
+	if not check(game._settle_into(reserved), "settle chosen family"):
+		return
+	check(tut.cur_id() == "house" and int(city.tips.get("tut_home", -1)) == int(reserved["id"])
+		and points_to_reserved_home(reserved), "assignment immediately points to the reserved house")
+	await shot("05_assignment_house.png")
 	await frames(3)
-	if not city.pending.is_empty():
-		check(hud.pointer_target == null and not hud.pointer.visible, "no station arrow while family walks")
+	if check(not city.pending.is_empty(), "family is still walking after assignment"):
+		check(points_to_reserved_home(reserved), "arrow stays at the reserved house while family walks")
+		var square: Vector2 = city.center()["pos"]
+		check(hud.pointer_target != tut.family_target() and not (reserved["pos"] as Vector2).is_equal_approx(square),
+			"no arrow at the cart or plaza while family walks")
 	game.speed = 8.0
 	for i in 12000:
 		if city.settled_total > 0:
@@ -350,6 +356,13 @@ func click_family() -> bool:
 			hud._badge_click(key)
 			return true
 	return check(false, "family target")
+
+
+func points_to_reserved_home(home: Dictionary) -> bool:
+	var badge: Dictionary = hud.badges.get("tutorial_target", {})
+	var pos: Vector3 = badge.get("pos", Vector3.INF)
+	return hud.pointer_target is MapBadge and hud.pointer_target == badge.get("n") \
+		and Vector2(pos.x, pos.z).is_equal_approx(home["pos"])
 
 
 func pointer_shot(expected: Control, file: String) -> void:

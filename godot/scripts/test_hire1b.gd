@@ -11,7 +11,7 @@ func _ready() -> void:
 		var pair := arg.split("=", true, 1)
 		if pair.size() == 2 and pair[0] == "out":
 			out = pair[1].trim_suffix("/") + "/"
-	var profile := "D:/CivCity/.work/stage7/cityttc9b/profiles/hire1b_%d_%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_usec()]
+	var profile := GamePaths.save_dir().path_join("hire1b_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()])
 	if not check(DirAccess.make_dir_recursive_absolute(profile) == OK, "isolated profile directory"):
 		_finish()
 		return
@@ -178,20 +178,29 @@ func guidance(c: City, hud: Hud, shop: Dictionary, home: Dictionary) -> Dictiona
 	var tut: Tutorial = game.tutorial
 	c.settled_total = 0
 	check(not tut._check("settle"), "settlement waits for a choice of home")
-	c.pending["Проверка"] = {"n": 2, "cls": "plebs", "home": int(home["id"]), "m": [
+	tut._enter(Tutorial.step_index("settle"))
+	# Для проверки найма берём уже назначенную семью, без дороги от станции.
+	var home_id := int(home["id"])
+	home["coming"] = 2
+	c.pending["Проверка"] = {"name": "Проверка", "home": home_id, "n": 2, "cls": "plebs", "m": [
 		{"pn": "Первый", "sx": 0, "age": 1, "sd": 1}, {"pn": "Вторая", "sx": 1, "age": 1, "sd": 2}]}
-	check(tut._check("settle"), "assigned family completes settlement step")
+	tut._assigned("Проверка", home_id)
+	if not check(tut.cur_id() == "house" and int(c.tips["tut_home"]) == home_id, "assignment opens the reserved-house step"):
+		return {}
 	check(c.workforce().is_empty() and not c.can_hire(shop), "walking family is not available for hiring yet")
 	if not check(c.settled(int(home["id"]), 2, "Проверка") == 2, "family arrives at home"):
 		return {}
 	var family: Dictionary = home["families"][0]
 	game.people._make_family(family["name"], 2, int(home["id"]), home["pos"], "", family)
-	tut._enter(Tutorial.step_index("house"))
-	hud.open_info(home)
-	tut._house_hint()
-	check(not tut._check("house") and tut.next_btn.visible and not tut.next_btn.disabled, "house step waits for confirmation")
+	check(not tut._check("house"), "house step waits for the home card")
+	tut.show_btn.pressed.emit()
+	if not check(tut._check("house") and is_same(hud.info_b, home), "tutorial opens the assigned home's card"):
+		return {}
+	tut._process(0.0)
+	if not check(tut.cur_id() == "house_info" and tut.next_btn.visible and not tut.next_btn.disabled, "house info waits for confirmation"):
+		return {}
 	tut.next_btn.pressed.emit()
-	check(tut._wait > 0.0, "house confirmation advances tutorial")
+	check(tut.cur_id() == "food", "house confirmation advances tutorial")
 	tut._enter(Tutorial.step_index("workers"))
 	hud._update_pointer()
 	check(not tut._check("workers"), "tutorial requires actual hire")

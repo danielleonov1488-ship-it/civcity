@@ -41,20 +41,15 @@
    Числа бойцов и правила рейтинга — копия legion.gd (UNITS, PVP, SLOT_BOSSES, SLOT_BARRACKS): меняете там — меняйте тут. */
 
 const crypto = require('crypto');
-const { replayPvp, cleanInputs, heroStats, CITY_MAX, KIT_MAX } = require('./legion_sim');
+const { replayPvp, cleanInputs, heroStats, unitStats, snapStats, CITY_MAX, KIT_MAX,
+  LEGACY_MAX_LEVEL: MAX_LEVEL, FORT_SNAPSHOT, FORT_UNITS } = require('./legion_sim');
+const { FORT_PLACES, fortFacts, fighter } = require('./legion_fort');
 const names = require('./names');
 
-const UNITS = {
-  legionary: { hp: 270, atk: 22, armor: 32, range: 1.0, rate: 1.0 },
-  spearman: { hp: 330, atk: 19, armor: 48, range: 1.7, rate: 1.3 },
-  archer: { hp: 150, atk: 19, armor: 10, range: 7.5, rate: 1.15 },
-  ballista: { hp: 220, atk: 50, armor: 22, range: 13.0, rate: 3.0, pierce: true },
-  catapult: { hp: 240, atk: 40, armor: 22, range: 14.0, rate: 4.0, splash: 1.6 },
-};
-const UNIT_IDS = Object.keys(UNITS);
 const BUILDING_UNIT = { barracks: 'legionary', spearcamp: 'spearman', range: 'archer', ballistae: 'ballista', catapults: 'catapult' };
+const UNIT_IDS = Object.values(BUILDING_UNIT);
 const PERK_IDS = ['oil', 'testudo', 'bandage', 'volley', 'horn'];
-const PERK_MAX = 5, MAX_LEVEL = 40, SQUAD_BASE = 3, SQUAD_MAX = 7, STAGES = 10;
+const PERK_MAX = 5, SQUAD_BASE = 3, SQUAD_MAX = 7, STAGES = 10;
 const SLOT_BOSSES = [1, 3, 5, 7];
 // каждое новое место — ещё и с Казармами этого уровня (здания Легиона, сохранение Легиона v3); места, открытые
 // до зданий (flags.slots0 — перенос старого сохранения), не отнимаются
@@ -117,35 +112,13 @@ const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 
 /* ---------- боевые числа (как в legion.gd) ---------- */
 
-function unitStats(type, lvl, atkB, hpB) {
-  const U = UNITS[type];
-  const hpK = 1 + 0.19 * (lvl - 1) + hpB;
-  const atkK = 1 + 0.22 * (lvl - 1) + atkB;
-  return { hp: roundi(U.hp * hpK), atk: roundi(U.atk * atkK), armor: U.armor + 6 * (lvl - 1), range: U.range, rate: U.rate,
-    splash: U.splash || 0, pierce: !!U.pierce };
-}
 function power(s) {
   const ehp = s.hp / (1 - s.armor / (s.armor + 100));
   const mult = (s.splash > 0 ? 1.5 : 1) * (s.pierce ? 1.3 : 1) * (s.range > 3 ? 1.15 : 1);
   return roundi(Math.sqrt(ehp * s.atk / s.rate * mult) * 1.6);
 }
-// Герой может занять любое место в снимке.
-function heroOf(snap, e) {
-  if (!e || e.type !== 'hero') return null;
-  if (e.hero_v === 3 && Object.hasOwn(UNITS, e.unit)) {
-    return unitStats(e.unit, clamp(int(e.level) || 1, 1, MAX_LEVEL), snap.atk_b || 0, snap.hp_b || 0);
-  }
-  return heroStats(clamp(int(e.level) || 1, 1, MAX_LEVEL), clamp(int(e.city), 0, CITY_MAX), clamp(int(e.kit), 0, KIT_MAX),
-    snap.atk_b || 0, snap.hp_b || 0);
-}
 function snapPower(snap) {
-  let p = 0;
-  (snap.squad || []).forEach(e => {
-    const h = heroOf(snap, e);
-    if (h) p += power(h);
-    else if (e && Object.prototype.hasOwnProperty.call(UNITS, e.type)) p += power(unitStats(e.type, e.level, snap.atk_b || 0, snap.hp_b || 0));
-  });
-  return p;
+  return snapStats(snap).reduce((sum, stats) => sum + power(stats), 0);
 }
 // снимок без героя — для старых игр (они героя не знают; бой повторяется так же): на месте героя — легионер его уровня
 // (уровень героя — уровень Казарм, легионер есть всегда), чтобы город не стоял на бойца меньше; порядок мест сохраняется
@@ -155,11 +128,43 @@ function noHero(snap) {
   snap.squad.forEach(e => {
     if (!(e && e.type === 'hero')) squad.push(e);
     else {
-      const unit = e.hero_v === 3 && Object.hasOwn(UNITS, e.unit) ? e.unit : 'legionary';
+      const unit = e.hero_v === 3 && FORT_UNITS.includes(e.unit) ? e.unit : 'legionary';
       squad.push({ type: unit, level: clamp(int(e.level) || 1, 1, MAX_LEVEL), ...(e.place === undefined ? {} : { place: e.place }) });
     }
   });
   return Object.assign({}, snap, { squad });
+}
+
+const hasFortEntries = snap => snap?.v === FORT_SNAPSHOT || snap?.squad?.some(e => e?.gear_v === 1 || e?.hero_v === 3 || Number.isInteger(e?.place));
+
+// Для отметки clamped: JSON клиента может округлять дробь. В бой всё равно идут числа сервера.
+function matchesStats(raw, stats) {
+  if (typeof stats === 'number') return Number.isFinite(raw) && Math.abs(raw - stats) < 1e-9;
+  if (stats === null || typeof stats !== 'object') return raw === stats;
+  return raw && typeof raw === 'object' && Array.isArray(raw) === Array.isArray(stats) &&
+    Object.keys(raw).length === Object.keys(stats).length &&
+    Object.keys(stats).every(k => Object.hasOwn(raw, k) && matchesStats(raw[k], stats[k]));
+}
+
+// Старой игре даём только те виды и поля, которые она умеет повторить.
+function snapshotForClient(snap, fortOk, heroOk) {
+  if (!Array.isArray(snap?.squad)) return { v: 1, squad: [] };
+  let out = snap;
+  if (!fortOk && hasFortEntries(snap)) {
+    const squad = snap.squad.filter(Boolean).map(e => {
+      const level = clamp(int(e.level) || 1, 1, MAX_LEVEL);
+      const type = e.type === 'hero' ? e.unit : e.type;
+      if (e.type === 'hero' && heroOk) return { type: 'hero', level, city: int(e.city), kit: int(e.kit), name: e.name, look: e.look };
+      return { type: UNIT_IDS.includes(type) ? type : type === 'cavalry' ? 'spearman' : 'legionary', level };
+    });
+    out = { ...snap, v: 1, squad };
+  }
+  if (!heroOk) return noHero(out);
+  const hero = out.squad.findIndex(e => e?.type === 'hero');
+  if (fortOk || hero <= 0) return out;
+  const squad = out.squad.slice();
+  squad.unshift(squad.splice(hero, 1)[0]);
+  return { ...out, squad };
 }
 // имя и облик героя снимка — из нынешнего сохранения защитника f (переименовали, переодели после выставления обороны);
 // на бой они не влияют, числа остаются прежними
@@ -486,7 +491,12 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
       const perks = {};
       for (const p of PERK_IDS) perks[p] = clamp(int(pk[p]), 0, PERK_MAX);
       const btypes = new Set();
-      for (const b of Array.isArray(d.buildings) ? d.buildings : []) if (b && typeof b.type === 'string') btypes.add(b.type);
+      let population = 0;
+      for (const b of Array.isArray(d.buildings) ? d.buildings : []) {
+        if (!b || typeof b.type !== 'string') continue;
+        btypes.add(b.type);
+        if (Array.isArray(b.families)) population += Math.max(0, int(b.pop));
+      }
       const types = new Set();
       for (const [b, u] of Object.entries(BUILDING_UNIT)) if (btypes.has(b)) types.add(u);
       const atkB = 0, hpB = 0;  // городские чудеса армию не усиливают
@@ -499,22 +509,10 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
         armory = clamp(int(bl.armory) || 1, 1, KIT_MAX);
         if (up.armory && typeof up.armory === 'object') armory = clamp(Math.max(armory, int(up.armory.to)), 1, KIT_MAX);
       }
-      const modernFort = L.fort && int(L.fort.roles_v) >= 1;
-      const dwellers = Array.isArray(L.soldiers) ? L.soldiers : [];
-      const dweller = modernFort ? dwellers.find(x => x && x.hero === true) : null;
-      const units = { legionary: 'legionary', archer: 'archer', priest: 'priest', cavalry: 'cavalry' };
-      const heroUnit = dweller ? {
-        level: clamp(int(dweller.rank) + 1, 1, MAX_LEVEL),
-        unit: Object.hasOwn(units, dweller.cls) && Object.hasOwn(UNITS, units[dweller.cls]) ? units[dweller.cls] : 'legionary',
-      } : null;
-      if (modernFort) {
-        const plots = Array.isArray(L.fort.plots) ? L.fort.plots : [];
-        const hq = int(plots.find(p => p && p.b === 'hq')?.lv);
-        const members = Array.isArray(L.squad3) ? new Set(L.squad3.filter(id => int(id) > 0)).size : 0;
-        slots = clamp(Math.max(members, hq >= 6 ? 5 : hq >= 4 ? 4 : hq >= 2 ? 3 : 2), 2, 5);
-      }
-      f = { levels, bosses, slots, perks, types, atkB, hpB, heroUnit, modernFort,
-        cityLevel: clamp(int(d.level), 0, 7), legion: Array.isArray(d.research) && d.research.includes('legion'),
+      const fort = Array.isArray(L.fort?.plots) && Array.isArray(L.squad3) ? fortFacts(L) : null;
+      const legion = fort ? fl.camp_open === true || population >= 50 : Array.isArray(d.research) && d.research.includes('legion');
+      f = { levels, bosses, slots, perks, types, atkB, hpB, fort,
+        cityLevel: clamp(int(d.level), 0, 7), legion,
         hero: H ? { name: heroName(H.pn), look: heroLook(H) } : null, armory };
     }
     factsCache.set(uid, { id: s.id, facts: f });
@@ -522,20 +520,54 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
     return f;
   }
 
-  // Отряд от клиента → проверенный снимок: уровни, места, умения и бонусы не выше, чем в облачном сохранении
-  function checkSquad(f, snap) {
+  // Запрос выбирает бойцов и места. Числа и снаряжение — из облачного сохранения.
+  function checkFort(f, snap, maxLevel) {
+    const fort = f?.fort;
+    const squad = [];
+    const perks = {};
+    const out = { v: FORT_SNAPSHOT, squad, perks, atk_b: 0, hp_b: 0 };
+    if (!fort) return { snap: out, power: 0, clamped: snap.squad.length > 0 };
+    let clamped = snap.squad.length > fort.slots || num(snap.atk_b) !== 0 || num(snap.hp_b) !== 0;
+    let heroSeen = false;
+    const places = new Set(), people = new Set();
+    for (const e of snap.squad.slice(0, FORT_PLACES)) {
+      if (!e || !Number.isInteger(e.place) || e.place < 0 || e.place >= FORT_PLACES || places.has(e.place) ||
+          squad.length >= fort.slots || (e.type !== 'hero' && !FORT_UNITS.includes(e.type))) { clamped = true; continue; }
+      const id = Object.hasOwn(e, 'sid') ? e.sid : fort.squad[e.place];
+      const s = fort.soldiers.get(id);
+      if (!s || people.has(id) || num(s.train_end) > 0 || num(s.wound_end) > 0 || (s.hero === true && (heroSeen || !f.hero))) {
+        clamped = true;
+        continue;
+      }
+      const entry = fighter(fort, s, e.place, maxLevel);
+      if (s.hero === true) {
+        Object.assign(entry, { unit: entry.type, type: 'hero', hero_v: 3, city: 0, kit: 0, look: f.hero.look });
+        if (f.hero.name) entry.name = f.hero.name;
+        heroSeen = true;
+      }
+      if (e.type !== entry.type || e.level !== entry.level || (entry.unit && e.unit !== entry.unit) ||
+          (e.gear_v === 1 && !matchesStats(e.stats3, entry.stats3))) clamped = true;
+      places.add(e.place);
+      people.add(id);
+      squad.push(entry);
+    }
+    squad.sort((a, b) => a.place - b.place);
+    for (const id of PERK_IDS) {
+      const requested = int(snap.perks?.[id]);
+      const v = clamp(requested, 0, f.perks[id]);
+      if (v !== requested) clamped = true;
+      if (v > 0) perks[id] = v;
+    }
+    return { snap: out, power: snapPower(out), clamped };
+  }
+
+  // Старые клиенты сверяют уровни родов войск, места и умения по прежним правилам.
+  function checkSquad(f, snap, maxLevel) {
     if (!snap || typeof snap !== 'object' || !Array.isArray(snap.squad)) throw new Fail(400, 'Неверный отряд');
+    if (hasFortEntries(snap)) return checkFort(f, snap, maxLevel);
     const squad = [];
     let clamped = false;
     let heroSeen = false;
-    const places = new Set();
-    function position(e, piece) {
-      if (f?.modernFort && Number.isInteger(e.place) && e.place >= 0 && e.place < 5 && !places.has(e.place)) {
-        places.add(e.place);
-        piece.place = e.place;
-      }
-      return piece;
-    }
     for (const e of snap.squad.slice(0, SQUAD_MAX)) {
       if (e && typeof e === 'object' && e.type === 'hero') {
         if (heroSeen) { clamped = true; continue; }
@@ -551,26 +583,19 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
         const h = { type: 'hero', level: clamp(int(e.level) || 1, 1, MAX_LEVEL), city: clamp(int(e.city), 0, CITY_MAX), kit: clamp(int(e.kit), 0, KIT_MAX) };
         const lim = { level: f.levels.legionary, city: Math.min(CITY_MAX, f.cityLevel), kit: f.armory };
         for (const k of ['level', 'city', 'kit']) if (h[k] > lim[k]) { h[k] = lim[k]; clamped = true; }
-        if (f.heroUnit && int(e.hero_v) === 3) {
-          h.hero_v = 3;
-          h.unit = f.heroUnit.unit;
-          h.level = Math.min(clamp(int(e.level) || 1, 1, MAX_LEVEL), f.heroUnit.level);
-          h.city = 0;
-          h.kit = 0;
-        }
         if (f.hero.name) h.name = f.hero.name;
         h.look = f.hero.look;
-        squad.push(position(e, h));
+        squad.push(h);
         continue;
       }
-      if (!e || typeof e !== 'object' || !Object.prototype.hasOwnProperty.call(UNITS, e.type)) { clamped = true; continue; }
+      if (!e || typeof e !== 'object' || !UNIT_IDS.includes(e.type)) { clamped = true; continue; }
       let lvl = clamp(int(e.level) || 1, 1, MAX_LEVEL);
       const max = f ? (f.types.has(e.type) ? f.levels[e.type] : 1) : 10;
       if (lvl > max) { lvl = max; clamped = true; }
-      squad.push(position(e, { type: e.type, level: lvl }));
+      squad.push({ type: e.type, level: lvl });
     }
     const n = squad.length;
-    const lim = f ? Math.min(SQUAD_MAX, f.slots + (f.modernFort ? 0 : 1)) : 4;
+    const lim = f ? Math.min(SQUAD_MAX, f.slots + 1) : 4;
     if (squad.length > lim) { squad.length = lim; clamped = true; }
     const perks = {};
     const sp = snap.perks && typeof snap.perks === 'object' ? snap.perks : {};
@@ -586,8 +611,14 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
   }
 
   // Сила, которую игрок может выставить: лучшие доступные рода войск на его уровнях по числу мест (для вольных городов)
-  function potential(f, p) {
+  function potential(f, p, fortOk) {
     if (!f) return Math.max(p.power, 3 * power(unitStats('legionary', 1, 0, 0)));
+    if (f.fort && fortOk) {
+      const ready = [...f.fort.soldiers.values()].filter(s => s && !(num(s.train_end) > 0 || num(s.wound_end) > 0));
+      const powers = ready.map(s => power(snapStats({ v: FORT_SNAPSHOT, squad: [fighter(f.fort, s, 0)] })[0]));
+      powers.sort((a, b) => b - a);
+      return Math.max(p.power, Math.round(powers.slice(0, f.fort.slots).reduce((a, b) => a + b, 0) * 0.9));
+    }
     const avail = [...f.types];
     if (!avail.length) avail.push('legionary');
     const pw = avail.map(t => power(unitStats(t, f.levels[t], f.atkB, f.hpB))).sort((a, b) => b - a);
@@ -606,15 +637,15 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
     return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
   }
 
-  function makeBot(rnd, p, f, k, used) {
+  function makeBot(rnd, p, f, mine, k, used, fortOk) {
     const bosses = f ? f.bosses : 0;
     const pool = ['legionary', 'legionary', 'archer'];
     if (bosses >= 1) pool.push('spearman');
     if (bosses >= 3) pool.push('ballista');
     if (bosses >= 5) pool.push('catapult');
-    const n = clamp(f ? f.slots : 3, 3, SQUAD_MAX);
+    const n = fortOk && f?.fort ? f.fort.slots : clamp(f ? f.slots : 3, 3, SQUAD_MAX);
     const types = Array.from({ length: n }, () => pool[Math.floor(rnd() * pool.length)]);
-    const target = Math.max(120, potential(f, p) * k);
+    const target = Math.max(120, mine * k);
     const pw = (t, l) => power(unitStats(t, l, 0, 0));
     let best = 1, diff = Infinity;
     for (let L = 1; L <= MAX_LEVEL; L++) {
@@ -743,6 +774,9 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
     const f = facts(a.userId);
     if (f && !f.legion) throw new Fail(409, 'Легион ещё не собран');
     const c = checkSquad(f, b.snapshot);
+    if (c.snap.v === FORT_SNAPSHOT && b.snapshot.squad.length && !c.snap.squad.length) {
+      return { me: state(p), power: p.power, clamped: true }; // облако ещё не знает новый отряд
+    }
     const lvl = f ? f.cityLevel : clamp(int(b.city_level), 0, 7);
     if (nm !== null && nm !== p.name) setName(a.userId, nm);
     q.setDefense.run(JSON.stringify(c.snap), c.snap.squad.length ? c.power : 0, lvl, Date.now(), a.userId);
@@ -752,7 +786,8 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
   // соперники близкого рейтинга (без себя, без тех, на кого нападали недавно, без только что проигравших оборону)
   routes['GET /api/pvp/opponents'] = (req, url) => {
     const a = auth(req);
-    const heroOk = !!url && url.searchParams.get('hero') === '1';   // игра знает героя (старой — отряды без него)
+    const fortOk = url?.searchParams.get('v') === String(FORT_SNAPSHOT);
+    const heroOk = fortOk || url?.searchParams.get('hero') === '1';
     if (limited(`pvp:list:${a.userId}`, 40, 600e3)) throw new Fail(429, 'Слишком часто — подождите минуту');
     expire(a.userId);
     const p = player(a.userId);
@@ -760,7 +795,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
     const recent = new Set(q.recentTargets.all(a.userId, now - ATTACK_GAP).map(r => r.defender));
     const f = facts(a.userId);
     if (f && f.cityLevel < PVP_MIN_LEVEL) throw new Fail(409, 'Бои с городами — с «Посёлка»');
-    const mine = potential(f, p);
+    const mine = potential(f, p, fortOk);
     const real = q.candidates.all(a.userId, now - STALE, now, p.rating).filter(r => !recent.has(r.user_id));
     // ближние по рейтингу; из них — ближние по силе
     const pick = real.slice(0, 20).sort((x, y) => Math.abs(Math.log((x.power + 1) / (mine + 1))) - Math.abs(Math.log((y.power + 1) / (mine + 1))))
@@ -770,13 +805,9 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
     for (const r of pick) {
       let snap;
       try { snap = JSON.parse(r.snapshot); } catch (e) { continue; }
-      snap = freshHero(snap, facts(r.user_id));
-      let pw = r.power;
-      if (!heroOk && snap.squad && snap.squad.some(e => e && e.type === 'hero')) {
-        snap = noHero(snap);
-        pw = snapPower(snap);
-        if (!snap.squad.length) continue;      // пустой отряд старой игре не показываем
-      }
+      snap = snapshotForClient(freshHero(snap, facts(r.user_id)), fortOk, heroOk);
+      if (!snap.squad.length) continue;
+      const pw = snapPower(snap);
       const id = crypto.randomBytes(9).toString('base64url');
       items.set(id, { kind: 'user', uid: r.user_id });
       list.push({ id, name: r.name, rating: r.rating, city_level: r.city_level, power: pw, snapshot: snap, bot: false });
@@ -788,7 +819,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
       const used = new Set(list.map(o => o.name));
       const ks = [0.7, 0.85, 1.0, 1.15];
       for (let i = 0; i < LIST_MIN - fair; i++) {
-        const bt = makeBot(rnd, p, f, ks[i % ks.length], used);
+        const bt = makeBot(rnd, p, f, mine, ks[i % ks.length], used, fortOk);
         const id = crypto.randomBytes(9).toString('base64url');
         items.set(id, bt);
         list.push({ id, name: bt.name, rating: bt.rating, city_level: bt.city_level, power: bt.power, snapshot: bt.snap, bot: true });
@@ -824,12 +855,14 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
     const f = facts(a.userId);
     if (f && !f.legion) throw new Fail(409, 'Легион ещё не собран');
     if (f && f.cityLevel < PVP_MIN_LEVEL) throw new Fail(409, 'Бои с городами — с «Посёлка»');
-    const att = checkSquad(f, b.squad);
-    if (!att.snap.squad.length) throw new Fail(400, 'В отряде нет бойцов');
+    const checked = checkSquad(f, b.squad);
+    if (!checked.snap.squad.length) throw new Fail(400, 'В отряде нет бойцов');
     // игра знает героя: так говорит hero: true — или сам отряд с героем (старые игры героя не шлют). Иначе нападающий
     // со своим героем, убрав hero, воевал бы против города без героя
     const raw = b.squad && typeof b.squad === 'object' && Array.isArray(b.squad.squad) ? b.squad.squad : [];
     const heroGame = !!b.hero || raw.some(e => e && typeof e === 'object' && e.type === 'hero');
+    const fortGame = b.squad?.v === FORT_SNAPSHOT || b.v === FORT_SNAPSHOT;
+    const att = snapshotForClient(checked.snap, fortGame, fortGame || heroGame);
     let def, defUid = null, defName, defRating, defLevel;
     if (target.kind === 'user') {
       const d = q.player.get(target.uid);
@@ -837,9 +870,8 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
       if (d.shield_until > now) throw new Fail(409, 'Этот город только что отбивался — выберите другой');
       if (q.recentTargets.all(a.userId, now - ATTACK_GAP).some(r => r.defender === d.user_id)) throw new Fail(409, 'На этот город вы уже нападали недавно');
       try { def = JSON.parse(d.snapshot); } catch (e) { throw new Fail(409, 'Этот город распустил оборону — выберите другой'); }
-      def = freshHero(def, facts(d.user_id));  // имя и облик героя — из нынешнего сохранения защитника
-      if (!heroGame) def = noHero(def);        // старая игра героя не знает: соперник для неё — без героя (и повтор боя тоже)
-      if (!def || !Array.isArray(def.squad) || !def.squad.length) throw new Fail(409, 'Этот город распустил оборону — выберите другой');
+      def = snapshotForClient(freshHero(def, facts(d.user_id)), fortGame, fortGame || heroGame);
+      if (!def.squad.length) throw new Fail(409, 'Этот город распустил оборону — выберите другой');
       defUid = d.user_id; defName = d.name; defRating = d.rating; defLevel = d.city_level;
     } else {
       def = target.snap; defName = target.name; defRating = target.rating; defLevel = target.city_level;
@@ -866,8 +898,8 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
     tx(() => {
       q.setCharges.run(p.charges, p.charge_t, a.userId);
       // в бой идёт ровно проверенный отряд (клиент получает его в ответе), поэтому att_n — его число бойцов
-      q.addBattle.run(token, a.userId, defUid, bot ? 1 : 0, p.name, defName, p.rating, defRating, defLevel, JSON.stringify(att.snap), JSON.stringify(def),
-        att.snap.squad.length, att.power, defPower, seed, sWin, sLoss, sdWin, sdLoss, money, glory, now);
+      q.addBattle.run(token, a.userId, defUid, bot ? 1 : 0, p.name, defName, p.rating, defRating, defLevel, JSON.stringify(att), JSON.stringify(def),
+        att.squad.length, snapPower(att), defPower, seed, sWin, sLoss, sdWin, sdLoss, money, glory, now);
     });
     target.used = token;
     return attackOut(q.battle.get(token), p);
@@ -961,4 +993,4 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
   return { unitStats, power, snapPower, delta, facts, checkSquad, player };
 }
 
-module.exports = { install, unitStats, power, snapPower, noHero, heroName, heroLook, delta, MIN_RATIO, ARENA, leagueOf, seasonAt };
+module.exports = { install, unitStats, power, snapPower, noHero, snapshotForClient, heroName, heroLook, delta, MIN_RATIO, ARENA, leagueOf, seasonAt };

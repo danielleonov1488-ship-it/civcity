@@ -908,7 +908,7 @@ func _adv_free() -> bool:
 	var h = game.hud
 	if h == null or h.advisor_panel == null or h.advisor_panel.visible or not h.visible:
 		return false
-	if game.tutorial and game.tutorial.active():
+	if h.tutorial_busy() or not h.guidance_queue.is_empty() or h.notes_box.get_child_count() > 0:
 		return false
 	return _in_city()
 

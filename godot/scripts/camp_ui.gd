@@ -721,9 +721,12 @@ func _layout() -> void:
 
 
 func _process(dt: float) -> void:
-	if guide_layer.is_visible_in_tree() and guide_pointer.visible:
+	var guide_shown := guide_layer.is_visible_in_tree()
+	if guide_shown and guide_pointer.visible:
 		_place_guide_pointer(dt)
 	if not visible:
+		if not guide_shown:
+			set_process(false)
 		return
 	for resource: String in bubbles:
 		var bubble: Button = bubbles[resource]["button"]
@@ -2303,6 +2306,8 @@ func _draw_guide(tip: String, area: Vector2) -> void:
 		guide_pointer.hide()
 	guide_layer.move_to_front()
 	guide_layer.show()
+	# Карта похода закрывает сам форт, стрелка продолжает двигаться поверх карты.
+	set_process(true)
 	guide.show()
 	guide_shade.visible = has_target and not read
 	guide_text.visible = not read

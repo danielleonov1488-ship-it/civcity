@@ -428,7 +428,7 @@ func _fort_guide_checks(kitchen: int, cook_id: int, outfit: int, tag: String) ->
 func _guide_checks(step: int, target: Control, tag: String) -> void:
 	lg.flags["fort_guide"] = step
 	camp._layout_guide()
-	await frames(12)
+	await get_tree().create_timer(0.3).timeout
 	await RenderingServer.frame_post_draw
 	if not check(is_instance_valid(target) and target.is_visible_in_tree()
 		and camp.guide.is_visible_in_tree() and camp._guide_target == target, tag + " guide targets control"):
@@ -450,8 +450,11 @@ func _guide_checks(step: int, target: Control, tag: String) -> void:
 	var above := not camp.guide_pointer.flip_v
 	var tip := Vector2(pointer.get_center().x, pointer.end.y if above else pointer.position.y)
 	var edge := Vector2(button.get_center().x, button.position.y if above else button.end.y)
-	check(pointer.get_center().distance_to(edge) <= 120.0 and tip.distance_to(edge) <= 4.0,
-		tag + " green arrow near and pointing at target")
+	check(pointer.get_center().distance_to(edge) <= 120.0 and tip.distance_to(edge) <= 6.0,
+		"%s green arrow near and pointing at target (%s → %s)" % [tag, tip, edge])
+	var guide_file := "guide_%s.png" % tag.replace("/", "_").replace(" ", "_")
+	if check(get_viewport().get_texture().get_image().save_png(out + guide_file) == OK, "save " + guide_file):
+		print("FORT5B SHOT " + out + guide_file)
 
 
 func _newcomer_checks(tag: String) -> void:

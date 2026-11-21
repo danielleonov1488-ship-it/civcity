@@ -6320,6 +6320,7 @@ func advisor(title: String, text: String, skip := Callable(), force := false, co
 	adv_text.text = I18n.t(text) if target.has("want_icon") else _short_advice(text)
 	adv_text.tooltip_text = ""
 	adv_skip.text = "Пропустить обучение"
+	adv_skip.add_theme_font_size_override("font_size", 11)
 	adv_ok.text = "Понятно"
 	_adv_skip_cb = skip
 	adv_skip.visible = skip.is_valid()
