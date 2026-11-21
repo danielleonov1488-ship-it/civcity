@@ -1,5 +1,7 @@
 class_name FortCutaway
 extends Camp3D
+
+const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Рисованный разрез форта в отдельном 2D-слое.
 
 signal person_pressed(sid: int, newcomer: bool)
@@ -569,18 +571,26 @@ func _place_occupant(person: Dictionary, entry: Dictionary, index: int, count: i
 
 
 func _animate_people(delta: float) -> void:
+	var started := Perf13.begin()
+	_animate_people_profiled(delta)
+	Perf13.end(Perf13.FORT, started)
+
+
+func _animate_people_profiled(delta: float) -> void:
 	_clock += delta
 	var screen_area := Rect2(Vector2.ZERO, size)
+	var origin := _stage.position
+	var view_scale := _view_scale
 	var render_area := Rect2()
 	people_layer.shadows.clear()
 	for entry: Dictionary in figures:
 		var actor: Actor = entry["node"]
 		var home: Vector2 = entry["home"]
-		var height := float(entry["height"]) * _view_scale
+		var height := float(entry["height"]) * view_scale
 		if not actor.problem.is_empty() or (int(entry["id"]) == drag_sid and (entry["role"] == "newcomer") == drag_newcomer):
 			actor.hide()
 			continue
-		if not screen_area.grow(height + 64.0 * _view_scale).has_point(_screen_point(home)):
+		if not screen_area.grow(height + 64.0 * view_scale).has_point(origin + home * view_scale):
 			actor.hide()
 			continue
 		var away: float = entry["away"]
@@ -610,10 +620,11 @@ func _animate_people(delta: float) -> void:
 			var drill_time := fposmod(phase, 3.0)
 			clip = RangedPose.BOW if training and drill_time < RangedPose.LENGTHS[RangedPose.BOW] else RangedPose.BOW_IDLE
 			sample = drill_time
-		var pixel := _screen_point(feet)
+		var pixel := origin + feet * view_scale
 		var bounds := _figure_bounds(pixel, height)
-		actor.visible = screen_area.intersects(bounds)
-		if actor.visible:
+		var on_screen := screen_area.intersects(bounds)
+		actor.visible = on_screen
+		if on_screen:
 			entry["feet"] = feet
 			entry["clip"] = clip
 			entry["sample"] = sample

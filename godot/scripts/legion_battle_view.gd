@@ -1,5 +1,7 @@
 class_name LegionBattleView
 extends Control
+
+const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Рисованное поле боя. Читает позы и события LegionSim, не меняет состояние боя.
 
 signal field_sound(event: String, pan: float)
@@ -396,14 +398,16 @@ func _place_actor(f: Fighter, rate := 1.0, force_pose := false) -> void:
 		people_layer.place(f.actor, feet, height, f.facing_angle(), false, depth)
 	if f.actor.visible:
 		f.actor.set_opacity(f.modulate.a)
-		var started := Time.get_ticks_usec() if profile_poses else 0
+		var started := Time.get_ticks_usec() if profile_poses or Perf13.enabled else 0
 		var hz := (15.0 if height < 165.0 else 24.0) / maxf(1.0, rate)
 		if force_pose:
 			f.actor.pose_at(f.clip, f.sample)
 		else:
 			f.actor.animate(f.clip, f.sample, f.ranged_mix, hz)
-		if started != 0:
+		if profile_poses:
 			pose_usec += Time.get_ticks_usec() - started
+		if Perf13.enabled and f.actor.ranged != null:
+			Perf13.end(Perf13.RANGED_POSE, started)
 	if long:
 		var hit: Vector3 = f.long_model[1]
 		if sin(deg_to_rad(f.facing_angle())) > 0.0:
@@ -449,6 +453,11 @@ func request_strike(source: Fighter, target: Fighter, action := "") -> void:
 
 
 func _fit_foot(f: Fighter, pos: Vector2) -> Vector2:
+	var limits := _foot_limits(f)
+	return Vector2(clampf(pos.x, limits.x, limits.y), clampf(pos.y, -_trail_depth, _trail_depth))
+
+
+func _foot_limits(f: Fighter) -> Vector2:
 	var left := _field_bounds.position.x - f.outline.position.x + 12.0
 	var right := _field_bounds.end.x - f.outline.end.x - 12.0
 	var rear_edge := REAR_X - (210.0 if f.wide else 78.0)
@@ -463,10 +472,16 @@ func _fit_foot(f: Fighter, pos: Vector2) -> Vector2:
 			left = clampf(_mounted_front_min - f.outline.position.x, left, right)
 		if f.rear and not f.rear_mount:
 			left = clampf(rear_edge, left, right)
-	return Vector2(clampf(pos.x, left, right), clampf(pos.y, -_trail_depth, _trail_depth))
+	return Vector2(left, right)
 
 
 func _plan_layout() -> void:
+	var started := Perf13.begin()
+	_plan_layout_profiled()
+	Perf13.end(Perf13.PLAN, started)
+
+
+func _plan_layout_profiled() -> void:
 	var ally_rear := INF
 	var enemy_rear := INF
 	var ally_front_width := 0.0
@@ -653,6 +668,12 @@ func _spot(f: Fighter, target: Fighter, at: Vector2, slot: int) -> Vector2:
 
 
 func _engagement_goal(f: Fighter) -> void:
+	var started := Perf13.begin()
+	_engagement_goal_profiled(f)
+	Perf13.end(Perf13.GOAL, started)
+
+
+func _engagement_goal_profiled(f: Fighter) -> void:
 	if f.visit != 0:
 		return
 	f.visit = 1
@@ -838,34 +859,74 @@ func _fit_mounted_line() -> void:
 				f.position = _fit_foot(f, f.position)
 
 
+var _separation_neighbors := PackedInt32Array()
+var _separation_ends := PackedInt32Array()
+var _separation_checked := PackedInt32Array()
+
+
 func _separate() -> void:
-	# Раздвигаем экранные корпуса, сохраняя контакт ведущей модели.
-	for pass_index in 7:
-		var moved := false
-		for i in _fighters.size():
-			var a := _fighters[i]
-			if not a.unit.alive:
-				continue
+	var started := Perf13.begin()
+	_separate_profiled()
+	Perf13.end(Perf13.SEPARATE, started)
+
+
+func _separate_profiled() -> void:
+	# В первых шести проходах меняется только X. Пары с разных рядов отсекаем один раз.
+	var count := _fighters.size()
+	var capacity := count * (count - 1) / 2
+	if _separation_neighbors.size() < capacity:
+		_separation_neighbors.resize(capacity)
+		_separation_checked.resize(capacity)
+		_separation_ends.resize(count)
+	var pairs := 0
+	for i in count:
+		var a: Fighter = _fighters[i]
+		if a.unit.alive:
+			a.separation_position = a.position
+			a.separation_generation = 0
+			a.separation_priority = a.guard_priority()
+			a.separation_limits = _foot_limits(a)
 			for j in i:
-				var b := _fighters[j]
-				if not b.unit.alive:
+				var b: Fighter = _fighters[j]
+				if not b.unit.alive or (a.wide and b.wide):
 					continue
-				var d := a.position - b.position
-				var a_box := a.outline
+				var dy := (a.separation_position - b.separation_position).y
+				var feet := minf(a.body_half, b.body_half) * 1.1
+				if absf(dy) >= feet and (dy + a.outline.end.y <= b.outline.position.y or dy + a.outline.position.y >= b.outline.end.y):
+					continue
+				_separation_neighbors[pairs] = j
+				_separation_checked[pairs] = -1
+				pairs += 1
+		if count >= 2:
+			_separation_ends[i] = pairs
+	if pairs == 0:
+		return
+	var moved := false
+	for pass_index in 6:
+		moved = false
+		var pair := 0
+		for i in count:
+			var a: Fighter = _fighters[i]
+			var limit: int = _separation_ends[i]
+			var a_box := a.outline
+			var a_wide := a.wide
+			while pair < limit:
+				var b: Fighter = _fighters[_separation_neighbors[pair]]
+				var pair_index := pair
+				pair += 1
+				# У пары без пересечения нет новой работы, пока обе позиции прежние.
+				var epoch := a.separation_generation + b.separation_generation
+				if _separation_checked[pair_index] == epoch:
+					continue
+				var d := a.separation_position - b.separation_position
 				var b_box := b.outline
-				var a_wide := a.wide
 				var b_wide := b.wide
-				if a_wide and b_wide:
-					continue
-				var same_side := a.unit.side == b.unit.side
-				var feet := minf(a.body_width(), b.body_width()) * 0.55
-				if pass_index == 6:
-					if same_side and not a_wide and not b_wide and d.length_squared() < (feet * 0.60) ** 2:
-						_step_aside(a, b, d, feet)
-					continue
+				var same_side := a.side_dir == b.side_dir
+				var feet := minf(a.body_half, b.body_half) * 1.1
 				var mount_pair := a.rear_mount or b.rear_mount
 				var clearance := 12.0 if mount_pair else 0.0
-				if absf(d.x) >= maxf(feet, maxf(b_box.end.x - a_box.position.x, a_box.end.x - b_box.position.x) + clearance):
+				if absf(d.x) >= maxf(feet, maxf(b.end_x - a_box.position.x, a.end_x - b_box.position.x) + clearance):
+					_separation_checked[pair_index] = epoch
 					continue
 				var dx := sqrt(maxf(0.0, feet * feet - d.y * d.y)) - absf(d.x)
 				var side := signf(d.x) if absf(d.x) > 0.01 else a.side_dir
@@ -873,11 +934,11 @@ func _separate() -> void:
 				if not passing:
 					var height := minf(d.y + a_box.end.y, b_box.end.y) - maxf(d.y + a_box.position.y, b_box.position.y)
 					if height > 0.0:
-						var min_area := minf(a_box.get_area(), b_box.get_area())
+						var min_area := minf(a.outline_area, b.outline_area)
 						var tolerance := 0.13 if same_side else (0.08 if a_wide or b_wide else 0.20)
 						var permitted := -clearance if mount_pair else min_area * tolerance / height
 						if permitted < minf(a_box.size.x, b_box.size.x):
-							var facing := d.x + a_box.get_center().x - b_box.get_center().x
+							var facing := d.x + a.center_x - b.center_x
 							# У повозки порядок берём по центру проекции.
 							var box_side := signf(facing) if absf(facing) > 0.01 else side
 							if a.contact_front == b:
@@ -890,28 +951,50 @@ func _separate() -> void:
 								dx = push
 								side = box_side
 				if dx <= 0.34:
+					_separation_checked[pair_index] = epoch
 					continue
 				var share := 0.5
-				var a_priority := a.guard_priority()
-				var b_priority := b.guard_priority()
+				var a_priority := a.separation_priority
+				var b_priority := b.separation_priority
 				if a_wide != b_wide:
 					share = 0.0 if a_wide else 1.0
 				elif a_priority != b_priority:
 					share = 0.0 if a_priority > b_priority else 1.0
 				elif a.rear != b.rear:
 					share = 0.15 if a.rear else 0.85
-				var old_a := a.position.x
-				var old_b := b.position.x
-				a.position = _fit_foot(a, a.position + Vector2(dx * side * share, 0.0))
-				var remaining := dx - (a.position.x - old_a) * side
+				var old_a := a.separation_position.x
+				var old_b := b.separation_position.x
+				a.separation_position = a.separation_bound(a.separation_position + Vector2(dx * side * share, 0.0))
+				var remaining := dx - (a.separation_position.x - old_a) * side
 				if not b_wide and (a_wide or b_priority <= a_priority):
-					b.position = _fit_foot(b, b.position - Vector2(side * remaining, 0.0))
-				remaining -= (old_b - b.position.x) * side
+					b.separation_position = b.separation_bound(b.separation_position - Vector2(side * remaining, 0.0))
+				remaining -= (old_b - b.separation_position.x) * side
 				if remaining > 0.34 and not a_wide and (b_wide or a_priority <= b_priority):
-					a.position = _fit_foot(a, a.position + Vector2(side * remaining, 0.0))
+					a.separation_position = a.separation_bound(a.separation_position + Vector2(side * remaining, 0.0))
+				if a.separation_position.x != old_a:
+					a.separation_generation += 1
+				if b.separation_position.x != old_b:
+					b.separation_generation += 1
 				moved = true
 		if not moved:
 			break
+	for f in _fighters:
+		if f.unit.alive and f.separation_generation != 0:
+			f.position = f.separation_position
+	if moved:
+		# Последний проход раздвигает по глубине, порядок пар сохраняется.
+		for i in count:
+			var a: Fighter = _fighters[i]
+			if not a.unit.alive or a.wide:
+				continue
+			for j in i:
+				var b: Fighter = _fighters[j]
+				if not b.unit.alive or b.wide or a.side_dir != b.side_dir:
+					continue
+				var d := a.position - b.position
+				var feet := minf(a.body_half, b.body_half) * 1.1
+				if d.length_squared() < (feet * 0.60) ** 2:
+					_step_aside(a, b, d, feet)
 
 
 func _step_aside(a: Fighter, b: Fighter, d: Vector2, feet: float) -> void:
@@ -1198,6 +1281,16 @@ class Fighter extends Node2D:
 	var outline := Rect2()
 	var hull_points := PackedVector3Array()
 	var hull_angle := INF
+	var _outline_scale := -1.0
+	var _outline_pose: StringName
+	var hud_anchor := Vector2.ZERO
+	var outline_area := 0.0
+	var center_x := 0.0
+	var end_x := 0.0
+	var separation_position := Vector2.ZERO
+	var separation_limits := Vector2.ZERO
+	var separation_priority := 0
+	var separation_generation := 0
 	var bypass: Fighter
 	var bypass_lower := false
 	var passing := false
@@ -1305,12 +1398,26 @@ class Fighter extends Node2D:
 		update_outline()
 
 	func update_outline() -> void:
+		var started := Perf13.begin()
+		update_outline_profiled()
+		Perf13.end(Perf13.OUTLINE, started)
+
+
+	func update_outline_profiled() -> void:
+		var scaled := _outline_scale != scale.y
+		_outline_scale = scale.y
 		if hull_points.is_empty():
-			outline = Rect2(-body_half, -body_height(), body_width(), body_height())
+			var pose := sprite.animation if sheet == "bear" and sprite != null else &""
+			if hull_angle == INF or scaled or pose != _outline_pose:
+				var height := body_height()
+				outline = Rect2(-body_half, -height, body_width(), height)
+				hull_angle = 0.0
+				_outline_pose = pose
+				_cache_outline()
 			return
 		var left := flip_h != (shoot_turn >= 0.5)
 		var angle := facing_angle() if rear_mount else (-yaw if left else yaw)
-		if absf(angle - hull_angle) < 2.0:
+		if not scaled and absf(angle - hull_angle) < 2.0:
 			return
 		hull_angle = angle
 		var rot := Basis(Vector3.UP, deg_to_rad(angle))
@@ -1329,6 +1436,15 @@ class Fighter extends Node2D:
 				outline = Rect2(-muzzle, outline.position.y, outline.end.x + muzzle, outline.size.y)
 			else:
 				outline.size.x = muzzle - outline.position.x
+		_cache_outline()
+
+	func _cache_outline() -> void:
+		outline_area = outline.get_area()
+		center_x = outline.get_center().x
+		end_x = outline.end.x
+
+	func separation_bound(pos: Vector2) -> Vector2:
+		return Vector2(clampf(pos.x, separation_limits.x, separation_limits.y), pos.y)
 
 	func screen_box() -> Rect2:
 		var scale_ui := view.world.scale

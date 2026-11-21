@@ -1,6 +1,8 @@
 class_name Game
 extends Node3D
 
+const Perf13 = preload("res://scripts/perf13_timers.gd")
+
 const DecorFacing = preload("res://scripts/decor_facing.gd")
 ## CivCity: уютный римский город как Town to City, на моделях Synty POLYGON Ancient Empire.
 ## Мир: большая карта с мягкими холмами, прудами и лесами; с севера из-за горизонта через арку идёт большая дорога — по ней приезжают
@@ -79,8 +81,16 @@ var frame := 0
 var autosave_t := 0.0
 var sim_ms := 0.0                     # сколько занял последний ход дня и последнее сохранение (F3, test_perf)
 var save_ms := 0.0
+var _legion_cover := {}
+var _city_was_hidden := false
+var _city_paused_players: Array[AnimationPlayer] = []
+
+
 var _hud_later := false               # идёт ход дня из кадра: окно города обновится в следующем кадре
 var _hud_due := false
+var _hour_hud_part := 0
+var _clock_busy := false
+var _clock_commit_frame := -1
 var _actors_due := false
 var _save_gen := 0                    # номер сохранения: автосохранение по кадрам не пишет поверх более нового
 var settings := {"fullscreen": false, "quality": "high", "ui_scale": 1.0, "autosave": true, "music": 0.55, "sfx": 0.7}
@@ -2619,11 +2629,49 @@ func _sandbox_apply() -> void:
 		city.legion.flags["camp_open"] = true     # песочница: лагерь Легиона открыт сразу (призыв — когда в городе будут жители)
 
 
+func legion_cover(owner: Node, covered: bool) -> void:
+	if covered:
+		_legion_cover[owner.get_instance_id()] = true
+	else:
+		_legion_cover.erase(owner.get_instance_id())
+
+
+func legion_city_hidden() -> bool:
+	return not _legion_cover.is_empty()
+
+
+func _city_visuals(hidden: bool) -> void:
+	if hidden == _city_was_hidden:
+		return
+	_city_was_hidden = hidden
+	if hidden:
+		# Слой Легиона живёт в отдельных SubViewport. Здесь только 3D города.
+		for root: Node in [people, actors_root]:
+			for player: AnimationPlayer in root.find_children("*", "AnimationPlayer", true, false):
+				if player.active:
+					player.active = false
+					_city_paused_players.append(player)
+	else:
+		for player: AnimationPlayer in _city_paused_players:
+			if is_instance_valid(player):
+				player.active = true
+		_city_paused_players.clear()
+		_set_hour(hour)
+
+
 func _process(dt: float) -> void:
-	if ready_done:
-		_ivy_tick(dt)
+	var started := Perf13.begin()
+	_process_profiled(dt)
+	Perf13.end(Perf13.CITY, started)
+
+
+func _process_profiled(dt: float) -> void:
 	if not ready_done:
 		return
+	var hidden := legion_city_hidden()
+	_city_visuals(hidden)
+	if not hidden:
+		_ivy_tick(dt)
 	if sandbox and mode in ["play", "new"] and city.money < 5000000.0:
 		city.money = 9999999.0                # песочница: деньги не кончаются
 	frame += 1
@@ -2632,18 +2680,22 @@ func _process(dt: float) -> void:
 	var heavy := true
 	if _compute_due:
 		_after_stroke()                       # мазок окончен в прошлом кадре: пересчёт города (окно — кадром позже)
-	elif _hud_due:
-		_hud_due = false
-		hud.refresh()
-	elif _actors_due:
+	elif (_hud_due or _hour_hud_part > 0) and not hidden and _clock_commit_frame != Engine.get_process_frames():
+		if _hud_due:
+			_hud_due = false
+			_hour_hud_part = 1
+		hud.refresh(_hour_hud_part)
+		_hour_hud_part = (_hour_hud_part + 1) % 4
+	elif _actors_due and not hidden and _clock_commit_frame != Engine.get_process_frames():
 		_actors_due = false
 		_sync_all_actors()
 	else:
 		heavy = false
 	_minimized_pause()
-	_rebuild_land(6, heavy)
+	if not hidden:
+		_rebuild_land(6, heavy)
+		_swim(dt)
 	land.save_warm()                          # отличия земли для сохранения — заранее, понемногу
-	_swim(dt)
 	var sdt := dt * speed
 	if speed > 0.0 and mode != "menu":
 		var h0 := hour
@@ -2655,14 +2707,14 @@ func _process(dt: float) -> void:
 				_sim_hour()
 		else:
 			if int(floor(nh)) != int(floor(h0)):
-				_sim_hour()
-			if nh >= 24.0:
-				city.day += 1
-				city.cal_fest_tick()                # римский праздник календаря — в свой день (новая игра)
-			_set_hour(nh)
+				_sim_hour(nh >= 24.0)
+			if hidden:
+				hour = fposmod(nh, 24.0)
+			else:
+				_set_hour(nh)
 	elif mode == "menu" and clock_hours:
 		_set_hour(hour + dt * 0.5 * 24.0 / DAY_LEN)
-	if speed != _actor_speed:
+	if not hidden and speed != _actor_speed:
 		_actor_speed = speed
 		for a in actors_root.get_children():
 			if a is Citizen:
@@ -2670,19 +2722,20 @@ func _process(dt: float) -> void:
 			else:
 				for ap in a.find_children("*", "AnimationPlayer", true, false):
 					(ap as AnimationPlayer).speed_scale = speed
-	if rig and (rig.cine or (photo != null and photo.on)):
-		_plot_hover(Vector2i(-1, -1))         # в ролике камеру ведёт он (и в режиме фото): без подсветки участка под мышью
-		brush_ring.visible = false            # …и без кольца кисти на земле (подсветку домов прячет cover.gd)
-		brush_box.visible = false
-		brush_disc.visible = false
-	else:
-		_update_tool()
+	if not hidden:
+		if rig and (rig.cine or (photo != null and photo.on)):
+			_plot_hover(Vector2i(-1, -1))         # в ролике камеру ведёт он (и в режиме фото): без подсветки участка под мышью
+			brush_ring.visible = false            # …и без кольца кисти на земле (подсветку домов прячет cover.gd)
+			brush_box.visible = false
+			brush_disc.visible = false
+		else:
+			_update_tool()
 	autosave_t += dt
 	if mode == "menu":
 		rig._yaw_t += dt * 0.03
 		if _autogo != "" and frame == 60:
 			hud._menu_go(_autogo)
-	if autosave_t > 90.0 and can_save and settings.get("autosave", true) and moving.is_empty() and moving_nature.is_empty():
+	if autosave_t > 90.0 and not _clock_busy and can_save and settings.get("autosave", true) and moving.is_empty() and moving_nature.is_empty():
 		autosave_t = 0.0
 		_autosave()
 	if shot_path != "" and frame == shot_frame:
@@ -6597,13 +6650,24 @@ func _autosave() -> void:
 
 
 ## Ход дня из кадра игры (окно города обновится в следующем кадре)
-func _sim_hour() -> void:
+func _sim_hour(midnight := false) -> void:
+	if _clock_busy:
+		return
+	_clock_busy = true
 	var t0 := Time.get_ticks_usec()
 	_hud_later = hud != null
-	city.sim_day()
+	await city.sim_day(get_tree())
 	_hud_later = false
 	_hero_hour()
-	sim_ms = (Time.get_ticks_usec() - t0) / 1000.0
+	if midnight:
+		city.day += 1
+		city.cal_fest_tick()                # римский праздник календаря — после расчёта часа
+	var elapsed := Time.get_ticks_usec() - t0 - city.compute_wait_us
+	sim_ms = elapsed / 1000.0
+	if Perf13.enabled:
+		Perf13.usec[Perf13.CITY_HOUR] += elapsed
+	_clock_commit_frame = Engine.get_process_frames()
+	_clock_busy = false
 
 
 # ---------- свой герой (Д11) ----------

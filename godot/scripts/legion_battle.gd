@@ -1,5 +1,7 @@
 class_name LegionBattle
 extends Node
+
+const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Рисованный бой Легиона: ход боя считает LegionSim фиксированным шагом.
 ## Город на паузе, его 3D-кадр скрыт. Поле, бойцы и эффекты рисуются в CanvasLayer.
 ##
@@ -100,6 +102,7 @@ var battle_clock: Label
 var wave_chip: Panel
 var wave_lbl: Label
 var time_left := LegionSim.TIME_LIMIT
+var _score_step := -1
 var _clock_second := -1
 var perk_bar: Control
 var perk_btns := {}
@@ -174,7 +177,7 @@ func _ready() -> void:
 	_start(setup)
 
 
-## Город уходит в тень: интерфейс спрятан, время стоит, камера города не слушает клавиш, 3D города не рисуется
+## Город уходит в тень: интерфейс спрятан, камера города не слушает клавиш, 3D города не рисуется
 func _enter() -> void:
 	var vp := get_viewport()
 	_saved = {"disable_3d": vp.disable_3d}
@@ -184,10 +187,10 @@ func _enter() -> void:
 			_city_sound.duck_for_battle(get_instance_id(), true)
 		_saved["speed"] = game.speed
 		_saved["hud"] = game.hud.visible
+		game.legion_cover(self, true)
 		_saved["cine"] = game.rig.cine if game.rig else false
 		if game.tool != "":
 			game.set_tool("")
-		game.hud.set_speed(0.0)
 		game.hud.visible = false
 		if game.rig:
 			game.rig.cine = true
@@ -201,6 +204,7 @@ func _leave() -> void:
 	get_viewport().disable_3d = bool(_saved.get("disable_3d", false))
 	if game != null and is_instance_valid(game):
 		game.hud.visible = bool(_saved.get("hud", true))
+		game.legion_cover(self, false)
 		if game.rig:
 			game.rig.cine = bool(_saved.get("cine", false))
 		game.hud.set_speed(float(_saved.get("speed", 1.0)))
@@ -208,6 +212,8 @@ func _leave() -> void:
 
 func _exit_tree() -> void:
 	_release_music()
+	if is_instance_valid(game):
+		game.legion_cover(self, false)
 
 
 func _release_music() -> void:
@@ -719,6 +725,7 @@ func _start(s: Dictionary) -> void:
 	ally_health.initialized = false
 	enemy_health.initialized = false
 	_clock_second = -1
+	_score_step = -1
 	battle_clock.visible = tut == "" and not bool(s.get("fort_guide_first", false))
 	_waves_ui()
 	_fill_perks()
@@ -829,19 +836,30 @@ func _waves_ui() -> void:
 
 
 func _update_score(dt: float) -> void:
-	var ally_hp := 0.0
-	var ally_max := 0.0
-	var enemy_hp := 0.0
-	var enemy_max := 0.0
-	for u in sim.units:
-		if u.side == "ally":
-			ally_hp += u.hp
-			ally_max += u.max_hp
-		elif u.wave == sim.wave_idx:
-			enemy_hp += u.hp
-			enemy_max += u.max_hp
-	ally_health.update_health(ally_hp, ally_max, dt)
-	enemy_health.update_health(enemy_hp, enemy_max, dt)
+	var started := Perf13.begin()
+	_update_score_profiled(dt)
+	Perf13.end(Perf13.SCORE, started)
+
+
+func _update_score_profiled(dt: float) -> void:
+	if _score_step != sim.steps or dt == 0.0:
+		_score_step = sim.steps
+		var ally_hp := 0.0
+		var ally_max := 0.0
+		var enemy_hp := 0.0
+		var enemy_max := 0.0
+		for u in sim.units:
+			if u.side == "ally":
+				ally_hp += u.hp
+				ally_max += u.max_hp
+			elif u.wave == sim.wave_idx:
+				enemy_hp += u.hp
+				enemy_max += u.max_hp
+		ally_health.update_health(ally_hp, ally_max, dt)
+		enemy_health.update_health(enemy_hp, enemy_max, dt)
+	else:
+		ally_health.update_health(ally_health.hp, ally_health.max_hp, dt)
+		enemy_health.update_health(enemy_health.hp, enemy_health.max_hp, dt)
 
 	time_left = maxf(0.0, LegionSim.TIME_LIMIT - sim.t)
 	var seconds := ceili(time_left - 0.00001)
@@ -861,6 +879,12 @@ func _score_floor() -> float:
 
 
 func _process(dt: float) -> void:
+	var started := Perf13.begin()
+	_process_profiled(dt)
+	Perf13.end(Perf13.BATTLE, started)
+
+
+func _process_profiled(dt: float) -> void:
 	if sim == null:
 		return
 	dt = minf(dt, 0.1)
@@ -881,6 +905,7 @@ func _process(dt: float) -> void:
 		hint_lbl.modulate.a = maxf(0.0, hint_lbl.modulate.a - dt * 1.5)
 		if hint_lbl.modulate.a <= 0.0:
 			hint_lbl.visible = false
+	var step_started := Perf13.begin()
 	if run and phase != "result":
 		acc += gdt
 		var n := 0
@@ -890,6 +915,7 @@ func _process(dt: float) -> void:
 			n += 1
 			_handle(sim.take_events())
 			_tut_check()
+	Perf13.end(Perf13.SIM, step_started)
 	_tut_arrow(dt)
 	if not sim.result.is_empty() and (phase == "fight" or phase == "intro"):
 		_begin_end()
@@ -903,8 +929,10 @@ func _process(dt: float) -> void:
 	battle_sound.update_field(sim, dt, run and fighting, battle_view)
 	battle_view.tick(sim, gdt, dt, acc, fighting)
 	_update_ui(dt)
+	var had_floats := not bars.floats.is_empty()
 	bars.age_floats(dt)
-	bars.queue_redraw()
+	if had_floats or gdt > 0.0 or phase == "result":
+		bars.queue_redraw()
 
 
 func _fps(dt: float) -> void:
@@ -917,6 +945,8 @@ func _fps(dt: float) -> void:
 
 
 func _handle(evs: Array) -> void:
+	if not evs.is_empty():
+		_score_step = -1
 	for e: Dictionary in evs:
 		match String(e["type"]):
 			"wave":
@@ -1203,11 +1233,16 @@ func _update_ui(dt: float) -> void:
 	_update_score(dt)
 	for id in perk_btns:
 		var pb: PerkButton = perk_btns[id]
-		pb.charge = sim.perk_charge(id)
-		pb.left = sim.perk_ready(id)
-		pb.active = phase == "fight" or phase == "intro"
-		pb.disabled = not pb.active or (tut_freeze and id != "oil")
-		pb.queue_redraw()
+		var charge := sim.perk_charge(id)
+		var left := sim.perk_ready(id)
+		var active := phase == "fight" or phase == "intro"
+		var disabled: bool = not active or (tut_freeze and id != "oil")
+		if pb.charge != charge or pb.left != left or pb.active != active or pb.disabled != disabled:
+			pb.charge = charge
+			pb.left = left
+			pb.active = active
+			pb.disabled = disabled
+			pb.queue_redraw()
 	var boss := _boss_unit
 	if boss != null and not boss.alive:
 		boss = null
@@ -1740,6 +1775,8 @@ class TeamHealth extends Control:
 	var displayed := 0.0
 	var trail := 0.0
 	var _hold := 0.0
+	var _shown_hp := -1
+	var _shown_max := -1
 	var _frame: StyleBoxTexture
 	var _fill: StyleBoxTexture
 
@@ -1767,15 +1804,25 @@ class TeamHealth extends Control:
 		if _hold <= 0.0:
 			trail = move_toward(trail, displayed, dt * 3.2)
 		trail = maxf(displayed, trail)
-		if current != hp or maximum != max_hp or caption.text.is_empty():
-			hp = current
-			max_hp = maximum
-			caption.text = "%d/%d" % [roundi(hp), roundi(max_hp)]
-			queue_redraw()
-		elif old_fill != displayed or old_trail != trail:
+		hp = current
+		max_hp = maximum
+		var shown_hp := roundi(hp)
+		var shown_max := roundi(max_hp)
+		if shown_hp != _shown_hp or shown_max != _shown_max or caption.text.is_empty():
+			_shown_hp = shown_hp
+			_shown_max = shown_max
+			caption.text = "%d/%d" % [shown_hp, shown_max]
+		if old_fill != displayed or old_trail != trail:
 			queue_redraw()
 
+
 	func _draw() -> void:
+		var started := Perf13.begin()
+		_draw_profiled()
+		Perf13.end(Perf13.TEAM_DRAW, started)
+
+
+	func _draw_profiled() -> void:
 		draw_style_box(_frame, Rect2(Vector2.ZERO, size))
 		var width := maxf(0.0, size.x - 12.0)
 		var x := 6.0 if enemy else size.x - 6.0
@@ -1791,6 +1838,12 @@ class BarsLayer extends Control:
 	const MERGE_WINDOW := 0.15
 	const MAX_PER_TARGET := 3
 	const OUTLINE := 5
+	const BAR_EDGE := Color("593413")
+	const BAR_TRIM := Color("e1a841")
+	const BAR_EMPTY := Color("512412")
+	const BAR_TRAIL := Color("cd8f52")
+	const BAR_ALLY := Color("78da25")
+	const BAR_ENEMY := Color("ea3a2c")
 
 	class FloatText:
 		var id: int
@@ -1805,9 +1858,15 @@ class BarsLayer extends Control:
 		var box := Rect2()
 		var baseline := Vector2()
 		var font_size := 22
+		var extent := Vector2.ZERO
+		var ascent := 0.0
+		var needs_measure := true
 
 	var battle: LegionBattle
 	var floats: Array[FloatText] = []
+	var _rows := {}
+	var _occupied: Array[Rect2] = []
+	var _overlapping: Array[Rect2] = []
 
 	func float_value(target: BattleView.Fighter, amount: int, kind: String, now: float) -> void:
 		for i in range(floats.size() - 1, -1, -1):
@@ -1829,6 +1888,7 @@ class BarsLayer extends Control:
 
 	func _format_value(fl: FloatText) -> void:
 		fl.caption = ("+" if fl.kind == "heal" else "") + str(fl.amount) + ("!" if fl.kind == "crit" else "")
+		fl.needs_measure = true
 
 	func float_text(target: BattleView.Fighter, caption: String, kind: String) -> void:
 		_add_float(target, kind).caption = caption
@@ -1856,64 +1916,84 @@ class BarsLayer extends Control:
 			if fl.age >= 1.0:
 				floats.remove_at(i)
 
-	func layout_floats() -> void:
-		var rows := {}
-		var occupied: Array[Rect2] = []
+	func layout_floats(reuse_heads := false) -> void:
+		var started := Perf13.begin()
+		layout_floats_profiled(reuse_heads)
+		Perf13.end(Perf13.BARS, started)
+
+
+	func layout_floats_profiled(reuse_heads: bool) -> void:
+		_rows.clear()
+		_occupied.clear()
 		var fnt := battle.font_bold
 		for i in range(floats.size() - 1, -1, -1):
 			var fl := floats[i]
 			var target: BattleView.Fighter = battle.views.get(fl.id)
 			if target != null:
-				fl.anchor = battle.battle_view.screen(target.head())
-			var row: int = rows.get(fl.id, 0)
-			rows[fl.id] = row + 1
-			fl.font_size = 28 if fl.kind == "crit" else 22
-			var width := fnt.get_string_size(fl.caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fl.font_size).x
-			var ascent := fnt.get_ascent(fl.font_size)
-			var height := ascent + fnt.get_descent(fl.font_size)
-			var extent := Vector2(width, height) + Vector2.ONE * OUTLINE
+				fl.anchor = target.hud_anchor if reuse_heads and target.unit.alive else battle.battle_view.screen(target.head())
+			var row: int = _rows.get(fl.id, 0)
+			_rows[fl.id] = row + 1
+			if fl.needs_measure:
+				fl.font_size = 28 if fl.kind == "crit" else 22
+				fl.ascent = fnt.get_ascent(fl.font_size)
+				fl.extent = Vector2(fnt.get_string_size(fl.caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fl.font_size).x,
+					fl.ascent + fnt.get_descent(fl.font_size)) + Vector2.ONE * OUTLINE
+				fl.needs_measure = false
+			var extent := fl.extent
 			# Свежая цифра ближе к полоске здоровья.
 			var y := maxf(44.0, fl.anchor.y - 13.0 - row * 37.0 - 12.0 * fl.age - extent.y)
 			var x := clampf(fl.anchor.x - extent.x * 0.5, 6.0, maxf(6.0, size.x - extent.x - 6.0))
 			var box := Rect2(Vector2(x, y), extent)
 			if size.x > extent.x + 12.0:
-				box = _free_number_box(box, occupied)
-			occupied.append(box)
+				box = _free_number_box(box)
+			_occupied.append(box)
 			fl.box = box
-			fl.baseline = box.position + Vector2(OUTLINE * 0.5, OUTLINE * 0.5 + ascent)
+			fl.baseline = box.position + Vector2(OUTLINE * 0.5, OUTLINE * 0.5 + fl.ascent)
 
-	func _free_number_box(box: Rect2, occupied: Array[Rect2]) -> Rect2:
-		# Проверяем ближайшие края занятых мест слева и справа.
+	func _free_number_box(box: Rect2) -> Rect2:
 		while true:
-			var candidates: Array[float] = [box.position.x]
-			for other in occupied:
+			_overlapping.clear()
+			var blocked := false
+			for other in _occupied:
 				if other.end.y > box.position.y and other.position.y < box.end.y:
-					candidates.append(other.position.x - box.size.x - 3.0)
-					candidates.append(other.end.x + 3.0)
-			var best := INF
+					_overlapping.append(other)
+					if box.intersects(other):
+						blocked = true
+			if not blocked:
+				return box
+			var nearest := INF
 			var x := box.position.x
-			for candidate in candidates:
-				if candidate < 6.0 or candidate + box.size.x > size.x - 6.0:
-					continue
-				var distance := absf(candidate - box.position.x)
-				if distance >= best:
-					continue
-				var proposed := Rect2(Vector2(candidate, box.position.y), box.size)
-				var free := true
-				for other in occupied:
-					if proposed.intersects(other):
-						free = false
-						break
-				if free:
-					best = distance
-					x = candidate
-			if best < INF:
+			for other in _overlapping:
+				var left := other.position.x - box.size.x - 3.0
+				var right := other.end.x + 3.0
+				if absf(box.position.x - left) < nearest and _number_fits(box, left):
+					nearest = absf(box.position.x - left)
+					x = left
+				if absf(right - box.position.x) < nearest and _number_fits(box, right):
+					nearest = absf(right - box.position.x)
+					x = right
+			if nearest < INF:
 				box.position.x = x
 				return box
 			box.position.y -= box.size.y + 3.0
 		return box
 
+	func _number_fits(box: Rect2, x: float) -> bool:
+		if x < 6.0 or x + box.size.x > size.x - 6.0:
+			return false
+		box.position.x = x
+		for other in _overlapping:
+			if box.intersects(other):
+				return false
+		return true
+
 	func _draw() -> void:
+		var started := Perf13.begin()
+		_draw_profiled()
+		Perf13.end(Perf13.DRAW_BARS, started)
+
+
+	func _draw_profiled() -> void:
 		if battle == null or battle.sim == null or battle.phase == "result":
 			return
 		var fnt: Font = battle.font_bold
@@ -1925,6 +2005,7 @@ class BarsLayer extends Control:
 			if not u.alive:
 				continue
 			var p := battle.battle_view.screen(f.head())
+			f.hud_anchor = p
 			var w := 74.0 * scale_ui
 			var h := 5.5 * scale_ui
 			if not battle.battle_view.legacy_layout:
@@ -1933,15 +2014,16 @@ class BarsLayer extends Control:
 			p.y = maxf(p.y, score_floor + (h + 7.0) * 0.5 + 4.0)
 			var left := p - Vector2(w * 0.5, 0)
 			var right := left + Vector2(w, 0)
-			draw_line(left, right, Color("593413"), h + 7.0, true)
-			draw_line(left, right, Color("e1a841"), h + 4.0, true)
-			draw_line(left, right, Color("512412"), h + 1.8, true)
+			draw_line(left, right, BAR_EDGE, h + 7.0, true)
+			draw_line(left, right, BAR_TRIM, h + 4.0, true)
+			draw_line(left, right, BAR_EMPTY, h + 1.8, true)
 			var hp := u.hp_frac()
-			var col := Color("78da25") if u.side == "ally" else Color("ea3a2c")
-			draw_line(left, left.lerp(right, f.health), Color("cd8f52"), h, true)
+			var col := BAR_ALLY if u.side == "ally" else BAR_ENEMY
+			draw_line(left, left.lerp(right, f.health), BAR_TRAIL, h, true)
 			draw_line(left, left.lerp(right, hp), col, h, true)
 			draw_line(left - Vector2(0, 1), left.lerp(right, hp) - Vector2(0, 1), Color(col.lightened(0.4), 0.9), 1.5, true)
-		layout_floats()
+		if not floats.is_empty():
+			layout_floats(true)
 		for fl in floats:
 			var col := Color("fff1d2")
 			if fl.kind == "crit":

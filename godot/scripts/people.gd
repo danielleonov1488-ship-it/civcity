@@ -193,6 +193,11 @@ func _path(a: Vector2, b: Vector2) -> PackedVector2Array:
 	if raw.is_empty():
 		return PackedVector2Array()
 	var out := PackedVector2Array([a, fa])
+	if _hidden_city:
+		# С пути нужны клетки и время хода. Срезать углы для картинки сейчас незачем.
+		out.append_array(raw.slice(1))
+		out.append(b)
+		return out
 	var i := 0
 	while i < raw.size() - 1:
 		# 16.11 (скорость): дальняя видимая точка — делением пополам, а не шагом по одной (было до 30 проверок
@@ -332,6 +337,8 @@ func sync_members() -> void:
 func _node(r: Dictionary) -> Citizen:
 	if r["node"] != null:
 		return r["node"]
+	if _hidden_city:
+		return null
 	if visible_count >= max_vis and int(r["id"]) != focus_rid and not r.has("hero"):
 		return null                          # выбранного (карточка, «Следовать») и героя рисуем всегда
 	var c := Citizen.build(look_of(r), r["child"])
@@ -358,6 +365,8 @@ func _hide(r: Dictionary) -> void:
 
 
 func _place(r: Dictionary) -> void:
+	if _hidden_city:
+		return
 	var c: Citizen = r["node"]
 	if c == null:
 		return
@@ -3207,6 +3216,11 @@ func _pf(name: String, t: int) -> int:
 	return now
 
 
+const HIDDEN_TICK := 0.05
+var _hidden_city := false
+var _hidden_time := 0.0
+
+
 func _process(dt: float) -> void:
 	if perf:
 		var t0 := Time.get_ticks_usec()
@@ -3219,7 +3233,30 @@ func _process(dt: float) -> void:
 func _process_body(dt: float) -> void:
 	if city == null or land == null:
 		return
-	dt = minf(dt, 0.05)
+	var hidden: bool = game.legion_city_hidden()
+	if hidden:
+		_hidden_time += dt
+		_hidden_city = true
+		if _hidden_time < HIDDEN_TICK:
+			return
+		dt = _hidden_time
+		_hidden_time = 0.0
+	elif _hidden_city:
+		_hidden_city = false
+		dt += _hidden_time
+		_hidden_time = 0.0
+		_prop_t = 0.0
+		_vis_t = 0.0
+		for r: Dictionary in _shown:
+			_place(r)
+		if not hero_r.is_empty():
+			_place(hero_r)
+		for cat: Dictionary in cats:
+			_cat_place(cat)
+			if cat.has("anim"):
+				_cat_anim(cat)
+	else:
+		dt = minf(dt, 0.05)
 	var speed: float = game.speed
 	if game.tutorial != null and game.tutorial.active():
 		# Семья не теряет время пути, когда один кадр рисуется дольше.
@@ -3242,12 +3279,14 @@ func _process_body(dt: float) -> void:
 	if pf:
 		tm = _pf("sched", tm)
 	_prop_t -= dt
-	if _prop_t <= 0.0:
+	if _prop_t <= 0.0 and not hidden:
 		_prop_t = 0.3
 		_props_tick()
 	if pf:
 		tm = _pf("props", tm)
 	if speed <= 0.0:
+		if hidden:
+			return
 		for r: Dictionary in _shown:
 			(r["node"] as Citizen).anim.speed_scale = 0.0
 		if not hero_r.is_empty() and hero_r["node"] != null:
@@ -3271,7 +3310,7 @@ func _process_body(dt: float) -> void:
 	_lod_frame += 1
 	var k_walk := maxi(1, int(Engine.get_frames_per_second() / 30.0))     # идущих — не реже 30 раз в секунду: шаг плавный
 	_sim_time += sdt
-	if anim_batch:
+	if hidden or anim_batch:
 		_residents_batch(speed, k_walk)
 	else:
 		for r in residents.duplicate():
@@ -3308,7 +3347,7 @@ func _process_body(dt: float) -> void:
 	if pf:
 		tm = _pf("hero+convs", tm)
 	_vis_t -= dt
-	if _vis_t <= 0.0:
+	if _vis_t <= 0.0 and not hidden:
 		_vis_t = 0.5
 		_vis_tick()
 	if pf:
@@ -3331,21 +3370,22 @@ func _residents_batch(speed: float, k_walk: int) -> void:
 		for r: Dictionary in residents:
 			(_buckets[int(r["id"]) % far_n] as Array).append(r)
 		_buckets_dirty = false
-	if _shown_dirty:
-		_shown_frame = _shown.duplicate()
-		_shown_dirty = false
-	for r: Dictionary in _shown_frame:
-		var c: Citizen = r["node"]
-		if c == null or not by_id.has(r["id"]):
-			continue
-		var k := mini(c.lod_k, k_walk) if r["state"] == "walk" else c.lod_k
-		if (_lod_frame + c.batch_slot) % maxi(1, k) != 0:
-			continue
-		var rdt := _sim_time - float(r["sim_at"])
-		r["sim_at"] = _sim_time
-		_resident_step(r, rdt, speed)
+	if not _hidden_city:
+		if _shown_dirty:
+			_shown_frame = _shown.duplicate()
+			_shown_dirty = false
+		for r: Dictionary in _shown_frame:
+			var c: Citizen = r["node"]
+			if c == null or not by_id.has(r["id"]):
+				continue
+			var k := mini(c.lod_k, k_walk) if r["state"] == "walk" else c.lod_k
+			if (_lod_frame + c.batch_slot) % maxi(1, k) != 0:
+				continue
+			var rdt := _sim_time - float(r["sim_at"])
+			r["sim_at"] = _sim_time
+			_resident_step(r, rdt, speed)
 	for r: Dictionary in _buckets[_far_ph]:
-		if r["node"] != null or not by_id.has(r["id"]) or float(r["sim_at"]) >= _sim_time:
+		if (r["node"] != null and not _hidden_city) or not by_id.has(r["id"]) or float(r["sim_at"]) >= _sim_time:
 			continue
 		var rdt := _sim_time - float(r["sim_at"])
 		r["sim_at"] = _sim_time
@@ -3617,7 +3657,7 @@ func _step(r: Dictionary, dt: float) -> void:
 	var c: Citizen = r["node"]
 	if c == null and visible_count < max_vis and (r["p"] as Vector2).distance_to(path[path.size() - 1]) > 3.0:
 		c = _node(r)
-		if c:
+		if c and not _hidden_city:
 			c.play("Walk_Loop")
 			r["fade"] = 0.0             # место на улице освободилось — проявляется, а не выскакивает
 			c.set_alpha(0.0)
@@ -3631,7 +3671,7 @@ func _step(r: Dictionary, dt: float) -> void:
 		sf *= float(r["tutorial_settle_pace"])
 		dt = _settle_time - float(r["tutorial_settle_at"])
 		r["tutorial_settle_at"] = _settle_time
-	if c:
+	if c and not _hidden_city:
 		c.anim.speed_scale = game.speed * float(r["speed"]) * sf
 		if float(r["fade"]) < 1.0:
 			# получил узел в свою очередь — dt за 8 кадров; проявляется всё равно по кадру, а не выскакивает
@@ -3654,8 +3694,12 @@ func _step(r: Dictionary, dt: float) -> void:
 		return
 	var dir := to / dist
 	r["p"] = p + dir * mv
-	r["yaw"] = lerp_angle(float(r["yaw"]), atan2(dir.x, dir.y), minf(1.0, dt * 8.0))
-	_place(r)
+	var yaw := atan2(dir.x, dir.y)
+	if _hidden_city:
+		r["yaw"] = yaw
+	else:
+		r["yaw"] = lerp_angle(float(r["yaw"]), yaw, minf(1.0, dt * 8.0))
+		_place(r)
 
 
 func _float_text(p: Vector2, text: String) -> void:
@@ -5146,6 +5190,8 @@ func _make_cat_kit(home: Dictionary, opts := {}) -> Dictionary:
 
 
 func _cat_place(c: Dictionary) -> void:
+	if _hidden_city:
+		return
 	var n: Node3D = c["n"]
 	var p: Vector2 = c["p"]
 	n.position = Vector3(p.x, land.height_at(p.x, p.y), p.y)
@@ -5154,6 +5200,8 @@ func _cat_place(c: Dictionary) -> void:
 
 ## Модель кошки: движение по состоянию (сменилось — плавный переход), скорость — как у игры
 func _cat_anim(c: Dictionary) -> void:
+	if _hidden_city:
+		return
 	var ap: AnimationPlayer = c["anim"]
 	var cl: Array = CAT_CLIP.get(c["state"], CAT_CLIP["sit"])
 	if c["clip"] != cl[0]:
@@ -5166,6 +5214,8 @@ func _cat_anim(c: Dictionary) -> void:
 
 ## Прежняя кошка: лапы, хвост, голова — кодом
 func _cat_kit_anim(c: Dictionary, dt: float, t: float) -> void:
+	if _hidden_city:
+		return
 	var n: Node3D = c["n"]
 	var w: float = c["walk"]
 	var ph: float = c["ph"] + t * 9.0
@@ -5187,6 +5237,8 @@ func _cat_kit_anim(c: Dictionary, dt: float, t: float) -> void:
 
 ## Вещица из «Кошачьей лавки» (Д14): купили или сменили в карточке — надеть
 func _cats_wear() -> void:
+	if _hidden_city:
+		return
 	for c in cats:
 		var wr := String(cat_rec(c).get("wr", ""))
 		if wr != String(c.get("wr_on", "")):

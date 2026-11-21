@@ -4063,6 +4063,7 @@ func _card_or_cat(cat: String, type: String) -> Control:
 
 
 func _process(_dt: float) -> void:
+	var city_visible: bool = game == null or not game.legion_city_hidden()
 	if not _ptr_shown.is_empty() and Time.get_ticks_msec() >= int(_ptr_shown["until"]):
 		_ptr_shown = {}
 		_update_pointer()
@@ -4077,17 +4078,18 @@ func _process(_dt: float) -> void:
 				_update_pointer()
 		else:
 			notes_box.visible = not advisor_panel.visible
-	_fit_tray()
-	if game and game.ready_done:
-		_family_badges()
-	_quest_world_tick()
-	_place_badges()
-	_place_pops()
-	_place_notes()
-	_place_overlay()
-	_cursor_tick()
-	_hover_tick()
-	_person_tag_tick(_dt)
+	if city_visible:
+		_fit_tray()
+		if game and game.ready_done:
+			_family_badges()
+		_quest_world_tick()
+		_place_badges()
+		_place_pops()
+		_place_notes()
+		_place_overlay()
+		_cursor_tick()
+		_hover_tick()
+		_person_tag_tick(_dt)
 	if not info_p.is_empty() and info_panel and info_panel.visible:
 		PersonCard.tick(self, info_p, _dt)     # портрет следит за головой, «Сейчас» — дважды в секунду
 	if tool_panel and tool_panel.visible and Engine.get_process_frames() % 30 == 0:
@@ -4109,7 +4111,7 @@ func _process(_dt: float) -> void:
 		if Time.get_ticks_msec() < _fold_glow_until:
 			gk = 0.5 + 0.5 * sin(Time.get_ticks_msec() / 140.0)
 		_fold_badge.modulate = Color.WHITE.lerp(Color(1.35, 1.4, 1.2), gk)
-	if game and lbl_clock:
+	if city_visible and game and lbl_clock:
 		var h := int(game.hour)
 		var m := int((game.hour - h) * 60.0) / 10 * 10
 		lbl_clock.text = "%02d:%02d" % [h, m]
@@ -7670,65 +7672,67 @@ func plot_cap_note() -> String:
 
 # ---------- обновление ----------
 
-func refresh() -> void:
+func refresh(hour_part := 0) -> void:
 	if game == null or game.city == null:
 		return
-	var c: City = game.city
-	lbl_level.text = Defs.LEVELS[c.level]["name"]          # подсказка — мгновенная, _tip_level
-	lbl_pop.text = fmt(c.stats["pop"])
-	lbl_happy.text = "%d%%" % int(c.stats["happy"])
-	if renown_pill != null:
-		_renown_on = Renown.on(c) and city_card != null and city_card.visible   # прячется вместе с полосой; видна, если хватает места (_fit_top)
-		lbl_renown.text = "%s · %s" % [Renown.title_of(c.renown), fmt(int(c.renown))]
-		if c.fest_left > 0 and c.cal_fest_id != "":
-			lbl_renown.text += " · " + Renown.cal_fest_name(c.cal_fest_id)
-	lbl_day.text = "День %d" % (c.day + 1)
-	if Renown.on(c):
-		lbl_day.text += " · " + Seasons.name_of(c.day)
-	show_city_name()
-	lbl_money.text = fmt(c.money)
-	lbl_money.tooltip_text = I18n.t("Денарии в казне") + ": %s / %s" % [fmt(c.money), fmt(c.money_cap())]
-	var net := c.projected_net()
-	lbl_income.text = ("+" if net >= 0 else "") + fmt(net) + "/ч"
-	lbl_income.tooltip_text = "Ожидаемый доход за час при нынешних жильцах и работниках. Прошедшие часы — в «Финансах»"
-	lbl_income.add_theme_color_override("font_color", C_GOOD if net >= 0 else C_BAD)
-	# сверх полок (вернули очки) — честно «сверх полок», а не «4160 / 3200»
-	lbl_rp.text = ("%s+" % fmt(c.rp)) if c.rp > c.rp_cap() + 0.5 else "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]     # «999 999+» — сверх полок (в подсказке — подробно)
-	lbl_rp.tooltip_text = rp_tip()
-	lbl_rp_day.text = "+%.1f" % float(c.stats.get("rp_day", 0.0)) if float(c.stats.get("rp_day", 0.0)) > 0.0 else ""
-	for sb in speed_btns:
-		_set_on(sb[0], is_equal_approx(game.speed, sb[1]))
-	_update_full_marks()
-	_update_rank_ui()
-	_update_floor_btn()
-	_update_upg_btn()
-	var ub := road_panel.find_child("upgrade_box", true, false) if road_panel else null
-	if ub:
-		ub.visible = c.research.has(Defs.ROAD_UP_RES)    # кисть «Улучшить» — после «Базальтовой мостовой» (этап 5.7)
-	update_new_marks()
-	_sync_build_menu()
-	_sync_military_tab()
-	_fit_bottom()                             # «Полки полны» — правая полоса шире
-	_fill_classes()
-	_fit_top()
-	_fill_families()
-	_fill_tasks()
-	_once_tips()
-	if tray.visible:
-		_update_cards()
-	if info_panel.visible and not PersonCard.editing(info_p):     # открыт «Гардероб» / «Внешность» — не пересобираем («Сейчас» живёт сам)
-		_fill_info()
-	if research_panel.visible:
-		_research_head()
-		research_tree.refresh()
-	if overview_panel.visible:
-		_refresh_overview()
-	_update_world_icons()
-	game._update_noroad_marks()
-	_update_pointer()
-	if hover_src:
-		_fill_hover()                       # числа в открытой подсказке живые
-
+	if hour_part == 0 or hour_part == 1:
+		var c: City = game.city
+		lbl_level.text = Defs.LEVELS[c.level]["name"]          # подсказка — мгновенная, _tip_level
+		lbl_pop.text = fmt(c.stats["pop"])
+		lbl_happy.text = "%d%%" % int(c.stats["happy"])
+		if renown_pill != null:
+			_renown_on = Renown.on(c) and city_card != null and city_card.visible   # прячется вместе с полосой; видна, если хватает места (_fit_top)
+			lbl_renown.text = "%s · %s" % [Renown.title_of(c.renown), fmt(int(c.renown))]
+			if c.fest_left > 0 and c.cal_fest_id != "":
+				lbl_renown.text += " · " + Renown.cal_fest_name(c.cal_fest_id)
+		lbl_day.text = "День %d" % (c.day + 1)
+		if Renown.on(c):
+			lbl_day.text += " · " + Seasons.name_of(c.day)
+		show_city_name()
+		lbl_money.text = fmt(c.money)
+		lbl_money.tooltip_text = I18n.t("Денарии в казне") + ": %s / %s" % [fmt(c.money), fmt(c.money_cap())]
+		var net := c.projected_net()
+		lbl_income.text = ("+" if net >= 0 else "") + fmt(net) + "/ч"
+		lbl_income.tooltip_text = "Ожидаемый доход за час при нынешних жильцах и работниках. Прошедшие часы — в «Финансах»"
+		lbl_income.add_theme_color_override("font_color", C_GOOD if net >= 0 else C_BAD)
+		# сверх полок (вернули очки) — честно «сверх полок», а не «4160 / 3200»
+		lbl_rp.text = ("%s+" % fmt(c.rp)) if c.rp > c.rp_cap() + 0.5 else "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]     # «999 999+» — сверх полок (в подсказке — подробно)
+		lbl_rp.tooltip_text = rp_tip()
+		lbl_rp_day.text = "+%.1f" % float(c.stats.get("rp_day", 0.0)) if float(c.stats.get("rp_day", 0.0)) > 0.0 else ""
+		for sb in speed_btns:
+			_set_on(sb[0], is_equal_approx(game.speed, sb[1]))
+		_update_full_marks()
+		_update_rank_ui()
+		_update_floor_btn()
+		_update_upg_btn()
+		var ub := road_panel.find_child("upgrade_box", true, false) if road_panel else null
+		if ub:
+			ub.visible = c.research.has(Defs.ROAD_UP_RES)    # кисть «Улучшить» — после «Базальтовой мостовой» (этап 5.7)
+		update_new_marks()
+		_sync_build_menu()
+		_sync_military_tab()
+		_fit_bottom()                             # «Полки полны» — правая полоса шире
+		_fill_classes()
+		_fit_top()
+	if hour_part == 0 or hour_part == 2:
+		_fill_families()
+		_fill_tasks()
+		_once_tips()
+	if hour_part == 0 or hour_part == 3:
+		if tray.visible:
+			_update_cards()
+		if info_panel.visible and not PersonCard.editing(info_p):     # открыт «Гардероб» / «Внешность» — не пересобираем («Сейчас» живёт сам)
+			_fill_info()
+		if research_panel.visible:
+			_research_head()
+			research_tree.refresh()
+		if overview_panel.visible:
+			_refresh_overview()
+		_update_world_icons()
+		game._update_noroad_marks()
+		_update_pointer()
+		if hover_src:
+			_fill_hover()                       # числа в открытой подсказке живые
 
 ## Заголовок окна исследований: очки / полки и «+N в час»
 func _research_head() -> void:

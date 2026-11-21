@@ -29,6 +29,8 @@ const HALF_FAR := 60.0                 # «Низкая»: жители даль
 ## Вернуть прежнюю «Среднюю» — здесь false (одно место)
 const MEDIUM_LIGHT := true
 static var medium_light := MEDIUM_LIGHT   # проверки (test_perf mode=offer) переключают на ходу
+static var short_low_shadows := true       # PERF13: сокращённая дальность и одна полоса теней
+static var earlier_verylow_lod := true     # PERF13: дальние модели чаще берут готовый LOD
 
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
@@ -264,8 +266,10 @@ static func apply(g) -> void:
 	if sun:
 		# 12.11: «Средняя» — тоже 2 полосы теней (вблизи тени чуть мягче; +15% кадров), «Высокая» — 4
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if low or ml else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-		# 175 м, как и прежняя «Низкая»: при 120 м (по плану) издалека город совсем без теней — плоский
 		sun.directional_shadow_max_distance = 175.0 if low else 190.0
+		if q == "low" and short_low_shadows:
+			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+			sun.directional_shadow_max_distance = 128.0
 		sun.light_angular_distance = 0.0 if low or ml else 2.2    # без «мягких» теней PCSS — они самые дорогие
 		sun.shadow_enabled = q != "verylow"
 	# атлас теней солнца и его фильтр — общие настройки отрисовки (project.godot: 8192, мягкие высокие): «Высокая» — 4096 и
@@ -281,7 +285,7 @@ static func apply(g) -> void:
 	if vp:
 		vp.msaa_3d = Viewport.MSAA_DISABLED if low else (Viewport.MSAA_4X if full else Viewport.MSAA_2X)
 		# «Очень низкая»: дальние модели (деревья, жители, детали построек) упрощаются раньше (по умолчанию — 1 точка экрана)
-		vp.mesh_lod_threshold = 4.0 if q == "verylow" else 1.0
+		vp.mesh_lod_threshold = (12.0 if earlier_verylow_lod else 4.0) if q == "verylow" else 1.0
 		# слабые видеокарты: картинка считается меньше и аккуратно растягивается (FSR); снимки (--shot) — в полном размере
 		if g.shot_path == "":
 			var hk := hidpi_scale()                # Mac с Retina — 0,7 (на Windows 1 — как прежде)
@@ -987,6 +991,7 @@ const ANIM_TINY := 22.5
 const ANIM_HZ := [0.0, 30.0, 15.0, 4.0]          # крупный / средний / мелкий / за экраном
 var _lod_frame := 0
 static var lod_on := true                     # для сравнений «было/стало» (test_perf mode=ab)
+static var skip_hidden_city_anims := true      # PERF13: позы города под экраном Легиона
 var _anim_list: Array[Citizen] = []
 var _anim_serial := 0
 static var perf := false
@@ -1012,16 +1017,25 @@ func _anim_remove(n: Node) -> void:
 
 
 func _anims(dt: float) -> void:
+	if game.legion_city_hidden():
+		return
 	var q: String = str(game.settings.get("quality", "high"))
 	var low := is_low(q)
-	var cam := get_viewport().get_camera_3d()
+	var viewport := get_viewport()
+	var cam := viewport.get_camera_3d()
 	if cam == null or game.people == null:
 		return
 	_lod_frame += 1
+	if skip_hidden_city_anims and People.anim_batch and viewport.disable_3d:
+		# Форт и бой скрывают город. Время анимаций сохраняется до возврата.
+		for c: Citizen in _anim_list:
+			if c.anim != null:
+				c.batch_step(dt, c.lod_k, _lod_frame, true)
+		return
 	var cp := cam.global_position
 	var fps := maxf(30.0, Engine.get_frames_per_second())
 	# рост в точках = fpx · рост / расстояние (вертикальный угол камеры)
-	var fpx := get_viewport().get_visible_rect().size.y / (2.0 * tan(deg_to_rad(cam.fov) * 0.5))
+	var fpx := viewport.get_visible_rect().size.y / (2.0 * tan(deg_to_rad(cam.fov) * 0.5))
 	var focus: Citizen = null
 	if game.people.by_id.has(game.people.focus_rid):
 		focus = game.people.by_id[game.people.focus_rid]["node"]

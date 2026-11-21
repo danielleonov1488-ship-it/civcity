@@ -1,4 +1,6 @@
 extends Node2D
+
+const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Один прозрачный 3D-слой для персонажей на рисованном фоне.
 
 const EDGE := """
@@ -26,12 +28,15 @@ var shadows := PackedVector3Array()
 var _frame := Transform3D.IDENTITY
 var _render_rect := Rect2()
 var _tilt := 0.0
+var _height_scale := 1.0
+var _units_per_pixel := 10.0
 static var _outline: ShaderMaterial
 static var _shadow: GradientTexture2D
 
 
 func setup(view_name: String, tilt: float, antialias := true) -> void:
 	_tilt = tilt
+	_height_scale = 1.0 / (1.79 * cos(deg_to_rad(_tilt)))
 	viewport = SubViewport.new()
 	viewport.name = view_name
 	viewport.own_world_3d = true
@@ -81,6 +86,7 @@ func _light(color: Color, energy: float, angles: Vector3) -> void:
 
 func fit(area: Vector2) -> void:
 	extent = area.max(Vector2.ONE)
+	_units_per_pixel = 10.0 / extent.y
 	_render_rect = Rect2()
 	_view_rect(Rect2(Vector2.ZERO, extent))
 
@@ -114,20 +120,34 @@ func project(at: Vector3) -> Vector2:
 
 
 func place(actor: Node3D, feet: Vector2, height: float, yaw: float, foreground := false, depth_offset := 0.0) -> void:
-	var units_per_pixel := 10.0 / extent.y
-	var at := (feet - extent * 0.5) * units_per_pixel
+	var started := Perf13.begin()
+	place_profiled(actor, feet, height, yaw, foreground, depth_offset)
+	Perf13.end(Perf13.PLACE, started)
+
+
+func place_profiled(actor: Node3D, feet: Vector2, height: float, yaw: float, foreground := false, depth_offset := 0.0) -> void:
+	var at := (feet - extent * 0.5) * _units_per_pixel
 	var depth := 9.0 if foreground else clampf(feet.y / extent.y, 0.0, 1.0) * 4.0
 	var origin := _frame * Vector3(at.x, -at.y, depth + depth_offset - 18.0)
-	var body_scale := Vector3.ONE * (height * units_per_pixel / (1.79 * cos(deg_to_rad(_tilt))))
+	var body_scale := Vector3.ONE * (height * _units_per_pixel * _height_scale)
 	if actor.position != origin:
 		actor.position = origin
-	if actor.rotation.y != deg_to_rad(yaw):
-		actor.rotation.y = deg_to_rad(yaw)
+	var angle := deg_to_rad(yaw)
+	var rotation := actor.rotation
+	if rotation.y != angle:
+		rotation.y = angle
+		actor.rotation = rotation
 	if actor.scale != body_scale:
 		actor.scale = body_scale
 
 
 func _draw() -> void:
+	var started := Perf13.begin()
+	_draw_profiled()
+	Perf13.end(Perf13.SHADOWS, started)
+
+
+func _draw_profiled() -> void:
 	if shadows.is_empty():
 		return
 	if _shadow == null:
