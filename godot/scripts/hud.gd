@@ -5651,6 +5651,16 @@ func _fill_house_body(b: Dictionary, d: Dictionary, header: VBoxContainer, body:
 	residents.mouse_filter = Control.MOUSE_FILTER_PASS
 	occupancy.add_child(residents)
 	header.add_child(occupancy)
+	if int(b.get("coming", 0)) > 0:
+		var arriving := _label("Семья въезжает…", 13, true, C_GOOD)
+		arriving.name = "HouseArriving"
+		var names := PackedStringArray()
+		for f: Dictionary in c.pending.values():
+			if int(f["home"]) == int(b["id"]):
+				names.append(I18n.t("Семья: %s") % String(f["name"]))
+		arriving.tooltip_text = "\n".join(names)
+		arriving.mouse_filter = Control.MOUSE_FILTER_PASS
+		header.add_child(arriving)
 	var hp := int(b["happy"])
 	var mood := HBoxContainer.new()
 	mood.add_theme_constant_override("separation", 3)
@@ -5842,7 +5852,7 @@ func _family_rows(b: Dictionary, box: VBoxContainer) -> void:
 	var families: Array = b.get("families", [])
 	var mood := "bad" if c.unhappy_badge(b) else "good"
 	box.add_child(_divider(5))
-	if families.is_empty():
+	if families.is_empty() and int(b.get("coming", 0)) == 0:
 		box.add_child(_label("Дом пока пуст", 13, false, C_SOFT))
 	for i in families.size():
 		var f: Dictionary = families[i]

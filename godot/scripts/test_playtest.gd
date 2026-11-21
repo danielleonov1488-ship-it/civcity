@@ -308,13 +308,14 @@ func _pause(seconds: float) -> void:
 	await get_tree().create_timer(seconds, true, false, true).timeout
 
 
-func _wait(label: String, condition: Callable, timeout := 24.0, tutorial_wait := false, required := true) -> bool:
+func _wait(label: String, condition: Callable, timeout := 24.0, tutorial_wait := false, required := true,
+		intro := false) -> bool:
 	var start := Time.get_ticks_msec()
 	while not condition.call() and Time.get_ticks_msec() - start < int(timeout * 1000.0):
 		await get_tree().process_frame
 	var elapsed := float(Time.get_ticks_msec() - start) / 1000.0
-	if tutorial_wait and elapsed > 10.0:
-		log.wait_over_ten(label, elapsed)
+	if tutorial_wait:
+		log.tutorial_wait(label, elapsed, intro)
 	return bool(condition.call()) or (required and _fail("Тайм-аут: " + label))
 
 
@@ -574,23 +575,42 @@ func _city_tutorial() -> bool:
 			break
 		var door := city.door_point(home)
 		await _paint([Vector2(road_origin.x, door.y), door])
-	if not await _city_step("settle", "прибытие первой повозки", 58):
+	if not await _city_step("settle", "прибытие первой повозки", 58, true):
 		return false
 	if not _check(not game.is_road_tool(game.tool), "Кисть дороги осталась активной на Новоселье"):
 		return false
 	await _pause(0.65)
+	var family := {"house": -1, "start": 0, "arrived": 0}
+	city.family_assigned.connect(func(_name: String, home: int):
+		family["house"] = home
+		family["start"] = Time.get_ticks_msec(), CONNECT_ONE_SHOT)
+	city.house_changed.connect(func(home: Dictionary, _up: bool):
+		if int(home["id"]) == int(family["house"]) and city.settled_total > 0 and family["arrived"] == 0:
+			family["arrived"] = Time.get_ticks_msec())
 	if not _check(await _settle(true), "Не удалось поселить первую семью") or not await _city_step("house", "выбор дома семьи"):
 		return false
-	if not await _wait("семья дошла до дома", func(): return city.settled_total > 0, 45, true):
+	var target := hud.pointer_target
+	var followed := game.people.follows_settling_house(family["house"])
+	log.metric("tutorial.follow_started", followed)
+	_check(followed, "Камера не повела семью после выбора дома")
+	if not _check(target is MapBadge and hud.pointer_text.text == "Семья въезжает…", "Шаг не указал на дом семьи сразу"):
 		return false
-	await _pan_to(road_origin + Vector2(-8, 17))
-	await _frames(6)
-	if not _check(_guided(), "Не найдена карточка заселённого дома") or not await _city_step("house_info", "карточка дома"):
+	var opened := _guided() or _press(tut.show_btn)
+	if not _check(opened, "Не удалось открыть дом семьи") or not await _city_step("house_info", "карточка дома"):
 		return false
+	var arriving := int(hud.info_b.get("id", -1)) == int(family["house"]) and city.settled_total == 0 \
+		and _shown(hud.info_panel.find_child("HouseArriving", true, false))
+	log.metric("tutorial.house_open_before_arrival", arriving)
+	_check(arriving, "Карточка дома не показала семью в пути")
+	var camera_start := game.rig.target
+	await log.shot(get_viewport(), "p1_house_arriving")
 	await _pause(0.7)
+	_check(game.people.follows_settling_house(family["house"]) and game.rig.target.distance_to(camera_start) > 0.1,
+		"Камера не продолжила движение при открытой карточке")
 	_press(tut.next_btn)
 	if not await _city_step("food", "пояснение значков дома"):
 		return false
+	await _pan_to(road_origin + Vector2(-8, 17))
 	if not _check(await _build_tool("stall_fruit", true), "Не выбрана фруктовая лавка"):
 		return false
 	if not _check(not (await _place("stall_fruit", road_origin + Vector2(-5, 14))).is_empty(), "Не поставлена фруктовая лавка"):
@@ -599,6 +619,9 @@ func _city_tutorial() -> bool:
 		return false
 	if not await _guided_hire("workers") or not await _city_step("script", "найм в лавку"):
 		return false
+	var walk := float(int(family["arrived"]) - int(family["start"])) / 1000.0
+	log.metric("tutorial.family_walk_seconds", walk)
+	_check(walk > 0.0 and walk <= 6.0, "Семья шла до дома %.2f с (порог 6 с)" % walk)
 	if not _check(await _build_tool("scriptorium", true), "Не выбран скрипторий"):
 		return false
 	if not _check(not (await _place("scriptorium", road_origin + Vector2(-5, 26))).is_empty(), "Не поставлен скрипторий"):
@@ -612,8 +635,8 @@ func _city_tutorial() -> bool:
 	return await _wait("завершение обучения города", func(): return not tut.active(), 8, true)
 
 
-func _city_step(id: String, description: String, timeout := 18.0) -> bool:
-	return await _wait(description, func(): return tut.cur_id() == id, timeout, true)
+func _city_step(id: String, description: String, timeout := 18.0, intro := false) -> bool:
+	return await _wait(description, func(): return tut.cur_id() == id, timeout, true, true, intro)
 
 
 func _settle(guided: bool) -> bool:
@@ -682,8 +705,7 @@ func _guided_hire(step: String) -> bool:
 
 func _hire_wait(step: String, started: int) -> void:
 	var seconds := float(Time.get_ticks_msec() - started) / 1000.0
-	if seconds > 10.0:
-		log.wait_over_ten(step + " · работник", seconds)
+	log.tutorial_wait(step + " · работник", seconds)
 
 
 func _research(guided: bool) -> bool:
@@ -1030,34 +1052,31 @@ func _room_click(id: int) -> bool:
 	var view := camp.diorama as FortCutaway
 	if not is_instance_valid(view):
 		return false
-	var rect := view.plot_footprint(id)
-	if not rect.has_area():
-		return false
-	for offset: Vector2 in [Vector2(0.21, -0.24), Vector2(-0.23, -0.23), Vector2.ZERO]:
-		var local := rect.get_center() + rect.size * offset
-		if not view.pick_person(local).is_empty():
-			continue
+	var rect := view.plot_footprint(id).intersection(Rect2(Vector2.ZERO, view.size))
+	var points: Array[Vector2] = []
+	if rect.has_area():
+		for offset: Vector2 in [Vector2(0.21, -0.24), Vector2(-0.23, -0.23), Vector2.ZERO,
+				Vector2(0.4, 0.35), Vector2(-0.4, 0.35)]:
+			var local := rect.get_center() + rect.size * offset
+			if view._pick(local) == "plot_%d" % id and view.pick_person(local).is_empty() and _on_map(_fort_point(local)):
+				points.append(local)
+	for local: Vector2 in points:
 		_click(_fort_point(local))
 		await _frames(5)
 		if _room_selected(id):
 			return true
 	if _press(camp.plot_markers.get(id, {}).get("button") as Button):
 		await _frames(5)
-	# Повтор через GUI разреза, если синтетический щелчок перехватило окно.
-	if not _room_selected(id):
-		for offset: Vector2 in [Vector2(0.21, -0.24), Vector2(-0.23, -0.23), Vector2.ZERO]:
-			var local := rect.get_center() + rect.size * offset
-			if view._pick_id(local) != id or not view.pick_person(local).is_empty():
-				continue
-			var click := InputEventMouseButton.new()
-			click.button_index = MOUSE_BUTTON_LEFT
-			click.position = local
-			click.pressed = true
-			view._gui_input(click)
-			click.pressed = false
-			view._gui_input(click)
-			await _frames(5)
-			break
+	# Проигрываем тот же щелчок в GUI разреза, если ввод перехвачен.
+	if not _room_selected(id) and not points.is_empty():
+		var click := InputEventMouseButton.new()
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.position = points[0]
+		click.pressed = true
+		view._gui_input(click)
+		click.pressed = false
+		view._gui_input(click)
+		await _frames(5)
 	return _room_selected(id)
 
 
@@ -1135,7 +1154,9 @@ func _market() -> bool:
 				log.progress("куплена пачка: " + resource)
 				_shot("p3_market_purchase")
 				break
-	_press(_button(camp.modal_panel, "FortMarketClose"))
+	var closed := _press(_button(camp.modal_panel, "FortMarketClose"))
+	await _frames(4)
+	_check(closed and not _shown(camp.modal_panel), "Рынок остался открыт перед проверкой комнат")
 	return _check(bought, "На Рынке не куплена пачка")
 
 
@@ -1143,16 +1164,22 @@ func _fort_cards() -> int:
 	var viewed := 0
 	for kind: String in ["hq", "barracks"]:
 		var room := int(fort.fort_slot_plot(kind).get("id", -1))
-		if not await _room_click(room):
+		if not _check(await _room_click(room), "Не выбрана комната форта: " + kind):
 			continue
 		if not _shown(camp.card):
-			_press(_button(camp.room_actions, "FortRoomInfo"))
-			await _frames(5)
-		if _shown(camp.card) and camp.selected_plot == room:
+			var info := _button(camp.room_actions, "FortRoomInfo")
+			if not _check(_press(info), "Нет кнопки «Инфо» для комнаты " + kind):
+				continue
+		if _check(_shown(camp.card) and camp.selected_plot == room, "Карточка комнаты не открылась: " + kind):
 			viewed += 1
+			log.progress("открыта карточка " + kind)
 			_shot("p3_card_" + kind)
 			await _pause(0.65)
 			_key(KEY_ESCAPE)
+			await _frames(4)
+		if camp.room_action_id >= 0:
+			_key(KEY_ESCAPE)
+			await _frames(3)
 	var sid := int(fort.hero_dweller().get("id", 0))
 	if await _person_click(sid):
 		viewed += 1

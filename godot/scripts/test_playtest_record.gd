@@ -14,7 +14,8 @@ var last_frame := 0
 var last_progress := 0
 var dead_end := false
 var busy := false
-var pending: Array[int] = []
+var captured_frame := false
+var png_jobs: Dictionary = {}
 var arrows := {"city": {}, "fort": {}}
 var tracks := {"city": {}, "fort": {}}
 var modals := {}
@@ -51,10 +52,13 @@ func begin(number: int) -> void:
 	var now := Time.get_ticks_msec()
 	phases[phase] = {"start": now, "frames": 0, "duration": 0.0, "max_ms": 0.0,
 		"slow": 0, "hitches": 0, "dead_ends": 0, "game_s": 0.0, "toasts": 0,
-		"popups": 0, "bell": 0, "max_toasts": 0, "max_messages": 0}
+		"popups": 0, "bell": 0, "max_toasts": 0, "max_messages": 0,
+		"capture_frames": 0, "capture_frame_ms": 0.0, "jpeg": 0, "jpeg_ms": 0.0,
+		"png": 0, "png_ms": 0.0, "png_write_ms": 0.0}
 	next_frame = now
 	next_scan = now
 	last_frame = 0
+	captured_frame = false
 	progress("начало")
 
 
@@ -65,28 +69,33 @@ func progress(description: String) -> void:
 
 
 func clock(dt: float, speed: float) -> void:
-	var now := Time.get_ticks_msec()
+	var now := Time.get_ticks_usec()
 	var row: Dictionary = phases[phase]
 	if last_frame > 0:
-		var ms := float(Time.get_ticks_usec() - last_frame) / 1000.0
-		row["frames"] += 1
-		row["duration"] += ms
-		row["max_ms"] = maxf(row["max_ms"], ms)
-		row["slow"] += int(ms > 50.0)
-		row["hitches"] += int(ms > 100.0)
-	last_frame = Time.get_ticks_usec()
+		var ms := float(now - last_frame) / 1000.0
+		# Снимок после отрисовки входит в интервал до следующего вызова clock.
+		if captured_frame:
+			row["capture_frames"] += 1
+			row["capture_frame_ms"] += ms
+		else:
+			row["frames"] += 1
+			row["duration"] += ms
+			row["max_ms"] = maxf(row["max_ms"], ms)
+			row["slow"] += int(ms > 50.0)
+			row["hitches"] += int(ms > 100.0)
+	last_frame = now
+	captured_frame = false
 	row["game_s"] += dt * speed
-	if not dead_end and now - last_progress > 60000:
+	if not dead_end and now - last_progress * 1000 > 60000000:
 		dead_end = true
 		row["dead_ends"] += 1
 		issue("p%d: нет продвижения больше 60 с (%s)" % [phase, latest_state])
 
 
-func wait_over_ten(step: String, seconds: float) -> void:
-	if waits.has(step):
-		waits[step] = maxf(waits[step], seconds)
-	else:
-		waits[step] = seconds
+func tutorial_wait(step: String, seconds: float, intro := false) -> void:
+	var previous: Dictionary = waits.get(step, {})
+	if seconds >= float(previous.get("seconds", -1.0)):
+		waits[step] = {"seconds": seconds, "phase": phase, "intro": intro}
 
 
 func arrow(kind: String, key: String, shown: bool, pos: Vector2, side: Variant,
@@ -229,55 +238,90 @@ func frame(view: Viewport, title: String) -> void:
 	var file := "p%d_%04d.jpg" % [number, sec]
 	busy = true
 	await RenderingServer.frame_post_draw
+	var started := Time.get_ticks_usec()
 	var image := view.get_texture().get_image()
+	var path := folder.path_join("shots/frames").path_join(file)
 	if image != null and not image.is_empty():
-		frame_titles.store_line("%s\t%d\t%d\t%s" % [file, number, sec, title.replace("\t", " ").replace("\n", " ")])
-		frame_titles.flush()
-		_encode(image, folder.path_join("shots/frames").path_join(file), false)
+		image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
+		var err := image.save_jpg(path, 0.83)
+		if err == OK:
+			frame_titles.store_line("%s\t%d\t%d\t%s" % [file, number, sec, title.replace("\t", " ").replace("\n", " ")])
+			frame_titles.flush()
+		else:
+			issue("Не записан снимок %s (%d)" % [path, err])
 	else:
 		issue("p%d: не удалось прочитать кадр %s" % [number, file])
+	_capture_time(number, "jpeg", started)
 	busy = false
 
 
 func shot(view: Viewport, file: String) -> void:
+	var number := phase
 	await RenderingServer.frame_post_draw
+	var started := Time.get_ticks_usec()
 	var image := view.get_texture().get_image()
+	var path := folder.path_join("shots").path_join(file + ".png")
 	if image == null or image.get_size() != Vector2i(1920, 1080):
 		issue("PNG %s: ожидалось 1920×1080" % file)
-		return
-	_encode(image, folder.path_join("shots").path_join(file + ".png"), true)
+	else:
+		_queue_png(image, path, number)
+	_capture_time(number, "png", started)
 
 
-func _encode(image: Image, path: String, png: bool) -> void:
-	for job: int in pending.duplicate():
+func _queue_png(image: Image, path: String, number: int) -> void:
+	for job: int in png_jobs.keys():
 		if WorkerThreadPool.is_task_completed(job):
-			WorkerThreadPool.wait_for_task_completion(job)
-			pending.erase(job)
-	pending.append(WorkerThreadPool.add_task(func() -> void:
-		var err: Error
-		if png:
-			err = image.save_png(path)
-		else:
-			image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
-			err = image.save_jpg(path, 0.83)
-		if err != OK:
-			issue.call_deferred("Не записан снимок %s (%d)" % [path, err])
-		elif png:
-			print("PLAYTEST SHOT ", path), false, "PLAYTEST frame"))
+			_finish_png(job)
+	var result := {"ms": 0.0, "error": OK}
+	var job := WorkerThreadPool.add_task(func() -> void:
+		var started := Time.get_ticks_usec()
+		result["error"] = image.save_png(path)
+		result["ms"] = float(Time.get_ticks_usec() - started) / 1000.0, false, "PLAYTEST PNG")
+	png_jobs[job] = {"phase": number, "path": path, "result": result}
+
+
+func _finish_png(job: int) -> void:
+	WorkerThreadPool.wait_for_task_completion(job)
+	var entry: Dictionary = png_jobs[job]
+	png_jobs.erase(job)
+	var result: Dictionary = entry["result"]
+	phases[entry["phase"]]["png_write_ms"] += result["ms"]
+	if result["error"] == OK:
+		print("PLAYTEST SHOT ", entry["path"])
+	else:
+		issue("Не записан снимок %s (%d)" % [entry["path"], result["error"]])
+
+
+func _capture_time(number: int, kind: String, started: int) -> void:
+	captured_frame = true
+	var row: Dictionary = phases[number]
+	row[kind] += 1
+	row[kind + "_ms"] += float(Time.get_ticks_usec() - started) / 1000.0
 
 
 func finish() -> void:
-	for job: int in pending:
-		WorkerThreadPool.wait_for_task_completion(job)
-	pending.clear()
+	for job: int in png_jobs.keys():
+		_finish_png(job)
 	frame_titles.close()
-	var tutorial_waits := waits.keys()
-	metric("tutorial.waits_over_10s", tutorial_waits.size())
+	var over_ten := 0
+	var unexpected_over_ten := 0
+	var city_over_six := 0
+	for step: String in waits:
+		var wait: Dictionary = waits[step]
+		var seconds: float = wait["seconds"]
+		over_ten += int(seconds > 10.0)
+		if wait["intro"]:
+			continue
+		unexpected_over_ten += int(seconds > 10.0)
+		city_over_six += int(wait["phase"] == 1 and seconds > 6.0)
+		if seconds > (6.0 if wait["phase"] == 1 else 10.0):
+			issue("ожидание в обучении %s: %.2f с" % [step, seconds])
+	metric("tutorial.waits_over_10s", over_ten)
+	metric("tutorial.unexpected_waits_over_10s", unexpected_over_ten)
+	metric("tutorial.city_waits_over_6s", city_over_six)
 	metric("ui.modals_over_10s", long_modals.size())
 	metric("text.clipped_labels", clipped.size())
 	metric("text.russian_in_english", russian.size())
-	for step: String in tutorial_waits:
-		issue("ожидание в обучении %s: %.1f с" % [step, waits[step]])
 	if not long_modals.is_empty():
 		issue("окна открыты дольше 10 с: %d" % long_modals.size())
 	if not clipped.is_empty():
@@ -300,8 +344,10 @@ func finish() -> void:
 			metric("arrow.%s.%s" % [kind, field], value)
 			if float(totals[field]) > threshold:
 				issue("стрелка %s: %s=%s (порог %s)" % [kind, field, value, threshold])
+	var hitches := 0
 	for number: int in phases:
 		var row: Dictionary = phases[number]
+		hitches += int(row["hitches"])
 		var prefix := "p%d." % number
 		var minimum := 1000.0 / maxf(1.0, row["max_ms"])
 		var average := 1000.0 * float(row["frames"]) / maxf(1.0, row["duration"])
@@ -312,6 +358,13 @@ func finish() -> void:
 		metric(prefix + "fps_avg", snappedf(average, 0.01))
 		metric(prefix + "frames_over_50ms", row["slow"])
 		metric(prefix + "hitches_over_100ms", row["hitches"])
+		metric(prefix + "measured_frames", row["frames"])
+		metric(prefix + "capture_frames", row["capture_frames"])
+		metric(prefix + "capture_frame_ms", snappedf(row["capture_frame_ms"], 0.01))
+		for kind: String in ["jpeg", "png"]:
+			metric(prefix + "capture_" + kind + "_count", row[kind])
+			metric(prefix + "capture_" + kind + "_ms", snappedf(row[kind + "_ms"], 0.01))
+		metric(prefix + "capture_png_write_ms", snappedf(row["png_write_ms"], 0.01))
 		metric(prefix + "dead_ends", row["dead_ends"])
 		metric(prefix + "game_minutes", snappedf(minutes, 0.001))
 		for field: String in ["toasts", "popups", "bell", "max_toasts", "max_messages"]:
@@ -327,6 +380,7 @@ func finish() -> void:
 			issue("p%d: средний FPS %.2f ниже 60" % [number, average])
 		if row["hitches"] > 3:
 			issue("p%d: %d кадров дольше 100 мс" % [number, row["hitches"]])
+	metric("run.hitches_over_100ms", hitches)
 	evidence.merge({"arrows": arrows, "waits": waits, "modals": long_modals, "clipped": clipped, "russian": russian})
 	var file := FileAccess.open(folder.path_join("metrics.json"), FileAccess.WRITE)
 	if file == null:
