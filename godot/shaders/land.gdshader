@@ -64,7 +64,7 @@ varying vec3 wpos;
 varying vec3 wnrm;
 varying float kind;
 varying float top_y;
-varying vec2 sm2;                       // плавная земля (Land.smooth_mesh): x — доля пашни у узла, y = 1 — плавная сетка
+varying vec2 sm2;                       // плавная земля (Land.smooth_mesh): x — доля пашни у узла, y = 1 — плавная сетка, 2 — русло под мостом
 
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -170,7 +170,7 @@ vec3 far_grass(vec3 wp) {
 
 void fragment() {
 	vec3 base = COLOR.rgb;               // вершинный цвет: оттенок клетки (у чужой земли приглушён)
-	float k = floor(kind + 0.5);
+	float k = sm2.y > 1.5 ? 3.0 : floor(kind + 0.5);
 	bool far = k > 7.5;
 	float fv = wpos.y / 0.125 + 0.5;          // для горизонталей за краем карты (производная — вне ветвлений)
 	float fw = max(fwidth(fv), 1e-4);
@@ -476,7 +476,7 @@ void fragment() {
 		c *= 0.92 + 0.12 * r;
 	}
 	bool bank = k == 3.0;
-	if (smooth_g && wpos.y < 1.32) {
+	if (smooth_g && !bank && wpos.y < 1.32) {
 		vec4 mb = textureLod(surf, wpos.xz / map_size, 0.7);
 		bank = max(mb.r, mb.g) < 0.3;          // у воды — берег (дороги и площади у воды — как есть)
 	}
