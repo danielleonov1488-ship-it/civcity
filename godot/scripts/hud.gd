@@ -8732,7 +8732,7 @@ static func _badge_layout(cam: Camera3D, world: Vector3, extent: Vector2, anchor
 
 var hero_btn: Button
 var hero_wrap: Control
-var _hero_face_key := ""
+
 
 
 ## Медальон «Герой» сверху справа, рядом с «Легионом»: лицо героя; щелчок — камера к нему и его карточка
@@ -8742,6 +8742,8 @@ func _hero_button() -> void:
 	top_panel.add_child(hero_wrap)
 	top_panel.move_child(hero_wrap, mini(1, top_panel.get_child_count() - 1))
 	top_btns["hero"] = hero_btn
+	if game.city.legion != null:
+		game.city.legion.changed.connect(hero_btn_refresh)
 	hero_btn_refresh()
 
 
@@ -8754,76 +8756,16 @@ func hero_btn_refresh() -> void:
 	if not on:
 		return
 	hero_btn.tooltip_text = "%s — ваш герой: найти в городе (карточка, «Следовать», «Гардероб»)" % Hero.name_of(game.city)
-	var key := Citizen.look_key(Hero.look(game.city))
-	if key != _hero_face_key:
-		_hero_face_key = key
-		_hero_face()
-
-
-## Лицо героя в медальоне: рисуется один раз (свой маленький мир, как портрет в карточке) и остаётся картинкой
-func _hero_face() -> void:
-	if DisplayServer.get_name() == "headless" or game.shot_path != "":
-		return
-	var vp := SubViewport.new()
-	vp.size = Vector2i(128, 128)
-	vp.own_world_3d = true
-	vp.transparent_bg = true
-	vp.msaa_3d = Viewport.MSAA_4X
-	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	add_child(vp)
-	var env := Environment.new()
-	env.background_mode = Environment.BG_CLEAR_COLOR
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("fff1d8")
-	env.ambient_light_energy = 0.6
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	var we := WorldEnvironment.new()
-	we.environment = env
-	vp.add_child(we)
-	var key := DirectionalLight3D.new()
-	key.rotation_degrees = Vector3(-30, 35, 0)
-	key.light_energy = 1.25
-	vp.add_child(key)
-	var front := DirectionalLight3D.new()
-	front.look_at_from_position(Vector3.ZERO, -StoryUi.FACE_DIR + Vector3(0, -0.25, 0), Vector3.UP)
-	front.light_energy = 0.5
-	vp.add_child(front)
-	var c := Citizen.build(Hero.look(game.city).duplicate())
-	c.scale = Vector3.ONE
-	Citizen.face_fix(c)
-	vp.add_child(c)
-	c.play("Idle", 0.0, 0.2)
-	var cam := Camera3D.new()
-	cam.fov = 24.0
-	cam.near = 0.02
-	vp.add_child(cam)
-	await get_tree().process_frame
-	await get_tree().process_frame
-	if not is_instance_valid(vp) or not is_instance_valid(c):
-		return
-	var sk: Skeleton3D = c.find_children("*", "Skeleton3D", true, false)[0]
-	var head := (sk.global_transform * sk.get_bone_global_pose(sk.find_bone("Head"))).origin + Vector3(0, 0.06, 0)
-	cam.position = head + StoryUi.FACE_DIR * 0.95
-	cam.look_at(head - Vector3(0, 0.02, 0), Vector3.UP)
-	await RenderingServer.frame_post_draw
-	await RenderingServer.frame_post_draw
-	if not is_instance_valid(vp) or not is_instance_valid(hero_btn):
-		return
-	var img := vp.get_texture().get_image()
-	vp.queue_free()
-	if img == null or img.is_empty():
-		return
-	img.generate_mipmaps()
-	var ic := hero_btn.get_node_or_null("ic") as TextureRect
-	if ic == null:
-		return
-	ic.texture = ImageTexture.create_from_image(img)
-	ic.material = StoryUi._mask_mat()
-	var o := 48 * 0.12
-	ic.offset_left = o
-	ic.offset_right = -o
-	ic.offset_top = o
-	ic.offset_bottom = -o
+	var fort_person = preload("res://scripts/fort_person.gd")
+	var lg: Legion = game.city.legion
+	var person: Dictionary = fort_person.hero_person(lg)
+	var ic := hero_btn.get_node("ic") as TextureRect
+	fort_person.bind_portrait(ic, person, lg.worn(person))
+	var inset := 48 * 0.12
+	ic.offset_left = inset
+	ic.offset_right = -inset
+	ic.offset_top = inset
+	ic.offset_bottom = -inset
 
 
 ## «Герой»: камера идёт за ним, открыта его карточка (дома или в лавке — камера у двери, в карточке «Сейчас»)

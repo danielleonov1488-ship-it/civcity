@@ -1630,7 +1630,7 @@ func _fort_prep_slot(name_text: String, role: String, icon: Texture2D, locked: b
 	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	slot.add_child(frame)
 	if not person.is_empty():
-		var view := FortPerson.portrait(person, "barracks", false, 92)
+		var view := FortPerson.portrait(person, 92, lg.worn(person))
 		view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		frame.add_child(view)
 		view.position = Vector2(4, 4)
@@ -1688,9 +1688,13 @@ func _fort_prep_picker(body: VBoxContainer) -> void:
 	scroll.add_child(list)
 	for person: Dictionary in lg.fort_squad_candidates():
 		var sid := int(person["id"])
-		var option := Look.button(String(person["name"]), Look.icon("squad"), Look.PAPER, Vector2(230, 52))
+		var row := HBoxContainer.new()
+		list.add_child(row)
+		row.add_child(FortPerson.portrait(person, 52, lg.worn(person)))
+		var option := Look.button(String(person["name"]), null, Look.PAPER, Vector2(230, 52))
 		option.pressed.connect(_set_fort_prep_place.bind(sid))
-		list.add_child(option)
+		option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(option)
 	var clear := Look.button(I18n.t("Освободить место"))
 	clear.pressed.connect(_set_fort_prep_place.bind(0))
 	list.add_child(clear)
@@ -2324,7 +2328,8 @@ func _stage_card(st: Dictionary) -> Control:
 		holder.custom_minimum_size = Vector2(36, 36)
 		holder.mouse_filter = Control.MOUSE_FILTER_PASS
 		holder.tooltip_text = "%s, %d уровень" % [u["name"], int(u["level"])]
-		var face := _portrait("unit", String(u["key"]), 36)
+		var person := FortPerson.squad_person(lg, u)
+		var face := FortPerson.portrait(person, 36, lg.worn(person))
 		face.set_anchors_preset(Control.PRESET_FULL_RECT)
 		holder.add_child(face)
 		_badge(holder, str(int(u["level"])), Vector2(1, 1), 12)
@@ -2974,7 +2979,9 @@ func _soldier_card(s: Dictionary) -> Control:
 	h.add_theme_constant_override("separation", 8)
 	p.add_child(h)
 	var st := lg.s_state(s)
-	var pt := _portrait("unit", String(UNIT_OF_CLASS.get(s["cls"], "legionary")), 58, st == "wound")
+	var pt := FortPerson.portrait(s, 58, lg.worn(s))
+	if st == "wound":
+		pt.modulate = Color(0.66, 0.62, 0.59)
 	pt.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	h.add_child(pt)
 	var v := VBoxContainer.new()
@@ -3426,7 +3433,7 @@ func _recruit_row(i: int) -> Control:
 	var c: Dictionary = lg.recruits[i]
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 8)
-	var pt := _portrait("unit", String(UNIT_OF_CLASS.get(c["cls"], "legionary")), 46)
+	var pt := FortPerson.portrait(c, 46)
 	pt.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	h.add_child(pt)
 	var v := VBoxContainer.new()
@@ -3670,12 +3677,9 @@ func _hero_slot(sz: float, big := true, edit := false) -> Control:
 	face.tooltip_text = "%s — ваш герой: первое место отряда %s, %d уровень (растёт с Казармами, городом и Складом оружия)\nЗдоровье %d, урон %d, броня %d · %s\n%s" % [
 		Hero.name_of(game.city), "в походах и в боях с городами" if pv else "в походах", int(hs["level"]), int(hs["hp"]), int(hs["atk"]), roundi(float(hs["armor"])),
 		String(Hero.kit_of(lg.hero_kit_level())["n"]).to_lower(), pvl]
-	var tex: Texture2D = null
-	var hb: Button = hud.get("hero_btn")
-	if hb != null and hb.get_node_or_null("ic") != null and (hb.get_node("ic") as TextureRect).material != null:
-		tex = (hb.get_node("ic") as TextureRect).texture       # лицо героя, нарисованное для медальона «Герой»
 	var tr := TextureRect.new()
-	tr.texture = tex if tex != null else hud.ico("caesar", 96)
+	var person := FortPerson.hero_person(lg)
+	FortPerson.bind_portrait(tr, person, lg.worn(person))
 	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -3684,8 +3688,6 @@ func _hero_slot(sz: float, big := true, edit := false) -> Control:
 	tr.offset_top = o
 	tr.offset_right = -o
 	tr.offset_bottom = -o
-	if tex != null:
-		tr.material = StoryUi._mask_mat()
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	face.add_child(tr)
 	holder.add_child(face)
@@ -3903,7 +3905,17 @@ func _build_pvp() -> Control:
 			lg.defense = lg.squad.duplicate()
 		lg.changed.emit())
 	dv.add_child(same)
-	dv.add_child(_slots_row("defense", 46.0))
+	if lg.v3():
+		var people := HBoxContainer.new()
+		people.name = "FortPvpDefense"
+		for stats: Dictionary in lg.squad_v3():
+			var person := FortPerson.squad_person(lg, stats)
+			var face := FortPerson.portrait(person, 46, lg.worn(person))
+			face.tooltip_text = String(person.get("name", ""))
+			people.add_child(face)
+		dv.add_child(people)
+	else:
+		dv.add_child(_slots_row("defense", 46.0))
 	dv.add_child(_wl("Его видят другие игроки, когда нападают на ваш город. Бой и тут идёт сам.", 370, 13, C_SOFT))
 	dp.add_child(dv)
 	left.add_child(dp)
@@ -4012,7 +4024,7 @@ func _opponents() -> Control:
 			sub.mouse_filter = Control.MOUSE_FILTER_PASS
 		tv.add_child(sub)
 		rh.add_child(tv)
-		LegionPvpView.squad_strip(self, rh, opp.get("snapshot", {}))
+		LegionPvpView.squad_strip(self, rh, opp.get("snapshot", {}), opp)
 		var pw := Legion.snapshot_power(opp.get("snapshot", {}))
 		var col := C_GOOD if pw < mine * 0.9 else (C_GOLD if pw <= mine * 1.15 else C_BAD)
 		var pl := _l("сила %s" % hud.fmt(pw), 16, true, col)

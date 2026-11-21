@@ -28,6 +28,8 @@ func _before_finish() -> void:
 	lg.flags["fort_guide"] = Step.FINISH
 	lg.finish_fort_guide()
 	lg.flags["fort_lessons"].erase("outfit")
+	# Новый урок проходит в LEGION13, здесь сохраняем маршрут четырёх уроков.
+	lg.flags["fort_lessons"]["market"] = "skipped"
 
 
 func _after_intro(_during: Dictionary, _before_load: float, _reserved: float) -> void:
@@ -43,10 +45,11 @@ func _after_intro(_during: Dictionary, _before_load: float, _reserved: float) ->
 		return
 	var finished := save_round_trip()
 	await _restore(finished)
-	for id: String in Legion.FORT_LESSONS:
+	var lessons := ["store", "knowledge", "outfit", "hq"]
+	for id: String in lessons:
 		check(lg.fort_lesson_state(id) == "done", "saved completion " + id)
 	check(lg.fort_lesson() == "" and not camp.guide_layer.visible, "no hints after completed lessons")
-	for id: String in Legion.FORT_LESSONS:
+	for id: String in lessons:
 		await _restore(pending_saves[id])
 		if not check(lg.fort_lesson() == id, "saved active lesson " + id):
 			continue

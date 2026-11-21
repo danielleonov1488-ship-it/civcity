@@ -133,7 +133,7 @@ func _portrait(holder: Node, file: String) -> bool:
 	if holder == null:
 		return false
 	var art := holder.find_child("FortPortraitArt", true, false) as TextureRect
-	return art != null and art.texture != null and art.texture.resource_path == FortCutaway.ART + "chars/" + file + "_portrait.png"
+	return art != null and art.has_meta("person_portrait") and (file != "hero" or int(art.get_meta("portrait_crown")) > 0)
 
 
 func _click_person(sid: int, newcomer := false) -> void:

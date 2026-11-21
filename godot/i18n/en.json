@@ -5896,5 +5896,19 @@
 	"Отменить · вернуть %s": "Cancel · refund %s",
 	"Принять · %s": "Adopt · %s",
 	"Штаб %s": "HQ %s",
-	"Еда Легиону": "Food for the Legion"
+	"Еда Легиону": "Food for the Legion",
+	"Обмен": "Exchange",
+	"Товары дня": "Daily goods",
+	"Купить · %s": "Buy \u00b7 %s",
+	"Продать": "Sell",
+	"Куплено": "Purchased",
+	"Мало запасов": "Not enough stock",
+	"Рынок недоступен": "Market unavailable",
+	"Предложение обновилось": "Offer refreshed",
+	"Обновление через %s": "Refreshes in %s",
+	"На рынке можно пополнить запасы или продать лишнее.": "Use the market to restock or sell surplus.",
+	"Железо": "Iron",
+	"Вы": "You",
+	"Соперник": "Opponent",
+	"Время вышло": "Time is up"
 }

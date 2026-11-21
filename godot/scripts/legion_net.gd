@@ -123,7 +123,7 @@ func pvp_opponents(cb: Callable) -> void:
 	for o in d.get("opponents", []):
 		if o is Dictionary and (o as Dictionary).get("snapshot") is Dictionary:
 			list.append({"id": String(o.get("id", "")), "name": String(o.get("name", "?")), "rating": int(o.get("rating", 0)),
-				"city_level": int(o.get("city_level", 0)), "power": int(o.get("power", 0)), "snapshot": o["snapshot"], "bot": bool(o.get("bot", false))})
+				"city_level": int(o.get("city_level", 0)), "power": int(o.get("power", 0)), "snapshot": o["snapshot"], "hero": o.get("hero", o["snapshot"].get("hero", {})), "bot": bool(o.get("bot", false))})
 	cb.call(list, "")
 
 
@@ -152,6 +152,8 @@ func pvp_attack(opp: Dictionary, cb: Callable) -> void:
 	var d: Dictionary = r["data"]
 	var o: Dictionary = (d.get("opponent", {}) as Dictionary).duplicate()
 	o["id"] = String(opp.get("id", ""))
+	if d.get("hero") is Dictionary and not o.has("hero"):
+		o["hero"] = d["hero"]
 	o["battle"] = String(d.get("battle", ""))
 	o["seed"] = int(d.get("seed", -1))
 	o["stakes"] = d.get("stakes", {})

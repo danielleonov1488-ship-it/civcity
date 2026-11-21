@@ -389,16 +389,27 @@ static func battle_look(c: City, armory_lvl: int) -> Dictionary:
 	return lk
 
 
-## Облик чужого героя в бою с городом: облик из снимка обороны (сервер взял его из сохранения того города), приведённый
-## к правилам, и снаряжение по уровню его Склада оружия (kit снимка). Облика нет (сервер не прислал) — «Полководец»
-static func rival_look(e: Dictionary) -> Dictionary:
+## Облик и снаряжение из снимка обороны. Для старых снимков жеребьёвка по имени.
+static func rival_look(e: Dictionary, fallback_name := "") -> Dictionary:
+	var lk := {}
 	var src = e.get("look")
-	var lk: Dictionary = (src as Dictionary).duplicate() if src is Dictionary and not (src as Dictionary).is_empty() else (PRESETS[0]["look"] as Dictionary).duplicate()
+	if src is Dictionary:
+		for key: String in ["sx", "mdl", "skin", "hair", "beard", "hc", "main", "second", "trim", "cape", "crown"]:
+			var v = src.get(key)
+			if v is String or v is int or v is float:
+				lk[key] = v
+	if lk.is_empty():
+		var nm := String(e.get("name", ""))
+		var rng := RandomNumberGenerator.new()
+		rng.seed = (fallback_name if nm.is_empty() else nm).hash()
+		var preset: Dictionary = PRESETS[rng.randi_range(0, PRESETS.size() - 1)]
+		lk = (preset["look"] as Dictionary).duplicate()
+		lk["sx"] = preset["sx"]
+		lk["skin"] = ["A", "B", "C"][rng.randi_range(0, 2)]
+		lk["hc"] = ["A", "B", "C", "S"][rng.randi_range(0, 3)]
+		lk["hair"] = rng.randi_range(1, 6) if lk["sx"] == 1 else rng.randi_range(0, 7)
+		lk["beard"] = rng.randi_range(0, 4)
 	var sx := 1 if int(lk.get("sx", 0)) == 1 else 0
-	for key in lk.keys():
-		var v = lk[key]
-		if not (v is String or v is int or v is float):
-			lk.erase(key)                                     # только строки и числа: облик пришёл по сети
 	fix_look(lk, sx)
 	var kt := kit_of(clampi(int(e.get("kit", 0)), 0, 10))
 	lk["right"] = kt["right"]

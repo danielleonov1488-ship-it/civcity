@@ -11,63 +11,36 @@ const C_BAD := Color("b0402a")
 const C_GOLD := Color("a8740f")
 
 
-## Отряд соперника: его герой (если есть — первым, в золотом кружке), портреты родов войск (одинаковые — «×n»),
-## уровни в подсказке
-static func squad_strip(ui: LegionUi, parent: Control, snap) -> void:
-	if not (snap is Dictionary):
+## Отряд соперника: его герой и отдельный портрет для каждого места.
+static func squad_strip(_ui: LegionUi, parent: Control, snap, opponent: Dictionary = {}) -> void:
+	if not snap is Dictionary:
 		return
-	var order := []
-	var by := {}
-	for e in (snap as Dictionary).get("squad", []):
-		if not (e is Dictionary) or not Legion.UNITS.has(String(e.get("type", ""))):
-			continue
-		var t := String(e["type"])
-		if not by.has(t):
-			by[t] = []
-			order.append(t)
-		by[t].append(int(e.get("level", 1)))
+	var people := HBoxContainer.new()
+	people.name = "RivalSquad"
+	people.add_theme_constant_override("separation", 2)
+	people.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var portraits = preload("res://scripts/fort_person.gd")
 	var he := Legion.snap_hero_entry(snap)
-	if order.is_empty() and he.is_empty():
-		return
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 2)
-	h.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	if not he.is_empty():
-		var hc := Panel.new()
+		var hc: PanelContainer = portraits.rival_portrait(Legion.pvp_rival_look(snap, opponent), 40)
 		hc.name = "rival_hero"
-		hc.custom_minimum_size = Vector2(30, 30)
-		hc.add_theme_stylebox_override("panel", ui.hud._medal("medal_on", 30))
-		hc.mouse_filter = Control.MOUSE_FILTER_PASS
 		var hs := Legion.snap_hero(he, clampf(float(snap.get("atk_b", 0.0)), 0.0, 0.6), clampf(float(snap.get("hp_b", 0.0)), 0.0, 0.6))
 		hc.tooltip_text = "Их герой — %s, ур. %d: здоровье %d, урон %d" % [String(hs["name"]), int(hs["level"]), int(hs["hp"]), int(hs["atk"])]
-		var ic := ui._tr(ui.hud.ico("caesar", 64), 22)
-		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		ic.set_anchors_preset(Control.PRESET_FULL_RECT)
-		ic.offset_left = 4
-		ic.offset_top = 4
-		ic.offset_right = -4
-		ic.offset_bottom = -4
-		hc.add_child(ic)
-		h.add_child(hc)
-	for t: String in order:
-		var lv: Array = by[t]
-		var lo: int = lv.min()
-		var hi: int = lv.max()
-		var cell := HBoxContainer.new()
-		cell.add_theme_constant_override("separation", 0)
-		cell.mouse_filter = Control.MOUSE_FILTER_PASS
-		var U: Dictionary = Legion.UNITS[t]
-		cell.tooltip_text = "%s%s, ур. %s" % [U["many"] if lv.size() > 1 else U["name"], (" ×%d" % lv.size()) if lv.size() > 1 else "",
-			str(lo) if lo == hi else "%d–%d" % [lo, hi]]
-		var tr := ui._tr(ui._unit_tex(t), 30)
-		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		cell.add_child(tr)
-		if lv.size() > 1:
-			var l := ui._l("×%d" % lv.size(), 13, true, C_SOFT)
-			l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			cell.add_child(l)
-		h.add_child(cell)
-	parent.add_child(h)
+		people.add_child(hc)
+	var index := 0
+	for entry in snap.get("squad", []):
+		if not entry is Dictionary or not Legion.UNITS.has(String(entry.get("type", ""))):
+			continue
+		var key := String(entry["type"])
+		var person := {"look_seed": hash([opponent.get("name", ""), key, index])}
+		var face: PanelContainer = portraits.portrait(person, 40, [], key)
+		face.tooltip_text = "%s, ур. %d" % [Legion.UNITS[key]["name"], int(entry.get("level", 1))]
+		people.add_child(face)
+		index += 1
+	if people.get_child_count() > 0:
+		parent.add_child(people)
+	else:
+		people.free()
 
 
 ## Под рейтингом: «Ваш город в боях: …» с кнопкой «Переименовать» и сколько нападений отбито
