@@ -30,7 +30,7 @@ const STEPS := [
 	{"id": "road", "title": "Первая улица", "icon": "road", "text": "Соедините дома дорогой с площадью."},
 	{"id": "cart", "title": "Едут!", "icon": "horse", "text": "Дождитесь семей у станции."},
 	{"id": "settle", "title": "Новоселье", "icon": "family", "text": "Выберите семью, затем светящийся дом."},
-	{"id": "house", "title": "Как им живётся?", "icon": "info", "text": "Откройте дом, в котором живёт семья."},
+	{"id": "house", "title": "Как им живётся?", "icon": "info", "text": "Откройте дом семьи."},
 	{"id": "house_info", "title": "Как им живётся?", "icon": "info", "next": true, "text": "Посмотрите на значки в карточке дома."},
 	{"id": "food", "title": "Еда", "icon": "food", "text": "Поставьте фруктовую лавку у домов."},
 	{"id": "workers", "title": "Работники", "icon": "hammer", "text": "Нажмите «+» в карточке лавки."},
@@ -77,9 +77,14 @@ func setup(g) -> void:
 ## Старые дома остаются на месте; возвращаемся к ближайшему нужному действию.
 static func resume_step(c: City) -> int:
 	var i := saved_step(c.tips)
-	if i < 0 or int(c.tips.get("tut_v", 0)) >= 8:
+	if i < 0:
 		return i
 	var id := String(STEPS[i]["id"])
+	# Сохранение возвращает семью в пути на площадь.
+	if id in ["house", "house_info"] and not c.arrivals.is_empty() and _house_target(c).is_empty():
+		return step_index("settle")
+	if int(c.tips.get("tut_v", 0)) >= 8:
+		return i
 	if id in ["houses", "road"]:
 		return step_index("houses") if c._count(func(b): return c.is_house(b)) < 3 else step_index("road")
 	if id in ["cart", "settle"] and c.families_came() == 0 and not c.has_connected_house():
@@ -190,6 +195,7 @@ func _enter(i: int) -> void:
 	text.text = s["text"]
 	camera_keys.visible = cur_id() == "move"
 	next_btn.visible = bool(s.get("next", false))
+	show_btn.text = "Открыть дом" if cur_id() == "house" else "Показать"
 	show_btn.visible = cur_id() not in ["move", "cart"] and not next_btn.visible
 	hint.visible = cur_id() == "house_info"
 	if hint.visible:
@@ -238,7 +244,7 @@ func _enter(i: int) -> void:
 					cheapest = minf(cheapest, float(r["cost"]))
 			if cheapest < 1e9:
 				c.rp = maxf(c.rp, minf(c.rp_cap(), cheapest))
-		"houses", "road", "house", "food", "workers", "script", "done":
+		"houses", "road", "settle", "house", "food", "workers", "script", "done":
 			game.set_tool("")
 			hud._close_tray()
 			hud._hide_info()
@@ -323,6 +329,11 @@ func show_target() -> void:
 		for entry: Dictionary in hud.badges.values():
 			if entry["n"] == target:
 				var pos: Vector3 = entry["pos"]
+				if cur_id() == "house":
+					var open: Callable = entry["cb"]
+					if open.is_valid():
+						open.call()
+					return
 				game.rig.set_view(pos, 15, 40, 30)
 				break
 	hud._ensure_pointer_visible()
@@ -404,8 +415,8 @@ func _check(id: String) -> bool:
 		"settle":
 			return c.settled_total > 0 or not c.pending.is_empty()
 		"house":
-			var b: Dictionary = hud.info_b
-			return hud.info_panel.visible and not b.is_empty() and c.is_house(b) and int(b.get("pop", 0)) > 0
+			var target := _house_target(c)
+			return hud.info_panel.visible and not target.is_empty() and is_same(hud.info_b, target)
 		"food":
 			return c._count(func(b): return b["type"] == "stall_fruit") >= 1
 		"workers":
@@ -415,6 +426,16 @@ func _check(id: String) -> bool:
 		"research":
 			return c.research.size() > _rp0
 	return false
+
+
+static func _house_target(c: City) -> Dictionary:
+	var home: Dictionary = c.buildings.get(int(c.tips.get("tut_home", -1)), {})
+	if not home.is_empty() and (int(home.get("coming", 0)) > 0 or int(home.get("pop", 0)) > 0):
+		return home
+	for b: Dictionary in c.buildings.values():
+		if c.is_house(b) and (int(b.get("coming", 0)) > 0 or int(b.get("pop", 0)) > 0):
+			return b
+	return {}
 
 
 func _world(pos: Vector3, icon: String, cb := Callable()) -> Control:
@@ -500,9 +521,10 @@ func pointer() -> Array:
 				return [null, ""]
 			return [family_target(), "Семья"]
 		"house":
-			for b: Dictionary in c.buildings.values():
-				if c.is_house(b) and int(b.get("pop", 0)) > 0:
-					return [_building(b), "Как им живётся?"]
+			var home := _house_target(c)
+			if not home.is_empty():
+				var arriving := int(home.get("coming", 0)) > 0
+				return [_building(home), "Семья въезжает…" if arriving else "Как им живётся?"]
 		"food":
 			return [_build_target("stall_fruit"), "Еда"]
 		"script":

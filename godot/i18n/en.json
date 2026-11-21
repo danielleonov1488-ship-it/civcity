@@ -5917,5 +5917,9 @@
 	"%d × %d (%d клеток)": "%d × %d (%d tiles)",
 	"от %s ден.": "from %s den.",
 	"%d м²": "%d m²",
-	"Площадь участка": "Plot area"
+	"Площадь участка": "Plot area",
+	"Жители…": "Residents…",
+	"Откройте дом семьи.": "Open the family’s house.",
+	"Открыть дом": "Open house",
+	"Семья въезжает…": "A family is moving in…"
 }

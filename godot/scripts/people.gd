@@ -13,6 +13,10 @@ var grid := AStarGrid2D.new()
 var residents := []                  # все жители города
 var by_id := {}
 var next_rid := 1
+var _settling_follow: Callable
+var _settling_home := -1
+var _settle_time := 0.0
+var _settle_tick_us := 0
 var waiting_fams := []               # семьи без дома на площади: [{name, members: [rid]}]
 var slots := {}                      # id постройки → [rid или 0 по местам работы]
 var rng := RandomNumberGenerator.new()
@@ -53,6 +57,8 @@ const CART_HORSE_LEN := 2.5          # лошадь от морды до хво�
 const CART_HORSE_Z := 2.72           # её середина: круп — у облучка, оглобли — по бокам до груди
 const G := 2                         # клетка сетки ходьбы — 2×2 клетки земли (50 см)
 const GN := Land.N / G
+const TUTOR_SETTLE_PACE := 2.5
+const TUTOR_SETTLE_SECONDS := 5.0
 const WALK := 1.15 * Citizen.K       # м/с при обычной скорости (люди маленькие — и шаг короче; ноги не скользят)
 
 
@@ -1093,6 +1099,11 @@ func _go(r: Dictionary, to: Vector2, goal: String, keep := false) -> void:
 		r["p"] = (r["p"] as Vector2) - City.facing(door_b["yaw"]) * 0.4
 		r["yaw"] = float(door_b["yaw"])
 	r["path"] = _path(r["p"], to)
+	if goal == "settle" and r.has("tutorial_settle_pace"):
+		# На длинной дороге ускоряемся чуть сильнее, чтобы не задерживать урок.
+		var length := _path_length(r["path"])
+		r["tutorial_settle_pace"] = maxf(TUTOR_SETTLE_PACE, length / (WALK * float(r["speed"]) * TUTOR_SETTLE_SECONDS))
+		r["tutorial_settle_at"] = _settle_time
 	var via = (r["dest"] as Dictionary).get("via", null) if goal == "errand" else null
 	if via != null:
 		# к месту во дворике постройки — через её вход, а не напрямик сквозь стену (Life: мебель)
@@ -1146,6 +1157,8 @@ func _arrive(r: Dictionary) -> void:
 			if c:
 				c.play("Idle_Loop")
 		"settle":
+			r.erase("tutorial_settle_pace")
+			r.erase("tutorial_settle_at")
 			# семья въезжает, как только первый из неё дошёл до двери (остальные подтянутся)
 			r["state"] = "home"
 			_door_in(r, city.buildings.get(r["home"], {}), "home")
@@ -3208,6 +3221,14 @@ func _process_body(dt: float) -> void:
 		return
 	dt = minf(dt, 0.05)
 	var speed: float = game.speed
+	if game.tutorial != null and game.tutorial.active():
+		# Семья не теряет время пути, когда один кадр рисуется дольше.
+		var now := Time.get_ticks_usec()
+		if _settle_tick_us > 0:
+			_settle_time += float(now - _settle_tick_us) * maxf(0.0, speed) / 1000000.0
+		_settle_tick_us = now
+	else:
+		_settle_tick_us = 0
 	var pf := perf
 	var tm := Time.get_ticks_usec() if pf else 0
 	_tick += dt
@@ -3606,6 +3627,10 @@ func _step(r: Dictionary, dt: float) -> void:
 		var pc := land.cell(p)
 		if land.is_up(land.idx(pc.x, pc.y)):
 			sf = Defs.STREET_WALK                # по каменным плитам ходят быстрее (этап 5.7) — и шагают чаще: ноги не скользят
+	if r["goal"] == "settle" and r.has("tutorial_settle_at") and game.tutorial.active():
+		sf *= float(r["tutorial_settle_pace"])
+		dt = _settle_time - float(r["tutorial_settle_at"])
+		r["tutorial_settle_at"] = _settle_time
 	if c:
 		c.anim.speed_scale = game.speed * float(r["speed"]) * sf
 		if float(r["fade"]) < 1.0:
@@ -3879,17 +3904,62 @@ func _on_assigned(name: String, home: int) -> void:
 	var h: Dictionary = city.buildings.get(home, {})
 	if h.is_empty():
 		return
-	for wf in waiting_fams.duplicate():
+	var lesson: bool = game.tutorial != null and game.tutorial.active()
+	for wf: Dictionary in waiting_fams.duplicate():
 		if wf["name"] != name:
 			continue
 		waiting_fams.erase(wf)
-		for id in wf["members"]:
+		var ids: Array = wf["members"]
+		for id: int in ids:
 			if not by_id.has(id):
 				continue
 			var r: Dictionary = by_id[id]
 			r["home"] = home
 			r["cls"] = h_cls(h)
+			if lesson:
+				r["tutorial_settle_pace"] = TUTOR_SETTLE_PACE
 			_go(r, city.door_point(h), "settle")
+		if lesson:
+			_follow_settling_family.call_deferred(ids, home)
+		return
+
+
+func _follow_settling_family(ids: Array, home: int) -> void:
+	var focus := _settling_position(ids, home)
+	if not focus.is_finite():
+		return
+	_settling_home = home
+	_settling_follow = _settling_position.bind(ids, home)
+	game.rig.start_follow(_settling_follow)
+	var door := city.door_point(city.buildings[home])
+	var framing := Vector2(focus.x, focus.z).distance_to(door) * 3.4
+	if framing > 26.0:
+		game.rig.set_dist(framing)
+
+
+func follows_settling_house(home: int) -> bool:
+	return home == _settling_home and _settling_follow.is_valid() and game.rig.follow == _settling_follow
+
+
+func _settling_position(ids: Array, home: int) -> Vector3:
+	var house: Dictionary = city.buildings.get(home, {})
+	if house.is_empty() or not game.tutorial.active():
+		return Vector3.INF
+	var center := Vector2.ZERO
+	var count := 0
+	var walking := false
+	for id: int in ids:
+		var r: Dictionary = by_id.get(id, {})
+		if int(r.get("home", -1)) != home:
+			continue
+		center += r["p"]
+		count += 1
+		walking = walking or (r["goal"] == "settle" and r["state"] == "walk")
+	if not walking:
+		return Vector3.INF
+	# Оставляем в кадре и семью, и дом, который можно открыть.
+	center = (center / float(count)).lerp(city.door_point(house), 0.4)
+	return Vector3(center.x, 0.0, center.y)
 
 
 # ---------- повозка с переселенцами ----------
@@ -4084,7 +4154,7 @@ func _cart_move(c: Dictionary, dt: float, snap: bool) -> void:
 	var path: PackedVector2Array = c["path"]
 	if path.size() < 2:
 		return
-	var total := _cart_path_len(path)
+	var total := _path_length(path)
 	var s: float = c["s"] if c["state"] != "out" else total - float(c["s"])
 	var p := path[0]
 	var dir := Vector2(0, 1)
@@ -4116,7 +4186,7 @@ func cart_seek_z(z: float) -> void:
 	_cart_move(cart, 0.0, true)
 
 
-func _cart_path_len(path: PackedVector2Array) -> float:
+static func _path_length(path: PackedVector2Array) -> float:
 	var t := 0.0
 	for i in path.size() - 1:
 		t += path[i].distance_to(path[i + 1])
@@ -4160,7 +4230,7 @@ func _cart_step(dt: float) -> void:
 				tut.intro_start(c)
 			_cart_move(c, 0.0, true)
 		"in", "out":
-			var total := _cart_path_len(c["path"])
+			var total := _path_length(c["path"])
 			# дорога длинная: пока повозку не видно на экране, она едет втрое быстрее (кто смотрит — видит обычный шаг)
 			# (в ролике камера ведёт повозку сама — та всегда едет своим шагом)
 			var seen: bool = bool(c["show"]) or (game.rig != null and game.rig.cam != null and game.rig.cam.is_position_in_frustum(n.position))

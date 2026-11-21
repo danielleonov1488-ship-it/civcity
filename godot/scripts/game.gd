@@ -5284,7 +5284,7 @@ func select_building(b: Dictionary) -> void:
 	if people:
 		people.set_focus(0)                   # выбор жителя или кошки снят (карточка — у постройки или закрыта)
 		people.set_focus_cat({})
-	if rig:
+	if rig and (people == null or not people.follows_settling_house(int(b.get("id", -1)))):
 		rig.stop_follow()
 	if cover:
 		cover.refresh()
