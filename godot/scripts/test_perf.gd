@@ -30,7 +30,8 @@ const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## 12.11 позже: фонтан, нимфей и арка снова Synty, детали Synty в своих зданиях, своя станция — golden_s8 (сборка 52)
 ## 12.11 «Высокая» облегчена для всех (без SDFGI/SSIL, атлас 4096, MSAA 2x), «Средняя» — атлас 4096 и мягкость низкая:
 ## эталон записан заново (golden_p1, ветка perf-120 от сборки 52); golden_s8 остаётся у линий без этой правки
-const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s9c"
+## 21.11 мост у ворот: вода течёт сквозь арки (CITY13-d/e) — дальние виды у реки поменялись намеренно, эталон golden_s9d
+const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s9d"
 const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22,whole:192:160:15:55:240"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)
