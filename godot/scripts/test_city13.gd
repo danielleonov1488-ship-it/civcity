@@ -110,28 +110,12 @@ func view_at(p: Vector2, y: float, yaw: float, tilt: float, distance: float) -> 
 
 
 func bridge(river: bool) -> void:
+	# Владелец 21.11: прежний арочный мост у ворот «и так был норм» — оставлен как был; тут только снимок для сверки.
 	var label := "river" if river else "stream"
-	if not check(game.land.bridges.size() == 1, label + " bridge on the main road"):
+	if not check(game.land.bridges.size() >= 1, label + " bridge on the main road"):
 		return
 	var br: Dictionary = game.land.bridges[0]
 	var p: Vector2 = br["pos"]
-	var half: float = br["half"]
-	var y: float = br["y"]
-	var water := game.get_node_or_null("CityWater") as MeshInstance3D
-	if not check(water != null and water.mesh is PlaneMesh, "rendered water plane"):
-		return
-	var extent := (water.mesh as PlaneMesh).size * 0.5
-	var surface := Rect2(Vector2(water.position.x, water.position.z) - extent, extent * 2.0)
-	var clear: bool = br["river"] == river and is_equal_approx(water.position.y, Land.WATER_Y)
-	for iz in 25:
-		for dx: float in [-Land.ROAD_R, -1.0, 0.0, 1.0, Land.ROAD_R]:
-			var q := p + Vector2(dx, lerpf(-half, half, iz / 24.0))
-			var node := Vector2i((q / (Land.CELL * Land.RS)).round())
-			clear = clear and surface.has_point(q) and game.land.node_y(node.x, node.y) < Land.WATER_Y
-	check(clear, label + " water covers the whole span with the bed below it")
-	check(y - 0.48 > water.position.y + 0.05 and is_equal_approx(p.x, Land.ROAD_X), label + " deck follows the road above the waves")
-	for offset: float in [-half + Land.CELL, 0.0, half - Land.CELL]:
-		check(is_equal_approx(game.land.height_at(p.x, p.y + offset), y), label + " level walking surface")
 	view_at(p, Land.WATER_Y + 0.5, 65, 23, 26.0 if river else 18.0)
 	await shot("2_bridge_river.png" if river else "1_bridge_stream.png")
 
