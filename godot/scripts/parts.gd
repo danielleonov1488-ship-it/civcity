@@ -7,6 +7,7 @@ extends Node3D
 var groups := {}          # ключ → {subs: [{mm, mmi, local}], free: [], used: int, cap: int}
 var alias := {}           # прежний ключ (с цветом оттенка) → группа без оттенка: подсветка (cover.gd) ищет по нему
 static var _special := {}
+const WHEAT_BATCH := 24.0
 
 ## Оттенок — у экземпляра (12.11, владелец: «минимум 120 кадров»): одинаковые детали разных цветов (штукатурка
 ## каждого дома своего цвета, ставни, черепица) — один MultiMesh, цвет — в цвете экземпляра; у подкрашиваемых
@@ -147,6 +148,18 @@ static func _tint_mat(m: StandardMaterial3D, a: float) -> StandardMaterial3D:
 ## в среднем 0,1 из 255, теней на 20% меньше вызовов (город владельца: 2828 → 2248), +5–7% кадров
 const SMALL_SHADOW := 0.9
 static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
+	if name == CatCivic.WHEAT or name == CatCivic.WHEAT_DENSE:
+		var batch: MultiMeshInstance3D = sub["mmi"]
+		batch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if tile.x >= 0:
+			# Шейдер уже погасил все пучки к этой дальности. Границы не меняются при сносе.
+			var corner := Vector3(tile.x * WHEAT_BATCH - 1.0, -16, tile.y * WHEAT_BATCH - 1.0)
+			batch.custom_aabb = AABB(corner, Vector3(WHEAT_BATCH + 2.0, 42, WHEAT_BATCH + 2.0))
+			batch.visibility_range_end = 94.0 if name == CatCivic.WHEAT_DENSE else 174.0
+		return
+	if name.begins_with("#field_cover_"):
+		(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		return
 	var mesh: Mesh = (sub["mm"] as MultiMesh).mesh
 	if mesh != null:
 		var sz := mesh.get_aabb().size
@@ -243,6 +256,12 @@ func _sub(mesh: Mesh, local: Transform3D, colors := false) -> Dictionary:
 
 static func _special_mesh(name: String) -> Mesh:
 	if _special.has(name):
+		return _special[name]
+	if name == CatCivic.WHEAT or name == CatCivic.WHEAT_DENSE:
+		_special[name] = CatCivic.wheat_mesh(name == CatCivic.WHEAT_DENSE)
+		return _special[name]
+	if name.begins_with("#field_cover_"):
+		_special[name] = CatCivic.field_cover_mesh(name.trim_prefix("#field_cover_"))
 		return _special[name]
 	if name.begins_with("#mil_"):                  # палатки, мишени, баллисты… Легиона (cat_military.gd)
 		_special[name] = CatMilitary.kit_mesh(name)
@@ -461,15 +480,13 @@ func _grow(g: Dictionary) -> void:
 	var cap: int = maxi(16, int(g["cap"]) * 2)
 	for sub in g["subs"]:
 		var mm: MultiMesh = sub["mm"]
-		var old := mm.buffer
+		var buffer := mm.buffer
 		mm.instance_count = cap
-		var buf := mm.buffer
-		for i in old.size():
-			buf[i] = old[i]
-		# новые места — пустые (нулевой масштаб)
-		for i in range(old.size(), buf.size()):
-			buf[i] = 0.0
-		mm.buffer = buf
+		# В оконном рендере сохраняем старые экземпляры и добавляем пустые места.
+		if DisplayServer.get_name() != "headless":
+			var stride := 12 + 4 * int(mm.use_colors) + 4 * int(mm.use_custom_data)
+			buffer.resize(cap * stride)
+			mm.buffer = buffer
 	g["cap"] = cap
 
 
@@ -490,10 +507,14 @@ func _alloc(g: Dictionary) -> int:
 func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 	var handles := []
 	for p in bp.parts:
-		var g := _group(subst.get(p[0], p[0]), p[2])
+		var name: String = subst.get(p[0], p[0])
+		var t: Transform3D = xf * (p[1] as Transform3D)
+		var tile := Vector2i(-1, -1)
+		if name == CatCivic.WHEAT or name == CatCivic.WHEAT_DENSE:
+			tile = Vector2i(Vector2(t.origin.x, t.origin.z) / WHEAT_BATCH)
+		var g := _group(name, p[2], tile)
 		var col := _col
 		var slot := _alloc(g)
-		var t: Transform3D = xf * (p[1] as Transform3D)
 		var tinted := g.has("tint")
 		for sub in g["subs"]:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, t * (sub["local"] as Transform3D))
@@ -601,16 +622,35 @@ static func outline_material(col := Color(1.0, 0.97, 0.88), width := 0.07) -> Sh
 ## "shell" — только цветная оболочка (подсветка существующей постройки); "outline" — обводка по силуэту
 static func ghost(bp: Bp, mode := "place", col := Color(0.4, 0.9, 0.4, 0.4)) -> Node3D:
 	var root := Node3D.new()
+	var wheat := {CatCivic.WHEAT: [], CatCivic.WHEAT_DENSE: []}
 	for p in bp.parts:
+		var name: String = p[0]
+		if wheat.has(name):
+			(wheat[name] as Array).append(p[1])
+			continue
 		var n: Node3D
-		if (p[0] as String).begins_with("#"):
+		if name.begins_with("#"):
 			var mi := MeshInstance3D.new()
-			mi.mesh = _special_mesh(p[0])
+			mi.mesh = _special_mesh(name)
 			n = mi
 		else:
 			n = Synty.make(p[0], p[2])
 		n.transform = p[1]
 		root.add_child(n)
+	# Призрак поля и короткая анимация стройки тоже рисуют пучки пачками.
+	for name: String in wheat:
+		var transforms: Array = wheat[name]
+		if transforms.is_empty():
+			continue
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = _special_mesh(name)
+		mm.instance_count = transforms.size()
+		for i in transforms.size():
+			mm.set_instance_transform(i, transforms[i])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		root.add_child(mmi)
 	var mat: Material
 	match mode:
 		"shell": mat = tint_material(col, 0.03)

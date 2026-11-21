@@ -187,8 +187,8 @@ static func look_of(m: Dictionary, cls: String) -> Dictionary:
 static func full_name(m: Dictionary, fam: String) -> String:
 	var pn := String(m.get("pn", ""))
 	if int(m.get("sx", 0)) == 1:
-		return pn
-	return "%s %s" % [pn, StoryDefs.nomen(fam)]
+		return I18n.remember_name(pn)
+	return I18n.remember_name(("%s %s" % [pn, StoryDefs.nomen(fam)]).strip_edges())
 
 
 ## Кто в семье: «отец семьи», «мать», «сын», «дочь», «дедушка», «бабушка», «взрослый сын»…

@@ -5911,5 +5911,11 @@
 	"Вы": "You",
 	"Соперник": "Opponent",
 	"Время вышло": "Time is up",
-"Поставьте дома рядом с площадью.": "Place the houses near the square."
+	"Поставьте дома рядом с площадью.": "Place the houses near the square.",
+	"Протяните участок мышью и отпустите. Размер от 2 × 2 до 6 × 6.": "Drag out the plot and release. Size from 2 × 2 to 6 × 6.",
+	"%d × %d · %s ден.": "%d × %d · %s den.",
+	"%d × %d (%d клеток)": "%d × %d (%d tiles)",
+	"от %s ден.": "from %s den.",
+	"%d м²": "%d m²",
+	"Площадь участка": "Plot area"
 }

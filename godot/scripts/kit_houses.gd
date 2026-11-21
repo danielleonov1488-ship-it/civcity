@@ -95,6 +95,8 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false,
 			rb = rb * Basis(Vector3.RIGHT, float(pr[6]))       # наклон (лира, прислонённая к скамье)
 		var rm := _remap(b, pr[7]) if pr.size() > 7 and pr[7] is Dictionary else {}
 		b.parts.append([String(pr[0]), Transform3D(rb * Basis.from_scale(ps), pp * S), rm])
+	if type == "catshop":
+		CatExtra.catshop_pillow(b, CatExtra.CATSHOP_KIT_BED, S)
 	for j: Array in h.get("jets", []):
 		b.jets.append([sq * Vector3(float(j[0]), float(j[1]), float(j[2])) * S, float(j[3]) * S, float(j[4])])
 	for a: Array in h.get("actors", []):
@@ -155,6 +157,20 @@ static func pets(type: String) -> Array:
 	for e: Array in h.get("pets", []):
 		var q := e.duplicate()
 		q[1] = _v(e[1])
+		if type == "catshop" and q[0] == "cat":
+			match String(q[6]):
+				"petasos":
+					q[1] = Vector3(0.34, 1.033, 1.54) / Catalog.ARCH
+					q[2] = 0.10
+				"bandana":
+					q[1] = CatExtra.catshop_seat(CatExtra.CATSHOP_KIT_BED) / Catalog.ARCH
+					q[2] = -PI / 2
+				"bow":
+					q[1] = Vector3(-0.25, 0.126, 1.94) / Catalog.ARCH
+					q[2] = 0.0
+				"collar":
+					q[1] = Vector3(0.68, 0.0, 2.56) / Catalog.ARCH
+					q[2] = PI
 		out.append(q)
 	return out
 

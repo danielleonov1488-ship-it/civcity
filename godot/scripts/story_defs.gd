@@ -1161,7 +1161,7 @@ static func _fam1(fam: String) -> String:
 ## «Корнелии» → «Корнелиев», «Помпеи» → «Помпеев»
 static func fam_gen(fam: String) -> String:
 	var f := _fam1(fam)
-	return (f.left(f.length() - 1) + "ев") if f.ends_with("и") else f
+	return I18n.remember_name((f.left(f.length() - 1) + "ев") if f.ends_with("и") else f)
 
 
 ## «Корнелии» → «Корнелий», «Помпеи» → «Помпей»

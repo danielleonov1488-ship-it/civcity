@@ -13,6 +13,78 @@ static var lang := "ru"
 static var _tr := {}                    # язык → его Translation (чтобы снять, когда язык выключили)
 
 
+## Латинские формы для имён из генераторов жителей и воинов.
+const ROMAN_NAMES := {
+	"Луций": "Lucius", "Гай": "Gaius", "Марк": "Marcus", "Тит": "Titus", "Квинт": "Quintus", "Публий": "Publius",
+	"Авл": "Aulus", "Децим": "Decimus", "Секст": "Sextus", "Гней": "Gnaeus", "Сервий": "Servius",
+	"Тиберий": "Tiberius", "Спурий": "Spurius", "Нумерий": "Numerius", "Манний": "Mannius", "Постум": "Postumus",
+	"Кезон": "Caeso", "Вибий": "Vibius", "Младшая": "Minor", "Терция": "Tertia", "Кварта": "Quarta", "Квинта": "Quinta",
+	"Максимы": "Maximi", "Руфы": "Rufi", "Галлы": "Galli", "Флакки": "Flacci", "Лонги": "Longi",
+	"Бруты": "Bruti", "Крассы": "Crassi", "Пульхры": "Pulchri", "Нервы": "Nervae", "Сабины": "Sabini",
+	"Цинны": "Cinnae", "Лепиды": "Lepidi", "Метеллы": "Metelli", "Катоны": "Catones", "Сципионы": "Scipiones",
+	"Гракхи": "Gracchi", "Мурены": "Murenae", "Бальбы": "Balbi", "Северы": "Severi", "Приски": "Prisci",
+	"Агриппы": "Agrippae", "Варроны": "Varrones",
+}
+const ROMAN_GENTES := {
+	"Юли": "Iuli", "Корнели": "Corneli", "Клавди": "Claudi", "Валери": "Valeri", "Фаби": "Fabi", "Эмили": "Aemili",
+	"Ливи": "Livi", "Тулли": "Tulli", "Флави": "Flavi", "Антони": "Antoni", "Юни": "Iuni", "Сервили": "Servili",
+	"Сульпици": "Sulpici", "Помпе": "Pompei", "Лицини": "Licini", "Порци": "Porci", "Октави": "Octavi",
+	"Аврели": "Aureli", "Касси": "Cassi", "Марци": "Marci", "Постуми": "Postumi", "Манли": "Manli",
+	"Семпрони": "Semproni", "Теренци": "Terenti", "Фури": "Furi", "Гораци": "Horati", "Квинкци": "Quincti",
+	"Сексти": "Sexti", "Виби": "Vibi", "Плавти": "Plauti", "Петрони": "Petroni", "Домици": "Domiti",
+	"Помпони": "Pomponi", "Цецили": "Caecili", "Мари": "Mari", "Вари": "Vari", "Рутили": "Rutili",
+}
+const CYR := "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+const LAT := ["a", "b", "v", "g", "d", "e", "yo", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r",
+	"s", "t", "u", "f", "kh", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya"]
+static var _roman := {}
+static var _person_names := {}
+
+
+static func _name_words() -> Dictionary:
+	if _roman.is_empty():
+		_roman = ROMAN_NAMES.duplicate()
+		for stem: String in ROMAN_GENTES:
+			var latin: String = ROMAN_GENTES[stem]
+			_roman[stem + "й"] = latin + "us"
+			_roman[stem + "я"] = latin + "a"
+			_roman[stem + "и"] = latin + "i"
+			_roman[stem + "ев"] = latin + "i"
+	return _roman
+
+
+static func remember_name(value: String) -> String:
+	if value != "" and not _person_names.has(value):
+		_person_names[value] = true
+		if _tr.has("en"):
+			_tr["en"].cache.erase(value)
+	return value
+
+
+static func display_name(value: String) -> String:
+	return _latin_name(value) if lang == "en" else value
+
+
+static func _latin_name(value: String) -> String:
+	var roman := _name_words()
+	var out := PackedStringArray()
+	for word in value.split(" "):
+		if roman.has(word):
+			out.append(roman[word])
+			continue
+		var w := ""
+		for ch in word:
+			var lower := ch.to_lower()
+			var i := CYR.find(lower)
+			if i < 0:
+				w += ch
+			else:
+				var latin: String = LAT[i]
+				w += latin if lower == ch or latin.is_empty() else latin.left(1).to_upper() + latin.substr(1)
+		out.append(w)
+	return " ".join(out)
+
+
 ## Перевод по словарю с образцами. Godot зовёт _get_message для каждой строки надписи — результат запоминаем
 class Dict extends Translation:
 	var exact := {}
@@ -23,6 +95,8 @@ class Dict extends Translation:
 	var cache := {}
 	var _ph := RegEx.create_from_string("%%|%[-+#0]*\\d*(?:\\.\\d+)?[dsfxXo]|\\{[a-z_0-9]+\\}")      # %d, %s, %.1f, %% и {имя} (подстановки историй)
 	var _cyr := RegEx.create_from_string("[А-Яа-яЁё]")
+	var _name_word := RegEx.create_from_string("(?<![А-Яа-яЁё])[А-ЯЁ][а-яё]+")
+	var _name_form := RegEx.create_from_string("^[А-ЯЁ][а-яё]+(?: [А-ЯЁ][а-яё]+){0,3}$")
 	var _num := RegEx.create_from_string("^(\\d[\\d,.]*) (.+)$")
 
 	func fill(d0: Dictionary) -> void:
@@ -128,6 +202,8 @@ class Dict extends Translation:
 			return ""
 		if exact.has(s):
 			return String(exact[s])
+		if I18n._person_names.has(s) or (_name_form.search(s) != null and I18n._name_words().has(s.get_slice(" ", 0))):
+			return I18n._latin_name(s)
 		var t := _template(s)
 		if t != "":
 			return t
@@ -272,11 +348,23 @@ class Dict extends Translation:
 				var tg := lookup(g) if has_ru(g) else ""
 				if tg == "" and has_ru(g):
 					tg = lookup(g + ".").trim_suffix(".")          # хвост фразы, у которого шаблон забрал точку
-				out += tg if tg != "" else g
+				out += tg if tg != "" else _names_in(g)
 			if not ok:
 				continue
 			return out + en.substr(last)
 		return ""
+
+	func _names_in(text: String) -> String:
+		var names := I18n._name_words()
+		var out := text
+		var words := _name_word.search_all(text)
+		for i in range(words.size() - 1, -1, -1):
+			var word := words[i]
+			var src := word.get_string()
+			if names.has(src):
+				out = out.substr(0, word.get_start()) + String(names[src]) + out.substr(word.get_end())
+		return out
+
 
 	func _esc(t: String) -> String:
 		var o := ""

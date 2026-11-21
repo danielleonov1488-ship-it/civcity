@@ -218,7 +218,7 @@ static func look(c: City) -> Dictionary:
 
 
 static func name_of(c: City) -> String:
-	return String((c.hero["m"] as Dictionary).get("pn", "Герой")) if exists(c) else "Герой"
+	return I18n.remember_name(String((c.hero["m"] as Dictionary).get("pn", "Герой"))) if exists(c) else "Герой"
 
 
 static func female(c: City) -> bool:
