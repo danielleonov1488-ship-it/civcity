@@ -1028,7 +1028,7 @@ func training_info(person: Dictionary, plot: Dictionary) -> Dictionary:
 	var level := int(person.get("rank", 0)) + 1
 	var first := fort_guide_step() == FortGuide.TRAIN and int(person.get("id", 0)) == int(flags.get("fort_guide_sid", -1))
 	return {"level": level, "to": level + 1, "cap": training_cap(int(plot.get("lv", 1))),
-		"food": 0 if first else 50 * level, "time": 10.0 if first else 60.0 * level}
+		"food": 0 if first else 50 * level, "time": 4.0 if first else 60.0 * level}   # первое учебное — 4 с: в обучении не ждём
 
 
 func _training_reason(person: Dictionary, plot: Dictionary) -> String:
