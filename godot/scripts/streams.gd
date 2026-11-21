@@ -500,6 +500,35 @@ static func apply(land: Land, list: Array) -> void:
 	land.gen += 1
 
 
+## Видимое русло под мостом, с плавным переходом к прежним берегам.
+static func _open_bridge_bed(land: Land, center: Vector2, road_dir: Vector2, half: float, river: bool) -> void:
+	var cross := Vector2(road_dir.y, -road_dir.x)
+	var wet_edge := Land.ROAD_R + 0.75
+	var bank_edge := wet_edge + (3.0 if river else 0.9)
+	var reach := cross.abs() * bank_edge + road_dir.abs() * (half + 0.8)
+	var lo := land.cell(center - reach)
+	var hi := land.cell(center + reach)
+	for j in range(lo.y, hi.y + 1):
+		for i in range(lo.x, hi.x + 1):
+			var delta := land.cell_center(i, j) - center
+			var weight := (1.0 - smoothstep(wet_edge, bank_edge, absf(delta.dot(cross))))
+			weight *= 1.0 - smoothstep(half, half + 0.8, absf(delta.dot(road_dir)))
+			var k := land.idx(i, j)
+			if is_zero_approx(weight) or land.occ[k] != 0:
+				continue
+			if not Land.walk_kind(land.base_kind[k]) and (land.h[k] != land.base_h[k] or land.kind[k] != land.base_kind[k]):
+				continue
+			var y := land._vh(k)
+			if y > Land.WATER_Y - 0.42:
+				land.set_vis(k, lerpf(y, Land.WATER_Y - 0.42, weight))
+	if not river:
+		var ch0 := (lo - Vector2i.ONE * Land.RS) / Land.CH
+		var ch1 := (hi + Vector2i.ONE * Land.RS) / Land.CH
+		for j in range(ch0.y, ch1.y + 1):
+			for i in range(ch0.x, ch1.x + 1):
+				land.bridge_road_chunks[Vector2i(i, j)] = true
+
+
 ## Мост там, где ручей проходит под дорогой исходной карты: середина, направление ручья, высота дороги, пролёт
 static func _bridge(land: Land, id: int, road: Array) -> Dictionary:
 	var c := Vector2.ZERO

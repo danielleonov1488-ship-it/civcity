@@ -1,20 +1,26 @@
 extends Node3D
 
 const OUTPUT := "D:/CivCity/.work/stage7/city13b/"
+const BRIDGE_OUTPUT := "D:/CivCity/.work/stage7/city13d/"
+const BRIDGE_REFERENCE := BRIDGE_OUTPUT + "reference/"
 const PREVIOUS_TOP := "D:/CivCity/.work/stage7/city13/shots/3_fields_sizes.png"
 const TestCat := preload("res://scripts/test_cat.gd")
 const TestPace := preload("res://scripts/test_pace.gd")
 var out := OUTPUT + "shots/"
+var bridge_only := false
 var game: Game
 var city: City
 var fails := 0
 
 
 func _ready() -> void:
+	bridge_only = OS.get_cmdline_user_args().has("bridge_only")
+	if bridge_only:
+		out = BRIDGE_OUTPUT + "shots/"
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			out = arg.substr(4).trim_suffix("/") + "/"
-	var profile := OUTPUT.path_join("profiles/city13_%d" % Time.get_ticks_usec())
+	var profile := (BRIDGE_OUTPUT if bridge_only else OUTPUT).path_join("profiles/city13_%d" % Time.get_ticks_usec())
 	check(DirAccess.make_dir_recursive_absolute(profile) == OK, "profile")
 	check(DirAccess.make_dir_recursive_absolute(out) == OK, "shots")
 	OS.set_environment("CIVCITY_SAVEDIR", profile)
@@ -28,10 +34,12 @@ func _ready() -> void:
 	await frames(5)
 	if await boot(false):
 		await bridge(false)
-		await fields()
-		await cats()
-		await english()
-	await balance()
+		if not bridge_only:
+			await fields()
+			await cats()
+			await english()
+	if not bridge_only:
+		await balance()
 	print("CITY13 DONE fails=", fails)
 	get_tree().quit(0 if fails == 0 else 1)
 
@@ -110,14 +118,157 @@ func view_at(p: Vector2, y: float, yaw: float, tilt: float, distance: float) -> 
 
 
 func bridge(river: bool) -> void:
-	# Владелец 21.11: прежний арочный мост у ворот «и так был норм» — оставлен как был; тут только снимок для сверки.
 	var label := "river" if river else "stream"
-	if not check(game.land.bridges.size() >= 1, label + " bridge on the main road"):
+	if not check(not game.land.bridges.is_empty(), label + " bridge on the main road"):
 		return
 	var br: Dictionary = game.land.bridges[0]
 	var p: Vector2 = br["pos"]
-	view_at(p, Land.WATER_Y + 0.5, 65, 23, 26.0 if river else 18.0)
-	await shot("2_bridge_river.png" if river else "1_bridge_stream.png")
+	var source = JSON.parse_string(FileAccess.get_file_as_string(BRIDGE_REFERENCE + "bridge_reference.json"))
+	if check(source is Dictionary and source.has(label), "original bridge data " + label):
+		var before: Dictionary = source[label]
+		# Плоская плита закрывала верх речных арок, вместо неё установлен свод.
+		before["pieces"].erase("#marble")
+		var after := bridge_signature(p)
+		check(after["pieces"] == before["pieces"], label + " original pieces, transforms and colours")
+		check(after["heights"] == before["heights"], label + " original walking heights")
+	check_bridge_openings(p, label, 4 if river else 1)
+	if river:
+		view_at(p, Land.WATER_Y + 0.15, 83, 10, 27.0)
+		await shot("3_river_bridge.png")
+		return
+	view_at(p, Land.WATER_Y + 0.5, 65, 23, 18.0)
+	compare_bridge(await capture())
+	var cam := game.rig.cam
+	game.rig.set_process(false)
+	var attrs := game.rig.attrs
+	var blur_near := attrs.dof_blur_near_enabled
+	var blur_far := attrs.dof_blur_far_enabled
+	attrs.dof_blur_near_enabled = false
+	attrs.dof_blur_far_enabled = false
+	cam.global_position = Vector3(p.x + 7.4, Land.WATER_Y + 0.82, p.y + 0.45)
+	cam.look_at(Vector3(p.x - 0.6, Land.WATER_Y + 0.67, p.y - 0.08))
+	await shot("2_close_arch.png")
+	attrs.dof_blur_near_enabled = blur_near
+	attrs.dof_blur_far_enabled = blur_far
+	game.rig.set_process(true)
+	view_at(p, game.land.height_at(p.x, p.y), 56, 72, 19.0)
+	await shot("4_from_above.png")
+
+
+func compare_bridge(after: Image) -> void:
+	var before := Image.load_from_file(BRIDGE_REFERENCE + "before_stream.png")
+	if not check(before != null and not before.is_empty(), "original stream screenshot"):
+		return
+	before.convert(after.get_format())
+	var size := after.get_size()
+	if before.get_size() != size:
+		before.resize(size.x, size.y, Image.INTERPOLATE_LANCZOS)
+	var pair := Image.create_empty(size.x * 2 + 4, size.y, false, after.get_format())
+	pair.fill(Color("f6e3aa"))
+	pair.blit_rect(before, Rect2i(Vector2i.ZERO, size), Vector2i.ZERO)
+	pair.blit_rect(after, Rect2i(Vector2i.ZERO, size), Vector2i(size.x + 4, 0))
+	save_shot(pair, "1_before_after_stream.png")
+
+
+const BRIDGE_PARTS := ["SM_Bld_Wall_Door_Double_01", "SM_Bld_Wall_01",
+	"SM_Bld_Wall_Large_Cap_01", "SM_Bld_Wall_Large_Pillar_01", "SM_Bld_Base_Floor_01", "#marble"]
+
+
+func bridge_parts(p: Vector2) -> Array[Array]:
+	var pieces: Array[Array] = []
+	for key: String in game.parts.groups:
+		var name_v := key.get_slice("|", 0)
+		if name_v not in BRIDGE_PARTS:
+			continue
+		var group: Dictionary = game.parts.groups[key]
+		for sub: Dictionary in group["subs"]:
+			var mesh: MultiMesh = sub["mm"]
+			for i in mesh.visible_instance_count:
+				var xf := mesh.get_instance_transform(i)
+				if xf.basis.determinant() > 0.001 and absf(xf.origin.x - p.x) < 3.0 and absf(xf.origin.z - p.y) < 11.0:
+					var color := mesh.get_instance_color(i) if mesh.use_colors else Color(0, 0, 0, 1)
+					pieces.append([name_v, xf, mesh.mesh, color])
+	return pieces
+
+
+# Сравниваем меши, поставленные в сцене, и высоты дороги с исходной сборкой.
+func bridge_signature(p: Vector2) -> Dictionary:
+	var pieces: Dictionary = {}
+	for part: Array in bridge_parts(p):
+		var name_v: String = part[0]
+		if not pieces.has(name_v):
+			pieces[name_v] = []
+		pieces[name_v].append(str(part[1]) + str(part[3]))
+	for name_v: String in pieces:
+		pieces[name_v].sort()
+	var heights: Array[float] = []
+	for z in range(-40, 41):
+		for x in range(-8, 9):
+			heights.append(game.land.height_at(p.x + x * Land.CELL, p.y + z * Land.CELL))
+	return {"pieces": pieces, "heights": heights}
+
+
+func check_bridge_openings(p: Vector2, label: String, count: int) -> void:
+	var water := game.get_node_or_null("CityWater") as MeshInstance3D
+	var flow := game.get_node_or_null("StreamFlow") as MeshInstance3D
+	var vault := game.get_node_or_null("BridgeVault") as MeshInstance3D
+	if not check(water != null and flow != null and vault != null, label + " water, flow, vault"):
+		return
+	var surface := water.global_transform * water.get_aabb()
+	var water_shader := water.material_override as ShaderMaterial
+	check(water_shader.shader.resource_path == "res://shaders/water.gdshader", label + " shared water shader")
+	check(vault.find_children("*", "Control", true, false).is_empty(), label + " no control in opening")
+	for surface_id in flow.mesh.get_surface_count():
+		var shader := flow.get_surface_override_material(surface_id) as ShaderMaterial
+		check(shader != null and shader.shader.resource_path == "res://shaders/stream_flow.gdshader", label + " shared animated flow")
+	var geometry: Array[Array] = []
+	var sections: Array[Vector3] = []
+	for part: Array in bridge_parts(p):
+		var xf: Transform3D = part[1]
+		geometry.append([(part[2] as Mesh).get_faces(), xf])
+		if part[0] == "SM_Bld_Wall_Door_Double_01" and xf.origin.x > p.x:
+			sections.append(xf * Vector3(1.25, 0, 0))
+	var cell := game.land.cell(p)
+	var ch := cell / Land.CH
+	for z in range(ch.y - 1, ch.y + 2):
+		for x in range(ch.x - 1, ch.x + 2):
+			var node: MeshInstance3D = game.chunk_nodes.get(Vector2i(x, z))
+			if node:
+				geometry.append([node.mesh.get_faces(), node.global_transform])
+	geometry.append([vault.mesh.get_faces(), vault.global_transform])
+	var flow_faces := flow.mesh.get_faces()
+	var vault_faces := vault.mesh.get_faces()
+	check(sections.size() == count, label + " arch count")
+	for section: Vector3 in sections:
+		var opening := Vector3(p.x, Land.WATER_Y + 0.4, section.z)
+		for dx in range(-10, 11):
+			var q := opening + Vector3(dx * Land.CELL, 0, 0)
+			check(game.land.surface_y(q.x, q.z) < Land.WATER_Y, label + " bed below water at " + str(q))
+			check(q.x >= surface.position.x and q.x <= surface.end.x and q.z >= surface.position.z
+				and q.z <= surface.end.z and is_equal_approx(water.position.y, Land.WATER_Y), label + " continuous water plane")
+			check(hits_faces(flow_faces, flow.global_transform, q, q - Vector3.UP), label + " flow over water at " + str(q))
+		for lift: float in [0.0, 0.7]:
+			var line := opening + Vector3.UP * lift
+			var a := line - Vector3.RIGHT * 2.65
+			var b := line + Vector3.RIGHT * 2.65
+			var blocked := false
+			for mesh_data: Array in geometry:
+				if hits_faces(mesh_data[0], mesh_data[1], a, b):
+					blocked = true
+					break
+			check(not blocked, label + " ray through arch at " + str(line))
+		check(hits_faces(vault_faces, vault.global_transform, opening, opening + Vector3.UP * 1.5), label + " vault closes ceiling")
+	print("CITY13 BRIDGE ", label, " arches_checked=", sections.size())
+
+
+func hits_faces(faces: PackedVector3Array, xf: Transform3D, from: Vector3, to: Vector3) -> bool:
+	var inv := xf.affine_inverse()
+	var a := inv * from
+	var b := inv * to
+	for i in range(0, faces.size(), 3):
+		if Geometry3D.segment_intersects_triangle(a, b, faces[i], faces[i + 1], faces[i + 2]) != null:
+			return true
+	return false
 
 
 func plot(type: String, size: Vector2i, x0: float, x1: float, z0: float, z1: float, stride := 2.5) -> Vector2:

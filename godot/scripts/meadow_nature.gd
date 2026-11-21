@@ -227,12 +227,11 @@ static func streams(g) -> void:
 ## Всё, что встаёт после рощ и лугов: жизнь у ручьёв, мосты, поля с оградами, мельницы, луга в цветах
 static func life(g) -> void:
 	_water_life(g)
+	_bridges(g)
 	if not on():
-		_bridges(g)
 		return
 	_stream_banks(g)
 	_flow(g)
-	_bridges(g)
 	if not gen_low:
 		_patches(g)
 		_fields(g)
@@ -435,6 +434,12 @@ static func _flow(g) -> void:
 		var rv := 1 if bool(p["river"]) else 0
 		var st: SurfaceTool = sts[rv]
 		var pl: Vector3 = p["pool"]
+		var bridge := {}
+		if rv == 1:
+			for br: Dictionary in land.bridges:
+				if int(br["id"]) == id:
+					bridge = br
+					break
 		var acc := 0.0
 		for i in range(1, pts.size()):
 			var a := pts[i - 1]
@@ -448,8 +453,8 @@ static func _flow(g) -> void:
 				continue                             # в озере течения нет
 			var da := (pts[mini(i, pts.size() - 1)] - pts[maxi(i - 2, 0)]).normalized()
 			var db := (pts[mini(i + 1, pts.size() - 1)] - pts[i - 1]).normalized()
-			var na := Vector2(-da.y, da.x) * wid[i - 1] * 0.9
-			var nb := Vector2(-db.y, db.x) * wid[i] * 0.9
+			var na := Vector2(-da.y, da.x) * _flow_width(a, wid[i - 1], bridge)
+			var nb := Vector2(-db.y, db.x) * _flow_width(b, wid[i], bridge)
 			var y := Land.WATER_Y + 0.02
 			var v := [Vector3(a.x - na.x, y, a.y - na.y), Vector3(a.x + na.x, y, a.y + na.y), Vector3(b.x + nb.x, y, b.y + nb.y), Vector3(b.x - nb.x, y, b.y - nb.y)]
 			var uv := [Vector2(0, acc), Vector2(1, acc), Vector2(1, acc + l), Vector2(0, acc + l)]
@@ -462,6 +467,7 @@ static func _flow(g) -> void:
 	if not any[0] and not any[1]:
 		return
 	var mi := MeshInstance3D.new()
+	mi.name = "StreamFlow"
 	var am := ArrayMesh.new()
 	var mats := []
 	for rv2 in 2:
@@ -482,6 +488,15 @@ static func _flow(g) -> void:
 	mi.visible = not low
 	g.add_child(mi)
 	flow_node = mi
+
+
+## У речного моста струйки доходят до крайних арок, не прерывая UV по течению.
+static func _flow_width(p: Vector2, width: float, bridge: Dictionary) -> float:
+	if bridge.is_empty():
+		return width * 0.9
+	var center: Vector2 = bridge["arch_center"]
+	var blend := 1.0 - smoothstep(Land.ROAD_R + 0.75, Land.ROAD_R + 4.0, absf(p.x - center.x))
+	return lerpf(width * 0.9, maxf(width, float(bridge["arch_half"]) + 0.7), blend)
 
 
 static func _add(g, name: String, q: Vector2, s: float, rng: RandomNumberGenerator, dy := 0.0) -> void:
@@ -506,7 +521,7 @@ static func _waterwheel(g, id: int) -> void:
 	g._add_nature("M:SM_Prop_WaterWheel_01", Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * 0.62), Vector3(q.x, y - 0.25, q.y)), q)
 
 
-## Мост там, где ручей проходит под большой дорогой: дорога остаётся насыпью, по бокам — римская кладка из деталей
+## Мост там, где ручей проходит под большой дорогой: высота дороги прежняя, по бокам — римская кладка из деталей
 ## Ancient Empire в тёплом травертине: над водой — арка с пилястрами по сторонам, дальше — сплошная стенка, у концов —
 ## пилястры, по краю дороги — парапет с карнизом, на уровне дороги — тяга. Мост не сносится (как арка въезда)
 static func _bridges(g) -> void:
@@ -532,10 +547,12 @@ static func _bridges(g) -> void:
 		# тёплый травертин: камень стен и кладка пилястр — в тон арке въезда и терракотовому городу
 		var stone := {"Stucco_White_01": "Stone_01", "tints": {"Stone_01": Color(1.06, 0.94, 0.78), "Building_Large_Brick_01": Color(1.0, 0.9, 0.76)}}
 		var blocks := {"Building_Large_Brick_01": "Building_Large_Brick_01", "tints": {"Building_Large_Brick_01": Color(1.02, 0.9, 0.74)}}
+		var open_arch := stone.duplicate()
+		open_arch["open_bridge"] = true
 		for side: float in [-1.0, 1.0]:
 			var x := side * (hw + 0.05)
 			# стенка над насыпью: посередине — арка над водой, по сторонам — сплошная кладка
-			_side_piece(bp, "SM_Bld_Wall_Door_Double_01", side, x, -depth, -ws * 0.5, ws * 0.5, depth, 1.0, 2.5, 3.01, stone)
+			_side_piece(bp, "SM_Bld_Wall_Door_Double_01", side, x, -depth, -ws * 0.5, ws * 0.5, depth, 1.0, 2.5, 3.01, open_arch)
 			for e: float in [-1.0, 1.0]:
 				var z0 := ws * 0.5 if e > 0.0 else -half
 				var z1 := half if e > 0.0 else -ws * 0.5
@@ -551,11 +568,12 @@ static func _bridges(g) -> void:
 				var pb := Basis(Vector3(0, 0, -side), Vector3.UP, Vector3(side, 0, 0)) * Basis.from_scale(Vector3(0.5 / 0.92, hp / 4.55, 0.42 / 0.92))
 				bp.parts.append(["SM_Bld_Wall_Large_Pillar_01", Transform3D(pb, Vector3(x + side * 0.12, -depth, zp)), blocks])
 		g.parts.place(bp, xf)
-		# под аркой — вода дальше (короткая полоса воды в насыпь), чтобы в проёме блестела вода, а не земля
-		var under := Bp.new(92)
-		for side2: float in [-1.0, 1.0]:
-			CatMonuments._box(under, "#water", Vector3(side2 * (hw - 0.3), Land.WATER_Y - y + 0.02, 0.0), Vector3(1.0, 0.04, ws - 0.3))
-		g.parts.place(under, xf)
+		Streams._open_bridge_bed(land, c, rd, ws * 0.5, false)
+		var vault := SurfaceTool.new()
+		vault.begin(Mesh.PRIMITIVE_TRIANGLES)
+		_vault(vault, -ws * 0.5, ws, depth)
+		_place_vault(g, vault, xf, stone)
+
 
 
 ## Римский мост через реку (15.11): несколько арок подряд вдоль дороги, под ними течёт вода. Дорога для ходьбы остаётся
@@ -604,8 +622,8 @@ static func _river_bridge(g, br: Dictionary) -> void:
 	var xf := Transform3D(Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, -atan(slope)), Vector3(ctr.x, y0, ctr.y))
 	var stone := {"Stucco_White_01": "Stone_01", "tints": {"Stone_01": Color(1.06, 0.94, 0.78), "Building_Large_Brick_01": Color(1.0, 0.9, 0.76)}}
 	var blocks := {"Building_Large_Brick_01": "Building_Large_Brick_01", "tints": {"Building_Large_Brick_01": Color(1.02, 0.9, 0.74)}}
-	# толща моста под дорогой (потолок арок), мощёная проезжая часть сверху
-	CatMonuments._box(bp, "#marble", Vector3(0, -0.4, 0), Vector3(hw * 2.0 + 0.12, 0.8, T + 0.1))
+	var open_arch := stone.duplicate()
+	open_arch["open_bridge"] = true
 	CatMonuments._put(bp, "SM_Bld_Base_Floor_01", Transform3D(Basis.from_scale(Vector3((hw * 2.0 + 0.1) / 2.5, 1, (T + 0.6) / 2.5)), Vector3(-hw - 0.05, 0.03, -T * 0.5 - 0.3)), {"Stone_01": "Floor_Tiles_04"})
 	for side: float in [-1.0, 1.0]:
 		var x := side * (hw + 0.05)
@@ -613,7 +631,7 @@ static func _river_bridge(g, br: Dictionary) -> void:
 		for i in n:
 			var z0 := -T * 0.5 + i * aw
 			var d_i := depth + slope * (z0 + aw * 0.5)
-			_side_piece(bp, "SM_Bld_Wall_Door_Double_01", side, x, -d_i, z0, z0 + aw, d_i, 1.0, 2.5, 3.01, stone)
+			_side_piece(bp, "SM_Bld_Wall_Door_Double_01", side, x, -d_i, z0, z0 + aw, d_i, 1.0, 2.5, 3.01, open_arch)
 		for e: float in [-1.0, 1.0]:
 			var za := T * 0.5 if e > 0.0 else -half
 			var zb := half if e > 0.0 else -T * 0.5
@@ -636,6 +654,51 @@ static func _river_bridge(g, br: Dictionary) -> void:
 			var pb := Basis(Vector3(0, 0, -side), Vector3.UP, Vector3(side, 0, 0)) * Basis.from_scale(Vector3(0.5 / 0.92, hp / 4.55, 0.42 / 0.92))
 			bp.parts.append(["SM_Bld_Wall_Large_Pillar_01", Transform3D(pb, Vector3(x + side * 0.12, -d_p, zp)), blocks])
 	g.parts.place(bp, xf)
+
+	br["arch_center"] = ctr
+	br["arch_half"] = T * 0.5
+	Streams._open_bridge_bed(land, ctr, rd, T * 0.5, true)
+	var vault := SurfaceTool.new()
+	vault.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in n:
+		var z0 := -T * 0.5 + i * aw
+		_vault(vault, z0, aw, depth + slope * (z0 + aw * 0.5))
+	_place_vault(g, vault, xf, stone)
+
+
+## Свод по внутреннему краю прежнего дверного обрамления. Начало и конец заходят в кладку.
+static func _vault(st: SurfaceTool, z0: float, width: float, depth: float) -> void:
+	var profile := [Vector2(0.10, -0.12), Vector2(0.10, 2.08), Vector2(0.15, 2.28),
+		Vector2(0.25, 2.43), Vector2(0.36, 2.53), Vector2(0.50, 2.59),
+		Vector2(0.64, 2.53), Vector2(0.75, 2.43), Vector2(0.85, 2.28),
+		Vector2(0.90, 2.08), Vector2(0.90, -0.12)]
+	var x := Land.ROAD_R + 0.05 - 0.09
+	var length := 0.0
+	for i in range(1, profile.size()):
+		var p: Vector2 = profile[i - 1]
+		var q: Vector2 = profile[i]
+		var a := Vector2(z0 + width * p.x, -depth + depth * p.y / 3.01)
+		var b := Vector2(z0 + width * q.x, -depth + depth * q.y / 3.01)
+		var end := length + a.distance_to(b)
+		var v := [Vector3(-x, a.y, a.x), Vector3(x, a.y, a.x), Vector3(x, b.y, b.x), Vector3(-x, b.y, b.x)]
+		var uv := [Vector2(0, length), Vector2(x * 2.0, length), Vector2(x * 2.0, end), Vector2(0, end)]
+		for k: int in [0, 2, 1, 0, 3, 2]:
+			st.set_uv(uv[k] / 2.5)
+			st.add_vertex(v[k])
+		length = end
+
+
+static func _place_vault(g, st: SurfaceTool, xf: Transform3D, stone: Dictionary) -> void:
+	st.generate_normals()
+	st.generate_tangents()
+	var mi := MeshInstance3D.new()
+	mi.name = "BridgeVault"
+	mi.mesh = st.commit()
+	var lining := stone.duplicate(true)
+	lining["tints"]["Building_Large_Brick_01"] = Color(0.77, 0.69, 0.61)
+	mi.material_override = Synty.material("Brick_01", lining)
+	mi.transform = xf
+	g.add_child(mi)
 
 
 ## Направление дороги у моста (единичный вектор): главная ось клеток мостовой, троп и площадей вокруг точки c (радиус 7 м);

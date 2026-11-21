@@ -101,9 +101,10 @@ var bare := PackedByteArray()
 var streams: Array = []
 var streams_saved = null
 var bridges: Array = []
-## Видимая земля под мостом реки (15.11): у дороги над рекой клетки остаются насыпью для ходьбы (высота h — дорога), а
-## рисуется под мостом дно реки — чтобы под арками текла вода. Клетка → высота дна; не сохраняется (Streams.apply)
+## Видимая земля под мостами: у дороги над рекой клетки остаются насыпью для ходьбы (высота h — дорога), а
+## рисуется русло — чтобы под арками текла вода. Клетка → высота дна; не сохраняется (Streams.apply)
 var vis_h := {}
+var bridge_road_chunks := {}
 var vis_lo := Vector2i(1 << 30, 1 << 30)       # рамка клеток vis_h: узлы вне неё не проверяются (быстро)
 var vis_hi := Vector2i(-1, -1)
 ## Новая карта лугов (13.11): мельницы и поля на дальних окраинах — только у городов, начатых после этой правки
@@ -1247,9 +1248,14 @@ const C_FIELD := Color("9a7a4e")
 const LOCK := Color("c4bb98")
 
 
+## Русло под мостовой — песок, даже когда клетка для ходьбы остаётся дорогой.
+func _surface_kind(k: int, y: float) -> int:
+	return Kind.SAND if y < WATER_Y + 0.3 and vis_h.has(k) else kind[k]
+
+
 ## Что рисовать на клетке: дороги и дворы — как есть; трава у воды — песок, на обрыве — скала
 func show_kind(k: int, y: float) -> int:
-	var kd := kind[k]
+	var kd := _surface_kind(k, y)
 	if kd != Kind.GRASS:
 		return kd
 	if y < WATER_Y + 0.3:
@@ -1327,6 +1333,22 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 			var z1 := z0 + CELL
 			quad.call(Vector3(x0, y, z0), Vector3(x0, y, z1), Vector3(x1, y, z1), Vector3(x1, y, z0), Vector3.UP, c, kd, y)
 			i = e
+	if bridge_road_chunks.has(Vector2i(ci, cj)):
+		for j in range(j0, j0 + CH):
+			for i in range(i0, i0 + CH):
+				var k := idx(i, j)
+				if not vis_h.has(k) or kind[k] != Kind.ROAD:
+					continue
+				var y := hq(k)
+				if y <= hy[(j - j0 + 1) * W + i - i0 + 1]:
+					continue
+				var x := i * CELL
+				var z := j * CELL
+				var c := top_color(Kind.ROAD, k, y)
+				if not is_owned(cell_center(i, j)):
+					c = c.lerp(LOCK, 0.18)
+				quad.call(Vector3(x, y, z), Vector3(x, y, z + CELL), Vector3(x + CELL, y, z + CELL),
+					Vector3(x + CELL, y, z), Vector3.UP, c, Kind.ROAD, y)
 	# стенки уступов
 	for j in range(j0, j0 + CH):
 		var lj := j - j0 + 1
@@ -1382,17 +1404,17 @@ static var smooth_on := OS.get_environment("CIVCITY_NATURE2") != "0"
 
 
 ## Высота узла плавной сетки (vi, vj) — в метрах: угол клеток (vi·RS, vj·RS)
-func node_y(vi: int, vj: int) -> float:
+func node_y(vi: int, vj: int, visible_ground := true) -> float:
 	var i1 := clampi(vi * RS, 0, N - 1)
 	var j1 := clampi(vj * RS, 0, N - 1)
 	var i0 := clampi(vi * RS - 1, 0, N - 1)
 	var j0 := clampi(vj * RS - 1, 0, N - 1)
-	if i1 >= vis_lo.x and i0 <= vis_hi.x and j1 >= vis_lo.y and j0 <= vis_hi.y:
+	if visible_ground and i1 >= vis_lo.x and i0 <= vis_hi.x and j1 >= vis_lo.y and j0 <= vis_hi.y:
 		return (_vh(j0 * N + i0) + _vh(j0 * N + i1) + _vh(j1 * N + i0) + _vh(j1 * N + i1)) * 0.25
 	return (h[j0 * N + i0] + h[j0 * N + i1] + h[j1 * N + i0] + h[j1 * N + i1]) * 0.25
 
 
-## Высота клетки для рисования: под мостом реки — дно (vis_h), иначе h
+## Высота клетки для рисования: под мостом — дно (vis_h), иначе h
 func _vh(k: int) -> float:
 	return vis_h[k] if vis_h.has(k) else h[k]
 
@@ -1472,7 +1494,8 @@ func gm_load(d: Dictionary) -> void:
 ## Высота видимой (плавной) земли в точке — ровно по треугольникам сетки (диагональ 00–11, как chunk_mesh)
 func surface_y(x: float, z: float) -> float:
 	if not smooth_on:
-		return height_at(x, z)
+		var c := cell(Vector2(x, z))
+		return roundf(_vh(idx(c.x, c.y)) / STEP) * STEP
 	var step := CELL * RS
 	var u := clampf(x / step, 0.0, float(N / RS) - 0.001)
 	var v := clampf(z / step, 0.0, float(N / RS) - 0.001)
@@ -1490,7 +1513,7 @@ func surface_y(x: float, z: float) -> float:
 
 
 ## Плавная сетка куска (ci, cj): узлы через RS клеток. UV.x = 0 (вид клетки — по маске покрытий в шейдере),
-## UV.y — высота; UV2.x — доля пашни у узла (поля ферм, борозды), цвет — оттенок клетки (как у chunk_mesh)
+## UV.y — высота; UV2.x — доля пашни, UV2.y = 2 под мостовой; цвет — оттенок клетки (как у chunk_mesh)
 func smooth_mesh(ci: int, cj: int) -> ArrayMesh:
 	var Q := CH / RS                          # узлов-промежутков в куске
 	var W := Q + 1
@@ -1530,7 +1553,9 @@ func smooth_mesh(ci: int, cj: int) -> ArrayMesh:
 			var ci0 := clampi(gi * RS - 1, 0, N - 1)
 			var cj0 := clampi(gj * RS - 1, 0, N - 1)
 			var k := cj1 * N + ci1
-			var c := top_color(show_kind(k, hq(k)), k, hq(k))
+			var ground_y := hq(k)
+			var bed := y < WATER_Y and kind[k] == Kind.ROAD and vis_h.has(k)
+			var c := top_color(Kind.SAND if bed else show_kind(k, ground_y), k, y if bed else ground_y)
 			if not owned.has(Vector2i(ci1 / plot_cells, cj1 / plot_cells)):
 				c = c.lerp(LOCK, 0.18)
 			col[n] = c.srgb_to_linear()
@@ -1539,7 +1564,7 @@ func smooth_mesh(ci: int, cj: int) -> ArrayMesh:
 			for kk: int in [cj0 * N + ci0, cj0 * N + ci1, cj1 * N + ci0, k]:
 				if kind[kk] == Kind.FIELD:
 					f += 1
-			uv2[n] = Vector2(f * 0.25, 1.0)
+			uv2[n] = Vector2(f * 0.25, 2.0 if bed else 1.0)
 	var ix := PackedInt32Array()
 	ix.resize(Q * Q * 6)
 	var t := 0
@@ -1554,6 +1579,8 @@ func smooth_mesh(ci: int, cj: int) -> ArrayMesh:
 			ix[t + 4] = a + 1
 			ix[t + 5] = a + W + 1
 			t += 6
+	if bridge_road_chunks.has(Vector2i(ci, cj)):
+		_append_bridge_road(v, nr, col, uv, uv2, ix, Vector2i(vi0, vj0), Q)
 	var arr := []
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = v
@@ -1565,6 +1592,51 @@ func smooth_mesh(ci: int, cj: int) -> ArrayMesh:
 	var m := ArrayMesh.new()
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	return m
+
+
+## Верх моста повторяет высоту, текстуру и цвет прежней дороги.
+func _append_bridge_road(v: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray,
+		uv: PackedVector2Array, uv2: PackedVector2Array, indices: PackedInt32Array, start: Vector2i, count: int) -> void:
+	var step := CELL * RS
+	var left := ROAD_X - ROAD_R - 0.01
+	var right := ROAD_X + ROAD_R + 0.01
+	var first := ceili(left / step)
+	var last := floori(right / step)
+	var offsets := [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.ONE, Vector2i.DOWN]
+	for i in count:
+		var u := start.x + i
+		var x := u * step
+		if x >= right or x + step <= left:
+			continue
+		for j in count:
+			var w := start.y + j
+			var a := j * (count + 1) + i
+			var corners := [a, a + 1, a + count + 2, a + count + 1]
+			var lowered := PackedByteArray()
+			for k in 4:
+				var d: Vector2i = offsets[k]
+				var y := node_y(u + d.x, w + d.y, false)
+				lowered.append(int(v[corners[k]].y < y - 0.001))
+			for tri: Vector3i in [Vector3i(0, 2, 3), Vector3i(0, 1, 2)]:
+				if lowered[tri.x] + lowered[tri.y] + lowered[tri.z] == 0:
+					continue
+				for k: int in [tri.x, tri.y, tri.z]:
+					var d: Vector2i = offsets[k]
+					var row := w + d.y
+					var px := clampf((u + d.x) * step, left, right)
+					# Край продолжает мостовую от её последнего узла. Соседний узел уже на откосе к воде.
+					var gx := clampi(u + d.x, first, last)
+					var y := node_y(gx, row, false)
+					var west := maxi(gx - 1, first)
+					var east := mini(gx + 1, last)
+					var nx := (node_y(west, row, false) - node_y(east, row, false)) / float(east - west)
+					var nz := (node_y(gx, row - 1, false) - node_y(gx, row + 1, false)) * 0.5
+					indices.append(v.size())
+					v.append(Vector3(px, y, row * step))
+					normals.append(Vector3(nx, step, nz).normalized())
+					colors.append(colors[(j + d.y) * (count + 1) + gx - start.x])
+					uv.append(Vector2(0.0, y))
+					uv2.append(Vector2(0.0, 1.0))
 
 
 # ---------- сохранение ----------

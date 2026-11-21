@@ -199,7 +199,13 @@ static func make(name: String, remap := {}) -> Node3D:
 	if not _scenes.has(name):
 		_scenes[name] = load(_paths[name])
 	var n := (_scenes[name] as PackedScene).instantiate() as Node3D
+	var open_bridge := bool(remap.get("open_bridge", false))
+	if open_bridge:
+		remap = remap.duplicate()
+		remap.erase("open_bridge")
 	for mi: MeshInstance3D in n.find_children("*", "MeshInstance3D", true, false):
+		if open_bridge:
+			mi.mesh = _open_bridge_arch(mi.mesh)
 		# материалы в файле модели называются по-своему — берём слоты из списка набора по порядку
 		var list: Array = _mesh_slots.get(String(mi.name), _mesh_slots.get(name, []))
 		for i in mi.mesh.get_surface_count():
@@ -214,6 +220,38 @@ static func make(name: String, remap := {}) -> Node3D:
 				m = _cull_back(m as StandardMaterial3D)
 			mi.set_surface_override_material(i, m)
 	return n
+
+
+## У мостов оставляем каменную рамку, снимаем вставки над дверью, перекладину и средник.
+static var _bridge_arch: ArrayMesh
+
+
+static func _open_bridge_arch(source: Mesh) -> ArrayMesh:
+	if _bridge_arch != null:
+		return _bridge_arch
+	_bridge_arch = ArrayMesh.new()
+	for s in source.get_surface_count():
+		var data := source.surface_get_arrays(s)
+		var vertices: PackedVector3Array = data[Mesh.ARRAY_VERTEX]
+		var indices: PackedInt32Array = data[Mesh.ARRAY_INDEX]
+		var kept := PackedInt32Array()
+		for i in range(0, indices.size(), 3):
+			var a := vertices[indices[i]]
+			var b := vertices[indices[i + 1]]
+			var c := vertices[indices[i + 2]]
+			var lo := a.min(b).min(c)
+			var hi := a.max(b).max(c)
+			var panel := lo.x > 0.38 and hi.x < 2.12 and lo.y > 2.145 and hi.y < 2.561 \
+				and lo.z > -0.116 and hi.z < 0.116
+			var crossbar := lo.x > 0.19 and hi.x < 2.31 and lo.y > 1.965 and hi.y < 2.15 \
+				and hi.x > 0.37 and lo.x < 2.13
+			var divider := lo.x > 1.20 and hi.x < 1.30 and lo.y > 2.12 and hi.y < 2.56
+			if not (panel or crossbar or divider):
+				kept.append_array([indices[i], indices[i + 1], indices[i + 2]])
+		data[Mesh.ARRAY_INDEX] = kept
+		_bridge_arch.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, data)
+		_bridge_arch.surface_set_material(s, source.surface_get_material(s))
+	return _bridge_arch
 
 
 ## Листва «с изнанкой» (владелец 12.11: плющ на стенах местами чернеет): у части плетей Synty (Ivy_04–08, Ivy_01,

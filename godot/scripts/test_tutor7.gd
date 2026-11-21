@@ -15,6 +15,8 @@ func launcher_run(prefix: String, folder: String, profiles := "D:/CivCity/.work/
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
+		if arg.begins_with("profiles="):
+			profiles = arg.trim_prefix("profiles=").trim_suffix("/")
 		if arg.begins_with("lang="):
 			lang = arg.trim_prefix("lang=")
 	get_window().size = Vector2i(1440, 900)
