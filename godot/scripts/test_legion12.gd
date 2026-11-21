@@ -266,13 +266,13 @@ func check_hq() -> void:
 		if sid == 0:
 			continue
 		var seat := camp.card.find_child("FortHQPlace_%d" % index, true, false)
-		var face := seat.find_child("FortPortraitArt", true, false) as FortPersonPreview
+		var face := seat.find_child("FortPortraitArt", true, false) as TextureRect
 		var person := legion.soldier(sid)
-		if check(face != null and face.actor.visible, "individual portrait %d" % sid):
-			var look: Dictionary = face.actor.get_meta("look")
+		if check(face != null and face.has_meta("person_portrait"), "individual portrait %d" % sid):
+			var look: Dictionary = face.get_meta("portrait_look")
 			check(look == PersonLook.ensure(person), "portrait matches dweller %d" % sid)
 			if bool(person.get("hero", false)):
-				check(face.actor.find_child("SM_Chr_Attach_Crown_Leaf*", true, false) != null, "hero wears the wreath")
+				check(int(face.get_meta("portrait_crown")) > 0, "hero wears the wreath")
 
 
 func polish_screens(store: int, barracks: int) -> void:

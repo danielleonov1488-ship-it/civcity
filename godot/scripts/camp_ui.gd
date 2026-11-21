@@ -4,6 +4,7 @@ extends Control
 
 const Kit = preload("res://scripts/ui_kit_a.gd")
 const Look = preload("res://scripts/legion_look.gd")
+const MarketUI = preload("res://scripts/legion_market_ui.gd")
 const FortPerson = preload("res://scripts/fort_person.gd")
 const Ring = preload("res://scripts/fort_ui_ring.gd")
 const KnowUI = preload("res://scripts/legion_knowledge_ui.gd")
@@ -128,6 +129,7 @@ var builder_counter: Button
 var builder_plus: Button
 var profile_button: Button
 var market_button: Button
+var _profile_art: TextureRect
 var quest_line: Button
 var quest_progress: Label
 var quest_title: Label
@@ -433,7 +435,7 @@ func _build_screen() -> void:
 	build_button = _screen_button("Строить", "build", show_build_menu)
 	build_button.name = "FortBuild"
 	_badge(build_button)
-	market_button = _screen_button("Рынок", "market", func(): _aux("store"))
+	market_button = _screen_button("Рынок", "market", show_market)
 	market_button.name = "FortMarket"
 	exit_button = _screen_button("×", "", close, Look.DARK, Vector2(48, 48))
 	exit_button.tooltip_text = I18n.t("Закрыть")
@@ -445,10 +447,11 @@ func _build_screen() -> void:
 	profile_button = _screen_button("", "", show_hero, Look.SLATE, Vector2(80, 80))
 	profile_button.name = "FortProfile"
 	profile_button.tooltip_text = I18n.t("Командир")
-	var portrait := FortPerson.portrait({"hero": true}, "hq", false, 74)
+	var portrait := FortPerson.portrait(FortPerson.hero_person(lg), 74, lg.worn(lg.hero_dweller()))
 	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	profile_button.add_child(portrait)
 	portrait.position = Vector2(3, 3)
+	_profile_art = portrait.get_child(0) as TextureRect
 	builder_counter = _screen_button("", "build", _show_builder, Look.DARK, Vector2(128, 50))
 	builder_counter.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	builder_counter.name = "FortBuilders"
@@ -749,12 +752,13 @@ static func clock_text(seconds: float) -> String:
 func _roster_signature() -> String:
 	var entries := []
 	for s: Dictionary in lg.soldiers:
-		entries.append([s["id"], s["name"], _class(s), s["stars"], s["rank"], lg.s_state(s)])
+		entries.append([s["id"], s["name"], _class(s), s["stars"], s["rank"], lg.s_state(s), s.get("look"), s.get("gear")])
 	return str([entries, lg.squad3, lg.camp, lg.fort.get("up", {}), lg.upg.keys(), lg.hero_level(), lg.forging.is_empty(), lg.smith_known(), _plot_signature()])
 
 
 func _refresh() -> void:
 	lg.watch_fort_lessons()
+	FortPerson.bind_portrait(_profile_art, FortPerson.hero_person(lg), lg.worn(lg.hero_dweller()))
 	if is_instance_valid(diorama):
 		diorama.sync()
 	population_button.text = "%d/%d" % [lg.fort_population(), lg.roster_cap()]
@@ -796,6 +800,7 @@ func _refresh() -> void:
 
 	KnowUI.refresh(self)
 	HqUI.refresh(self)
+	MarketUI.refresh(self)
 
 
 	_count(squad_button, lg.fort_squad_candidates().size())
@@ -1460,7 +1465,8 @@ func _roster(parent: VBoxContainer, training: bool) -> void:
 		var row := HBoxContainer.new()             # имя воина и (в Казарме) маленькая кнопка «домой» — одной строкой
 		row.add_theme_constant_override("separation", 6)
 		v.add_child(row)
-		var b := _button(_soldier_title(s), func(): _show_soldier(sid), String(CLASS_ICON.get(_class(s), "swords")))
+		row.add_child(_person_portrait(s, 40))
+		var b := _button(_soldier_title(s), func(): _show_soldier(sid))
 		b.add_theme_font_size_override("font_size", 14)
 		b.clip_text = true
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1650,7 +1656,7 @@ func _build_squad() -> void:
 				icon = "lock"
 			elif not soldier.is_empty():
 				label = String(soldier["name"]) + "\n" + Soldiers.stars_text(int(soldier["stars"]))
-				icon = String(CLASS_ICON.get(_class(soldier), "swords"))
+				icon = ""
 			var b := _button(label, func(): _pick_place(i), icon)
 			b.name = "FortSquadPlace_%d" % i
 			b.disabled = unlock > 0
@@ -1663,6 +1669,12 @@ func _build_squad() -> void:
 			if i == selected_place:
 				Kit.style_button(b, "gold")
 			row.add_child(b)
+			if unlock == 0 and not soldier.is_empty():
+				b.alignment = HORIZONTAL_ALIGNMENT_RIGHT
+				b.clip_text = true
+				var face := _person_portrait(soldier, 48)
+				b.add_child(face)
+				face.position = Vector2(5, 12)
 	squad_body.add_child(_wrap(I18n.t("Отряд %d/%d") % [lg.squad_count(), lg.slots()], 14))
 	var sc := ScrollContainer.new()
 	sc.custom_minimum_size.y = 180
@@ -1679,7 +1691,8 @@ func _build_squad() -> void:
 		var sid := int(s["id"])
 		var soldier_row := HBoxContainer.new()
 		roster.add_child(soldier_row)
-		var b := _button(_soldier_title(s), func(): _assign(sid), String(CLASS_ICON.get(_class(s), "swords")))
+		soldier_row.add_child(_person_portrait(s, 40))
+		var b := _button(_soldier_title(s), func(): _assign(sid))
 		b.set_meta("quest_soldier", sid)
 		b.disabled = selected_place < 0
 		b.tooltip_text = "Сначала выберите пустое место." if selected_place < 0 else lu._soldier_status(s)
@@ -1816,6 +1829,12 @@ func show_hero() -> void:
 
 
 
+
+
+func show_market(daily := false) -> void:
+	_clear_room_selection()
+	lg.finish_fort_lesson("market")
+	MarketUI.open(self, daily)
 
 
 func show_storage(tab := "all", page := 0, chest := "", reward: Dictionary = {}) -> void:
@@ -2160,6 +2179,11 @@ func _guide_lesson_tip(id: String) -> String:
 				else:
 					return "Назначьте работника для новой одежды."
 			return "Откройте карточку работника."
+		"market":
+			if is_instance_valid(modal_panel):
+				return ""
+			_guide_target = market_button
+			return "На рынке можно пополнить запасы или продать лишнее."
 		"hq":
 			if is_instance_valid(card) and selected == "hq":
 				_guide_target = upgrade_button
@@ -2973,16 +2997,9 @@ func _hq_squad_places(row: HBoxContainer) -> void:
 		var person := lg.soldier(sid)
 		button.tooltip_text = String(person["name"])
 		button.pressed.connect(show_dweller.bind(sid))
-		var face := FortPersonPreview.new()
-		face.name = "FortPortraitArt"
+		var face := _person_portrait(person, 60)
 		button.add_child(face)
-		face.setup(person, lg.worn(person), 60, false, 0.08)
 		face.position = Vector2(3, 3)
-		face.size = Vector2(60, 60)
-		# Маленький портрет рисуется один раз, как изображение.
-		face.actor.animate("Idle", 0.0)
-		face.set_process(false)
-		face.layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 
 func show_worker_picker() -> void:
@@ -3167,9 +3184,13 @@ func show_people() -> void:
 	scroll.add_child(body)
 	for person: Dictionary in lg.soldiers:
 		var sid := int(person["id"])
-		var row := _button(_soldier_title(person), func(): _show_soldier(sid))
-		row.name = "FortPerson_%d" % sid
+		var row := HBoxContainer.new()
 		body.add_child(row)
+		row.add_child(_person_portrait(person, 46))
+		var button := _button(_soldier_title(person), func(): _show_soldier(sid))
+		button.name = "FortPerson_%d" % sid
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(button)
 	v.add_child(_button("Закрыть", _close_modal))
 	_fit_modal.call_deferred()
 
@@ -3497,10 +3518,8 @@ func _room_picture(type: String, level: int, dims: Vector2, building := false) -
 
 
 func _person_portrait(person: Dictionary, pixels: float, newcomer := false) -> PanelContainer:
-	var room := "" if newcomer else String(lg.fort_plot(lg.fort_worker_plot(int(person["id"]))).get("b", ""))
-	var frame := FortPerson.portrait(person, room, newcomer, pixels)
+	var frame := FortPerson.portrait(person, pixels, [] if newcomer else lg.worn(person))
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	frame.get_child(0).name = "FortPortraitArt"
 	return frame
 
 

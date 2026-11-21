@@ -2,6 +2,7 @@ extends RefCounted
 ## Единая точка создания жителя для разреза, переноса и портрета.
 
 const Kit = preload("res://scripts/ui_kit_a.gd")
+const Portraits = preload("res://scripts/fort_portraits.gd")
 const Actor = preload("res://scripts/charpilot_actor.gd")
 const PersonLook = preload("res://scripts/legion_person_look.gd")
 const ART := "res://assets/legion_b1/chars/"
@@ -80,5 +81,64 @@ static func portrait_path(person: Dictionary, room := "", newcomer := false) -> 
 	return ART + art(person, room, newcomer) + "_portrait.png"
 
 
-static func portrait(person: Dictionary, room: String, newcomer: bool, pixels: float) -> PanelContainer:
-	return Kit.slot(portrait_path(person, room, newcomer), true, pixels)
+static func portrait(person: Dictionary, pixels: float, gear: Array = [], battle_class := "") -> PanelContainer:
+	return _portrait_frame(_portrait_spec(person, gear, battle_class), pixels)
+
+
+static func bind_portrait(rect: TextureRect, person: Dictionary, gear: Array = []) -> void:
+	Portraits.bind(rect, _portrait_spec(person, gear))
+
+
+static func rival_portrait(look: Dictionary, pixels: float) -> PanelContainer:
+	var spec := {"key": JSON.stringify(["rival", look], "", true), "look": look, "clothes": {"outfit": "centurion"},
+		"cape": String(look.get("cape", "a3283a")), "crown": int(look.get("crown", 1)), "rival": true}
+	return _portrait_frame(spec, pixels)
+
+
+static func _portrait_frame(spec: Dictionary, pixels: float) -> PanelContainer:
+	var frame := Kit.slot(null, true, pixels)
+	frame.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var image := Kit.image(null, Vector2.ONE * maxf(1.0, pixels - 18.0))
+	image.name = "FortPortraitArt"
+	frame.add_child(image)
+	Portraits.bind(image, spec)
+	return frame
+
+
+static func _portrait_spec(person: Dictionary, gear: Array, battle_class := "") -> Dictionary:
+	var look := PersonLook.ensure(person.duplicate(true))
+	var clothes := loadout(person, gear, battle_class)
+	var cape := String(person.get("cape", "a3283a"))
+	var crown := int(person.get("crown", 1)) if bool(person.get("hero", false)) else 0
+	var pieces := {}
+	for item: Dictionary in gear:
+		pieces[String(item["slot"])] = [int(item.get("id", 0)), int(item.get("rarity", 0)), int(item.get("tier", 0))]
+	var key := JSON.stringify([look, clothes, crown, cape, pieces], "", true)
+	return {"key": key, "look": look, "clothes": clothes, "cape": cape, "crown": crown, "rival": false}
+
+
+static func hero_person(lg: Legion) -> Dictionary:
+	var c := lg.city() as City
+	var person := lg.hero_dweller().duplicate()
+	if Hero.exists(c):
+		var chosen := Hero.look(c).duplicate()
+		person["look"] = chosen
+		person["female"] = Hero.female(c)
+		person["cape"] = String(chosen.get("cape", "a3283a"))
+		person["crown"] = int(chosen.get("crown", 1))
+	person["hero"] = true
+	return person
+
+
+static func squad_person(lg: Legion, stats: Dictionary) -> Dictionary:
+	if bool(stats.get("hero", false)) or stats.get("key") == "hero":
+		return hero_person(lg)
+	var sid := int(stats.get("sid", 0))
+	var place := int(stats.get("place", -1))
+	if sid == 0 and lg.v3() and place >= 0 and place < lg.squad3.size():
+		sid = int(lg.squad3[place])
+	var person := lg.soldier(sid)
+	if not person.is_empty():
+		return person
+	return {"look_seed": hash([stats.get("key", ""), place, stats.get("name", "")])}

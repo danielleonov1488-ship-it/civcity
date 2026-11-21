@@ -164,7 +164,7 @@ const CAMP_POP := 50                      # жителей, с которых о
 const CAMP_OPEN_TEXT := "Форт открыт: принимайте новобранцев у ворот — кнопка «Легион» наверху"
 enum FortGuide {INACTIVE, FIRST_BATTLE, RESCUED, TREASURY, KITCHEN, HQ, STORE, TRAIN, SQUAD, SECOND_BATTLE, FINISH, DONE,
 	RECRUIT, RATIONS, CHEST, EQUIP, BARRACKS, CAMPAIGN}
-const FORT_LESSONS := ["store", "knowledge", "outfit", "hq"]
+const FORT_LESSONS := ["store", "knowledge", "outfit", "hq", "market"]
 const FORT_GUIDE_BATCH := 300
 const RATION_BASE := 200.0                  # паёк в игровой день; пекарня с работниками — ещё RATION_BAKERY
 const RATION_BAKERY := 300.0
@@ -633,6 +633,7 @@ var daily := {}             # задания дня (Daily): {day, tasks: [...],
 var relics := {}            # Легион 2.0, этап 6: реликвии наборов {набор: сколько} (Gear.SETS)
 var forging := {}           # куётся: {slot, cls, rarity, ilvl, end, total} или {}
 var _rng := RandomNumberGenerator.new()
+var market_day: Dictionary = {}
 
 ## Для проверок: ускорение таймеров улучшений (не сохраняется)
 var time_k := 1.0
@@ -3969,8 +3970,22 @@ func make_pvp_battle(opp: Dictionary, seed_v := -1) -> Dictionary:
 		s["hero_look"] = Hero.battle_look(c, clampi(int(hk.get("kit", 0)), 0, HERO_KIT_MAX))
 	var ek := snap_hero_entry(snap)
 	if not ek.is_empty():
-		s["enemy_hero_look"] = Hero.rival_look(ek)
+		s["enemy_hero_look"] = pvp_rival_look(snap, opp)
 	return s
+
+
+static func pvp_rival_look(snap: Dictionary, opponent: Dictionary) -> Dictionary:
+	var entry := snap_hero_entry(snap).duplicate()
+	if entry.is_empty():
+		return {}
+	var profile = opponent.get("hero", snap.get("hero", {}))
+	if profile is Dictionary:
+		var look = profile.get("look")
+		if look is Dictionary and not look.is_empty():
+			entry["look"] = look
+		if profile.get("name") is String and not String(profile["name"]).is_empty():
+			entry["name"] = profile["name"]
+	return Hero.rival_look(entry, String(opponent.get("name", "")))
 
 
 ## Снимок без героя — для старого (откатанного) сервера: его повтор боя незнакомого бойца пропускает, и мы так же.
@@ -4435,7 +4450,7 @@ func watch_fort_lessons() -> void:
 			if fort_stock(resource) >= resource_cap(resource):
 				note_fort_lesson("store")
 				break
-	for id: String in ["knowledge", "outfit", "hq"]:
+	for id: String in ["knowledge", "outfit", "hq", "market"]:
 		if _fort_lesson_available(id):
 			note_fort_lesson(id)
 
@@ -4458,6 +4473,14 @@ func _fort_lesson_available(id: String) -> bool:
 			return can_craft(plot_id, "sword", 1) == ""
 		"outfit":
 			return fort_outfit_lesson_target() != Vector2i.ZERO
+		"market":
+			var shortage := false
+			var can_buy := false
+			for resource: String in MARKET_ROOMS:
+				var stock := fort_stock(resource)
+				shortage = shortage or stock < 1.0 or stock >= resource_cap(resource)
+				can_buy = can_buy or market_quote(resource, 0)["why"] == ""
+			return shortage and can_buy
 	return false
 
 
@@ -5908,12 +5931,13 @@ func to_dict() -> Dictionary:
 		"food_pts": food_pts, "food_t": food_t, "camp": camp, "squad3": squad3, "rations": rations, "rations_t": rations_t}
 	if v3():
 		data.merge({"fort": fort.duplicate(true), "pending_resources": pending_resources, "ingots": ingots, "hero_lv3": hero_lv3,
-			"hero_training": hero_training, "chest_queue": chest_queue,
+			"hero_training": hero_training, "chest_queue": chest_queue, "market": market_day.duplicate(true),
 			"rng_seed3": str(_rng.seed), "rng_state3": str(_rng.state)})
 	return data
 
 
 func from_dict(d: Dictionary) -> void:
+	_load_market(d.get("market"))
 	fort = {}
 	levels = {}
 	for k in d.get("levels", {}):
@@ -6605,6 +6629,151 @@ func equip_stat_preview(sid: int, iid: int) -> Array[Dictionary]:
 func equip_power(sid: int, iid: int) -> Array:
 	var comparison := equip_stat_preview(sid, iid)
 	return [0, 0] if comparison.is_empty() else [power(comparison[0]), power(comparison[1])]
+
+
+# ---------- рынок ----------
+
+const MARKET_ROOMS := {"rations": "kitchen", "wood": "sawmill", "iron": "smelter", "leather": "tannery"}
+const MARKET_PACKS := [0.10, 0.50, 1.0]
+const MARKET_DAY_SECONDS := 86400.0
+
+
+func _load_market(saved: Variant) -> void:
+	market_day = {}
+	if not saved is Dictionary or not saved.get("offers") is Array or not saved.get("bought") is Array:
+		return
+	var offers: Array = saved["offers"]
+	if offers.size() != 4 or not offers.all(func(offer): return offer is Dictionary and offer.has("price")):
+		return
+	market_day = {"day": int(saved.get("day", -1)), "offers": offers.duplicate(true), "bought": []}
+	for index in saved["bought"]:
+		market_day["bought"].append(int(index))
+	for offer: Dictionary in market_day["offers"]:
+		offer["price"] = int(offer["price"])
+		if offer.has("amount"):
+			offer["amount"] = int(offer["amount"])
+		if offer.get("item") is Dictionary:
+			for key: String in ["tier", "ilvl", "rarity"]:
+				offer["item"][key] = int(offer["item"].get(key, 0))
+
+
+static func market_resource_price(resource: String, amount: int) -> int:
+	var rate := float(fort_production(MARKET_ROOMS[resource], 1)["rate"])
+	var denarii := float(fort_production("treasury", 1)["rate"])
+	return ceili(1.25 * amount * denarii / rate)
+
+
+func market_quote(resource: String, pack: int, sell := false) -> Dictionary:
+	if not v3() or not MARKET_ROOMS.has(resource) or pack < 0 or pack >= MARKET_PACKS.size():
+		return {"why": "Рынок недоступен"}
+	var cap := resource_cap(resource)
+	var amount := maxi(1, roundi(cap * float(MARKET_PACKS[pack])))
+	var price := market_resource_price(resource, amount)
+	var why := ""
+	if sell:
+		price = floori(price / 4.0)
+		if fort_stock(resource) < amount:
+			why = "Мало запасов"
+		elif city_money() + price > money_cap():
+			why = "Казна полна"
+	else:
+		why = _market_buy_reason(resource, amount, price)
+	return {"amount": amount, "price": price, "why": why}
+
+
+func _market_buy_reason(resource: String, amount: int, price: int) -> String:
+	if fort_stock(resource) + amount > resource_cap(resource):
+		return "Склад полон"
+	return "Не хватает денариев" if city_money() < price else ""
+
+
+func market_exchange(resource: String, pack: int, sell := false) -> bool:
+	if not v3():
+		return false
+	fort_finish()
+	var quote := market_quote(resource, pack, sell)
+	if quote["why"] != "":
+		return false
+	var amount := int(quote["amount"])
+	var price := int(quote["price"])
+	fort["money"] = city_money() + price * (1 if sell else -1)
+	_market_add_stock(resource, amount * (-1 if sell else 1))
+	_fort_changed()
+	return true
+
+
+func _market_add_stock(resource: String, amount: int) -> void:
+	if resource == "rations":
+		rations += amount
+	else:
+		mats[resource] = fort_stock(resource) + amount
+
+
+func market_offers() -> Dictionary:
+	if not v3():
+		return {}
+	var day := floori(now() / MARKET_DAY_SECONDS)
+	if int(market_day.get("day", -1)) >= day:
+		return market_day
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([_rng.seed, day])
+	var tier := clampi(1 + floori(float(progress) / STAGES2), 1, Gear.TIERS)
+	var chest := "wooden" if rng.randi_range(0, 1) == 0 else "bronze"
+	var work: String = Gear.WORK_OUTFITS[rng.randi_range(0, Gear.WORK_OUTFITS.size() - 1)]
+	var gear: String = ["sword", "bow", "staff", "spear", "offhand", "helmet", "armor"][rng.randi_range(0, 6)]
+	var quality := rng.randi_range(0, 1)
+	var item := Gear.craft_item(gear, tier, quality)
+	if gear == "offhand":
+		item["cls"] = "legionary"
+	var material: String = MARKET_ROOMS.keys()[rng.randi_range(0, MARKET_ROOMS.size() - 1)]
+	var quantity := maxi(1, roundi(resource_cap(material) * MARKET_PACKS[0]))
+	market_day = {"day": day, "bought": [], "offers": [
+		{"kind": "chest", "chest": chest, "price": 900 * int(CHEST_TIER[chest])},
+		{"kind": "item", "item": Gear.craft_item(work, tier), "price": 360 * tier},
+		{"kind": "item", "item": item, "price": 550 * tier * (quality + 1)},
+		{"kind": "resource", "resource": material, "amount": quantity, "price": market_resource_price(material, quantity)}]}
+	return market_day
+
+
+func market_offer_reason(day: int, index: int) -> String:
+	var daily_goods := market_offers()
+	if daily_goods.is_empty() or int(daily_goods["day"]) != day or index < 0 or index >= daily_goods["offers"].size():
+		return "Предложение обновилось"
+	if daily_goods["bought"].has(index):
+		return "Куплено"
+	var offer: Dictionary = daily_goods["offers"][index]
+	var price := int(offer["price"])
+	match String(offer["kind"]):
+		"resource":
+			return _market_buy_reason(offer["resource"], int(offer["amount"]), price)
+		"chest":
+			if chest_queue.size() >= 4:
+				return "Склад полон"
+		"item":
+			if store_count() >= store_cap():
+				return "Склад полон"
+	return "Не хватает денариев" if city_money() < price else ""
+
+
+func market_purchase(day: int, index: int) -> bool:
+	if not v3():
+		return false
+	fort_finish()
+	if market_offer_reason(day, index) != "":
+		return false
+	var offer: Dictionary = market_day["offers"][index]
+	match String(offer["kind"]):
+		"resource":
+			_market_add_stock(offer["resource"], int(offer["amount"]))
+		"chest":
+			chest_queue.append(String(offer["chest"]))
+		"item":
+			if add_item(offer["item"]).is_empty():
+				return false
+	fort["money"] = city_money() - int(offer["price"])
+	market_day["bought"].append(index)
+	_fort_changed()
+	return true
 
 
 func queue_chest(kind: String) -> bool:

@@ -1296,7 +1296,7 @@ func _show_result() -> void:
 		if not rescued.is_empty():
 			rh.name = "FortRescuedRewards"
 			for person: Dictionary in rescued:
-				var portrait := preload("res://scripts/fort_person.gd").portrait(person, "", true, 58)
+				var portrait := preload("res://scripts/fort_person.gd").portrait(person, 58)
 				portrait.tooltip_text = I18n.t("Спасённые жители") + " · " + String(person["name"])
 				rh.add_child(portrait)
 		v.add_child(rh)
@@ -1432,7 +1432,7 @@ func _star_lines() -> Control:
 	return box
 
 
-## Отряд после боя: портреты B1, павшие — серые
+## Отряд после боя: павшие — серые.
 func _squad_row() -> Control:
 	var h := HBoxContainer.new()
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1441,11 +1441,9 @@ func _squad_row() -> Control:
 	for u in sim.units:
 		if u.side != "ally":
 			continue
-		var tr := TextureRect.new()
-		tr.texture = BattleView.portrait(u)
-		tr.custom_minimum_size = Vector2(54, 54)
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		var portraits = preload("res://scripts/fort_person.gd")
+		var person: Dictionary = portraits.squad_person(legion, u.src)
+		var tr: PanelContainer = portraits.portrait(person, 54, legion.worn(person))
 		tr.tooltip_text = "%s, ур. %d%s" % [u.name, u.level, "" if u.alive else " — пал в бою"]
 		if not u.alive:
 			tr.modulate = Color(0.42, 0.38, 0.36, 0.75)
