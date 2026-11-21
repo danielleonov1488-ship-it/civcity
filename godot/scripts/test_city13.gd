@@ -1,8 +1,8 @@
 extends Node3D
 
 const OUTPUT := "D:/CivCity/.work/stage7/city13b/"
-const BRIDGE_OUTPUT := "D:/CivCity/.work/stage7/city13d/"
-const BRIDGE_REFERENCE := BRIDGE_OUTPUT + "reference/"
+const BRIDGE_OUTPUT := "D:/CivCity/.work/stage7/city13e/"
+const BRIDGE_REFERENCE := "D:/CivCity/.work/stage7/city13d/reference/"
 const PREVIOUS_TOP := "D:/CivCity/.work/stage7/city13/shots/3_fields_sizes.png"
 const TestCat := preload("res://scripts/test_cat.gd")
 const TestPace := preload("res://scripts/test_pace.gd")
@@ -92,6 +92,7 @@ func boot(river: bool) -> bool:
 	game = (load("res://main.tscn") as PackedScene).instantiate() as Game
 	game.can_save = false
 	add_child(game)
+	var loading := game.loading
 	for i in 18000:
 		if game.ready_done:
 			break
@@ -110,6 +111,8 @@ func boot(river: bool) -> bool:
 	city.money = 100000.0
 	for tech in ["farm", "grove", "vineyard", "catshop"]:
 		city.research[tech] = true
+	if is_instance_valid(loading) and loading.is_inside_tree():
+		await loading.tree_exited
 	return true
 
 
@@ -137,7 +140,10 @@ func bridge(river: bool) -> void:
 		await shot("3_river_bridge.png")
 		return
 	view_at(p, Land.WATER_Y + 0.5, 65, 23, 18.0)
-	compare_bridge(await capture())
+	if bridge_only:
+		await shot("2_game_camera.png")
+	else:
+		compare_bridge(await capture())
 	var cam := game.rig.cam
 	game.rig.set_process(false)
 	var attrs := game.rig.attrs
@@ -147,12 +153,13 @@ func bridge(river: bool) -> void:
 	attrs.dof_blur_far_enabled = false
 	cam.global_position = Vector3(p.x + 7.4, Land.WATER_Y + 0.82, p.y + 0.45)
 	cam.look_at(Vector3(p.x - 0.6, Land.WATER_Y + 0.67, p.y - 0.08))
-	await shot("2_close_arch.png")
+	await shot("1_close_arch.png" if bridge_only else "2_close_arch.png")
 	attrs.dof_blur_near_enabled = blur_near
 	attrs.dof_blur_far_enabled = blur_far
 	game.rig.set_process(true)
-	view_at(p, game.land.height_at(p.x, p.y), 56, 72, 19.0)
-	await shot("4_from_above.png")
+	if not bridge_only:
+		view_at(p, game.land.height_at(p.x, p.y), 56, 72, 19.0)
+		await shot("4_from_above.png")
 
 
 func compare_bridge(after: Image) -> void:
@@ -228,6 +235,8 @@ func check_bridge_openings(p: Vector2, label: String, count: int) -> void:
 		geometry.append([(part[2] as Mesh).get_faces(), xf])
 		if part[0] == "SM_Bld_Wall_Door_Double_01" and xf.origin.x > p.x:
 			sections.append(xf * Vector3(1.25, 0, 0))
+			if label == "stream":
+				check_gate_vault(vault, xf)
 	var cell := game.land.cell(p)
 	var ch := cell / Land.CH
 	for z in range(ch.y - 1, ch.y + 2):
@@ -247,8 +256,8 @@ func check_bridge_openings(p: Vector2, label: String, count: int) -> void:
 			check(q.x >= surface.position.x and q.x <= surface.end.x and q.z >= surface.position.z
 				and q.z <= surface.end.z and is_equal_approx(water.position.y, Land.WATER_Y), label + " continuous water plane")
 			check(hits_faces(flow_faces, flow.global_transform, q, q - Vector3.UP), label + " flow over water at " + str(q))
-		for lift: float in [0.0, 0.7]:
-			var line := opening + Vector3.UP * lift
+		for height_above_water: float in [0.4, 0.6, 1.1]:
+			var line := Vector3(opening.x, Land.WATER_Y + height_above_water, opening.z)
 			var a := line - Vector3.RIGHT * 2.65
 			var b := line + Vector3.RIGHT * 2.65
 			var blocked := false
@@ -256,9 +265,26 @@ func check_bridge_openings(p: Vector2, label: String, count: int) -> void:
 				if hits_faces(mesh_data[0], mesh_data[1], a, b):
 					blocked = true
 					break
-			check(not blocked, label + " ray through arch at " + str(line))
+			check(not blocked, "%s ray %.1f m above water through arch at %s" % [label, height_above_water, line])
 		check(hits_faces(vault_faces, vault.global_transform, opening, opening + Vector3.UP * 1.5), label + " vault closes ceiling")
 	print("CITY13 BRIDGE ", label, " arches_checked=", sections.size())
+
+
+func check_gate_vault(vault: MeshInstance3D, facade: Transform3D) -> void:
+	if not check(vault.mesh.get_surface_count() == 2, "gate vault has a separate roof and walls"):
+		return
+	# Высоты пяты и замкового камня берём от модели фасада, в масштабе поставленной арки.
+	var spring := (facade * Vector3(0.369, 2.13773, 0)).y
+	var crown := (facade * Vector3(1.25, 2.57901, 0)).y
+	var vertices: PackedVector3Array = vault.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	var lowest := INF
+	var highest := -INF
+	for v: Vector3 in vertices:
+		var y := (vault.global_transform * v).y
+		lowest = minf(lowest, y)
+		highest = maxf(highest, y)
+	check(absf(lowest - spring) <= 0.001, "gate vault starts at the springing line")
+	check(absf(highest - crown) <= 0.001, "gate vault reaches the crown of the facade")
 
 
 func hits_faces(faces: PackedVector3Array, xf: Transform3D, from: Vector3, to: Vector3) -> bool:

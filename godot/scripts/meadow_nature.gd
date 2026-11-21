@@ -569,10 +569,7 @@ static func _bridges(g) -> void:
 				bp.parts.append(["SM_Bld_Wall_Large_Pillar_01", Transform3D(pb, Vector3(x + side * 0.12, -depth, zp)), blocks])
 		g.parts.place(bp, xf)
 		Streams._open_bridge_bed(land, c, rd, ws * 0.5, false)
-		var vault := SurfaceTool.new()
-		vault.begin(Mesh.PRIMITIVE_TRIANGLES)
-		_vault(vault, -ws * 0.5, ws, depth)
-		_place_vault(g, vault, xf, stone)
+		_place_vault(g, _gate_vault(ws, depth), xf, Synty.material("Brick_01", stone))
 
 
 
@@ -663,7 +660,42 @@ static func _river_bridge(g, br: Dictionary) -> void:
 	for i in n:
 		var z0 := -T * 0.5 + i * aw
 		_vault(vault, z0, aw, depth + slope * (z0 + aw * 0.5))
-	_place_vault(g, vault, xf, stone)
+	var lining := stone.duplicate(true)
+	lining["tints"]["Building_Large_Brick_01"] = Color(0.77, 0.69, 0.61)
+	_place_vault(g, _vault_mesh(vault), xf, Synty.material("Brick_01", lining))
+
+
+## Внутренняя кромка SM_Bld_Wall_Door_Double_01, от пяты до замкового камня.
+const GATE_ARCH_HALF := [Vector2(0.3690, 2.13773), Vector2(0.3715, 2.24821),
+	Vector2(0.4790, 2.36425), Vector2(0.6603, 2.46601), Vector2(0.9194, 2.54724),
+	Vector2(1.1702, 2.57901)]
+
+
+static func _gate_vault(width: float, depth: float) -> ArrayMesh:
+	var arch := PackedVector2Array()
+	for point: Vector2 in GATE_ARCH_HALF:
+		arch.append(Vector2((point.x / 2.5 - 0.5) * width, (point.y / 3.01 - 1.0) * depth))
+	var half_count := arch.size()
+	for i in range(half_count - 1, -1, -1):
+		arch.append(Vector2(-arch[i].x, arch[i].y))
+	var x := Land.ROAD_R + 0.05 - 0.09  # край свода заходит за внутренний край обрамления
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var length := 0.0
+	for i in range(1, arch.size()):
+		length = _vault_strip(st, x, arch[i - 1], arch[i], length)
+	var mesh := _vault_mesh(st)
+
+	# Кладка стен и короткий скос под пятой свода.
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var jamb := width * 0.4
+	var bottom := (-0.12 / 3.01 - 1.0) * depth
+	var impost := (2.0 / 3.01 - 1.0) * depth
+	length = _vault_strip(st, x, Vector2(-jamb, bottom), Vector2(-jamb, impost), 0.0)
+	_vault_strip(st, x, Vector2(-jamb, impost), arch[0], length)
+	length = _vault_strip(st, x, arch[-1], Vector2(jamb, impost), 0.0)
+	_vault_strip(st, x, Vector2(jamb, impost), Vector2(jamb, bottom), length)
+	return _vault_mesh(st, mesh)
 
 
 ## Свод по внутреннему краю прежнего дверного обрамления. Начало и конец заходят в кладку.
@@ -679,24 +711,30 @@ static func _vault(st: SurfaceTool, z0: float, width: float, depth: float) -> vo
 		var q: Vector2 = profile[i]
 		var a := Vector2(z0 + width * p.x, -depth + depth * p.y / 3.01)
 		var b := Vector2(z0 + width * q.x, -depth + depth * q.y / 3.01)
-		var end := length + a.distance_to(b)
-		var v := [Vector3(-x, a.y, a.x), Vector3(x, a.y, a.x), Vector3(x, b.y, b.x), Vector3(-x, b.y, b.x)]
-		var uv := [Vector2(0, length), Vector2(x * 2.0, length), Vector2(x * 2.0, end), Vector2(0, end)]
-		for k: int in [0, 2, 1, 0, 3, 2]:
-			st.set_uv(uv[k] / 2.5)
-			st.add_vertex(v[k])
-		length = end
+		length = _vault_strip(st, x, a, b, length)
 
 
-static func _place_vault(g, st: SurfaceTool, xf: Transform3D, stone: Dictionary) -> void:
+static func _vault_strip(st: SurfaceTool, x: float, a: Vector2, b: Vector2, length: float) -> float:
+	var end := length + a.distance_to(b)
+	var v := [Vector3(-x, a.y, a.x), Vector3(x, a.y, a.x), Vector3(x, b.y, b.x), Vector3(-x, b.y, b.x)]
+	var uv := [Vector2(0, length), Vector2(x * 2.0, length), Vector2(x * 2.0, end), Vector2(0, end)]
+	for k: int in [0, 2, 1, 0, 3, 2]:
+		st.set_uv(uv[k] / 2.5)
+		st.add_vertex(v[k])
+	return end
+
+
+static func _vault_mesh(st: SurfaceTool, mesh: ArrayMesh = null) -> ArrayMesh:
 	st.generate_normals()
 	st.generate_tangents()
+	return st.commit(mesh)
+
+
+static func _place_vault(g, mesh: ArrayMesh, xf: Transform3D, material: Material) -> void:
 	var mi := MeshInstance3D.new()
 	mi.name = "BridgeVault"
-	mi.mesh = st.commit()
-	var lining := stone.duplicate(true)
-	lining["tints"]["Building_Large_Brick_01"] = Color(0.77, 0.69, 0.61)
-	mi.material_override = Synty.material("Brick_01", lining)
+	mi.mesh = mesh
+	mi.material_override = material
 	mi.transform = xf
 	g.add_child(mi)
 
