@@ -5882,5 +5882,8 @@
 	"Предложение обновилось": "Offer refreshed",
 	"Обновление через %s": "Refreshes in %s",
 	"На рынке можно пополнить запасы или продать лишнее.": "Use the market to restock or sell surplus.",
-	"Железо": "Iron"
+	"Железо": "Iron",
+	"Вы": "You",
+	"Соперник": "Opponent",
+	"Время вышло": "Time is up"
 }
