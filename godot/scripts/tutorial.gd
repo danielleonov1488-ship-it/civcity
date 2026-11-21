@@ -238,7 +238,7 @@ func _enter(i: int) -> void:
 					cheapest = minf(cheapest, float(r["cost"]))
 			if cheapest < 1e9:
 				c.rp = maxf(c.rp, minf(c.rp_cap(), cheapest))
-		"houses", "road", "house", "food", "workers", "script", "done":
+		"houses", "road", "settle", "house", "food", "workers", "script", "done":
 			game.set_tool("")
 			hud._close_tray()
 			hud._hide_info()
