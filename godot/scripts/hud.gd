@@ -3458,7 +3458,10 @@ func _update_cards() -> void:
 			_grey(img, false)
 		else:
 			pr.add_child(_icon("coins", 22))
-			pr.add_child(_label(fmt(c.build_price(type)), 18, true, C_INK if c.money >= c.build_price(type) else C_BAD))
+			var field := Catalog.field_type(type)
+			var price := c.build_price(type, Vector2i(2, 2) if field else Vector2i.ZERO)
+			var cost := I18n.t("от %s ден.") % fmt(price) if field else fmt(price)
+			pr.add_child(_label(cost, 18, true, C_INK if c.money >= price else C_BAD))
 			b.add_theme_stylebox_override("normal", _card_box("g_card"))
 			img.modulate = Color.WHITE
 			_grey(img, false)
@@ -4352,12 +4355,17 @@ func _fill_tool_panel_body() -> void:
 	if Defs.B.has(t):
 		var d: Dictionary = Defs.B[t]
 		tool_title.text = "%s · %s" % [d["name"], "подарок, даром" if game.city.gift_ready(t) else fmt(game.city.build_price(t)) + " ден."]
+		if Catalog.field_type(t):
+			tool_title.text = String(d["name"])
 		thumb_rect.visible = true
 		color_box.visible = d["kind"] != "decor" and game.moving.is_empty()
 		color_restyle()
 		thumb_update()
 		var keys := "Повернуть: зажмите левую кнопку и ведите мышь вбок (или Z/X) · правая кнопка — отмена"
-		if d.get("seg", false):
+		if Catalog.field_type(t) and game.moving.is_empty():
+			keys = "Протяните участок мышью и отпустите. Размер от 2 × 2 до 6 × 6."
+			color_box.hide()
+		elif d.get("seg", false):
 			keys = "Тяните с зажатой кнопкой, как дорогу: звенья встанут по линии, цена — у курсора. Щелчок — одно звено (Z/X — повернуть). Esc или правая кнопка посреди — отмена"
 			gate_check.visible = d.get("gate", false)
 			gate_check.set_pressed_no_signal(game.fence_gate)
@@ -4956,7 +4964,7 @@ func _worker_slot(index: int, cls: String, occupied: bool, worker: Dictionary, w
 		slot.disabled = true
 		return slot
 	var member: Dictionary = worker["m"]
-	slot.tooltip_text = Residents.full_name(member, worker["family"])
+	slot.tooltip_text = I18n.display_name(Residents.full_name(member, worker["family"]))
 	slot.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	slot.pressed.connect(func():
 		_fire_member = member
@@ -5185,6 +5193,13 @@ func _fill_info_body() -> void:
 				var more := (" Больше заработает на уровне «%s»." % Defs.LEVELS[nl]["name"]) if nl < Defs.LEVELS.size() and nl < mx.size() else ""
 				info_box.add_child(_wrap(_label("На уровне «%s» работают %d (первые построенные).%s Сносить не нужно: пока постройка не работает, она ничего не стоит." % [Defs.LEVELS[c.level]["name"], c.build_max(b["type"]), more], 14, false, C_SOFT), cw))
 		"farm":
+			var size := City.field_size(b)
+			var area: String
+			if size == Vector2i.ZERO:
+				area = I18n.t("%d м²") % roundi((b["cells"] as PackedInt32Array).size() * Land.CELL * Land.CELL)
+			else:
+				area = I18n.t("%d × %d (%d клеток)") % [size.x, size.y, size.x * size.y]
+			info_box.add_child(_card_row("wheat", "Площадь участка", area))
 			info_box.add_child(_card_row("wheat", "Даёт", {"wheat": "пшеницу", "olives": "оливки", "grapes": "виноград"}[d["makes"]], C_GOOD))
 		"store":
 			info_box.add_child(_card_row("arrow", "Разносит товары", Defs.WORD[4]))
@@ -5804,7 +5819,7 @@ func _family_rows(b: Dictionary, box: VBoxContainer) -> void:
 		pill_style.set_border_width_all(0)
 		pill.add_theme_stylebox_override("panel", pill_style)
 		pill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var family_name := I18n.t("Семья: %s") % String(f["name"])
+		var family_name := I18n.t("Семья: %s") % I18n.display_name(String(f["name"]))
 		var name_label := _label(family_name, 13, true, C_INK)
 		name_label.clip_text = true
 		name_label.tooltip_text = family_name
@@ -9133,7 +9148,7 @@ static func add_pets(g: Node3D, type: String) -> void:
 			if bn.ap:
 				bn.ap.seek(0.6, true)
 			n = bn
-		n.transform = Transform3D(Basis(Vector3.UP, float(e[2])).scaled(Vector3.ONE * float(e[4])), (e[1] as Vector3) * sc)
+		n.transform = Transform3D(Basis(Vector3.UP, float(e[2])).scaled(Vector3.ONE * float(e[4])), CatExtra.pet_position(type, e) * sc)
 		g.add_child(n)
 		k += 1
 

@@ -506,165 +506,48 @@ static func _waterwheel(g, id: int) -> void:
 	g._add_nature("M:SM_Prop_WaterWheel_01", Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * 0.62), Vector3(q.x, y - 0.25, q.y)), q)
 
 
-## Мост там, где ручей проходит под большой дорогой: дорога остаётся насыпью, по бокам — римская кладка из деталей
-## Ancient Empire в тёплом травертине: над водой — арка с пилястрами по сторонам, дальше — сплошная стенка, у концов —
-## пилястры, по краю дороги — парапет с карнизом, на уровне дороги — тяга. Мост не сносится (как арка въезда)
+## Ровный настил большой дороги и кладка по бокам. Дно готовит Streams.
 static func _bridges(g) -> void:
-	var land: Land = g.land
-	for br: Dictionary in land.bridges:
-		if br.get("river", false):
-			_river_bridge(g, br)
-			continue
+	for br: Dictionary in g.land.bridges:
 		var c: Vector2 = br["pos"]
-		var sd: Vector2 = br["dir"]                    # куда течёт ручей
-		# вдоль дороги — по самой дороге (15.11: ручей часто идёт под дорогой наискось, мост «поперёк ручья» стоял криво)
-		var rd := _road_dir(land, c, Vector2(-sd.y, sd.x))
-		var sin_t := maxf(absf(rd.x * sd.y - rd.y * sd.x), 0.45)     # синус угла между дорогой и ручьём
 		var y: float = br["y"]
-		var w: float = br["w"]
+		var half: float = br["half"]
+		var arches: int = br["arches"]
+		var opening := 2.0 * half / arches
+		var depth := y - Land.WATER_Y + 0.32
 		var hw := Land.ROAD_R
-		var depth := y - (Land.WATER_Y - 0.25)         # от дороги до дна у арки
-		var half := clampf((w + Streams.SHORE + (y - Land.WATER_Y - 0.25) / Streams.SLOPE) / sin_t, 3.0, 10.0)
-		var ws := clampf((w * 2.0 + 1.0) / sin_t, 2.6, 6.0)       # пролёт арки — вдоль дороги, с запасом на наклон ручья
 		var bp := Bp.new(91)
-		var yaw := atan2(rd.x, rd.y)                    # местная +Z — вдоль дороги, +X — вниз по ручью
-		var xf := Transform3D(Basis(Vector3.UP, yaw), Vector3(c.x, y, c.y))
-		# тёплый травертин: камень стен и кладка пилястр — в тон арке въезда и терракотовому городу
+		var xf := Transform3D(Basis.IDENTITY, Vector3(c.x, y, c.y))
 		var stone := {"Stucco_White_01": "Stone_01", "tints": {"Stone_01": Color(1.06, 0.94, 0.78), "Building_Large_Brick_01": Color(1.0, 0.9, 0.76)}}
 		var blocks := {"Building_Large_Brick_01": "Building_Large_Brick_01", "tints": {"Building_Large_Brick_01": Color(1.02, 0.9, 0.74)}}
+		CatMonuments._box(bp, "#marble", Vector3(0, -0.24, 0), Vector3(hw * 2.0 + 0.12, 0.48, half * 2.0))
+		_bridge_floor(bp, 0.0, Vector3(-hw - 0.05, 0.01, -half), half * 2.0)
 		for side: float in [-1.0, 1.0]:
 			var x := side * (hw + 0.05)
-			# стенка над насыпью: посередине — арка над водой, по сторонам — сплошная кладка
-			_side_piece(bp, "SM_Bld_Wall_Door_Double_01", side, x, -depth, -ws * 0.5, ws * 0.5, depth, 1.0, 2.5, 3.01, stone)
-			for e: float in [-1.0, 1.0]:
-				var z0 := ws * 0.5 if e > 0.0 else -half
-				var z1 := half if e > 0.0 else -ws * 0.5
-				if z1 - z0 > 0.2:
-					_side_piece(bp, "SM_Bld_Wall_01", side, x, -depth, z0, z1, depth, 1.0, 2.5, 3.01, stone)
+			for i in arches:
+				var z := -half + i * opening
+				_side_piece(bp, "SM_Bld_Wall_Door_Double_01", side, x, -depth, z, z + opening, depth, 1.0, 2.5, 3.01, stone)
 			# тяга на уровне дороги и парапет с карнизом
-			_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.05, -0.12, -half - 0.2, half + 0.2, 0.22, 0.9, 5.02, 1.0, stone)
-			_side_piece(bp, "SM_Bld_Wall_01", side, x, 0.0, -half - 0.2, half + 0.2, 0.62, 0.8, 2.5, 3.01, stone)
-			_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.02, 0.62, -half - 0.3, half + 0.3, 0.18, 0.7, 5.02, 1.0, stone)
-			# пилястры: по сторонам арки (от дна) и у концов моста (до верха парапета)
-			for zp: float in [-ws * 0.5, ws * 0.5, -half, half]:
-				var hp := depth + 0.62 + 0.15
-				var pb := Basis(Vector3(0, 0, -side), Vector3.UP, Vector3(side, 0, 0)) * Basis.from_scale(Vector3(0.5 / 0.92, hp / 4.55, 0.42 / 0.92))
-				bp.parts.append(["SM_Bld_Wall_Large_Pillar_01", Transform3D(pb, Vector3(x + side * 0.12, -depth, zp)), blocks])
+			_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.05, -0.12, -half, half, 0.22, 0.9, 5.02, 1.0, stone)
+			_side_piece(bp, "SM_Bld_Wall_01", side, x, 0.0, -half, half, 0.62, 0.8, 2.5, 3.01, stone)
+			_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.02, 0.62, -half, half, 0.18, 0.7, 5.02, 1.0, stone)
+			for i in arches + 1:
+				var z := -half + i * opening
+				var pillar := Basis(Vector3(0, 0, -side), Vector3.UP, Vector3(side, 0, 0)) * Basis.from_scale(Vector3(0.5 / 0.92, (depth + 0.77) / 4.55, 0.42 / 0.92))
+				bp.parts.append(["SM_Bld_Wall_Large_Pillar_01", Transform3D(pillar, Vector3(x + side * 0.12, -depth, z)), blocks])
+			var reach := half + 1.8
+			var levels: Vector2 = br["shore"]
+			var shore := (levels.x if side < 0.0 else levels.y) - y
+			var slope := atan2(shore * side, reach - half)
+			var start := -reach if side < 0.0 else half
+			var length := Vector2(reach - half, shore).length()
+			_bridge_floor(bp, slope, Vector3(-hw - 0.05, (shore if side < 0.0 else 0.0) + 0.01, start), length)
 		g.parts.place(bp, xf)
-		# под аркой — вода дальше (короткая полоса воды в насыпь), чтобы в проёме блестела вода, а не земля
-		var under := Bp.new(92)
-		for side2: float in [-1.0, 1.0]:
-			CatMonuments._box(under, "#water", Vector3(side2 * (hw - 0.3), Land.WATER_Y - y + 0.02, 0.0), Vector3(1.0, 0.04, ws - 0.3))
-		g.parts.place(under, xf)
 
 
-## Римский мост через реку (15.11): несколько арок подряд вдоль дороги, под ними течёт вода. Дорога для ходьбы остаётся
-## насыпью (клетки не меняются), а видимая земля под мостом — дно реки (Land.vis_h); мост — плита с арками по обоим
-## бокам из деталей Ancient Empire (стена с аркой, пилястры, тяга, парапет с карнизом) в тёплом травертине. Мост стоит
-## ровно вдоль дороги, наклон дороги по холму повторяет. Не сносится (как арка въезда)
-static func _river_bridge(g, br: Dictionary) -> void:
-	var land: Land = g.land
-	var c: Vector2 = br["pos"]
-	var sd: Vector2 = br["dir"]
-	var rd := _road_dir(land, c, Vector2(-sd.y, sd.x))
-	# пролёт: по клеткам дороги над рекой — от t0 до t1 вдоль дороги (метры от середины c)
-	var t0 := INF
-	var t1 := -INF
-	for k: int in br["cells"]:
-		var t := (land.cell_center(k % Land.N, k / Land.N) - c).dot(rd)
-		t0 = minf(t0, t)
-		t1 = maxf(t1, t)
-	var tc := (t0 + t1) * 0.5
-	var span := (t1 - t0) + 1.0
-	var n := maxi(3, int(ceil(span / 3.5)))
-	var aw := clampf(span / n, 2.9, 4.4)
-	var T := n * aw
-	var ctr := c + rd * tc
-	# высота и наклон дороги: прямая по высотам дороги на длину моста с запасом
-	var sx := 0.0
-	var sy := 0.0
-	var sxx := 0.0
-	var sxy := 0.0
-	var m := 0
-	for tt in range(-int(T * 0.5) - 6, int(T * 0.5) + 7):
-		var q := ctr + rd * float(tt)
-		var yy := land.height_at(q.x, q.y)
-		sx += float(tt)
-		sy += yy
-		sxx += float(tt * tt)
-		sxy += float(tt) * yy
-		m += 1
-	var slope := (float(m) * sxy - sx * sy) / maxf(float(m) * sxx - sx * sx, 1e-4)
-	var y0 := (sy - slope * sx) / float(m)
-	var hw := Land.ROAD_R
-	var depth := y0 - (Land.WATER_Y - 0.25)
-	var half := T * 0.5 + clampf(depth / 0.6, 2.5, 7.0)
-	var bp := Bp.new(93)
-	var yaw := atan2(rd.x, rd.y)                        # местная +Z — вдоль дороги
-	var xf := Transform3D(Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, -atan(slope)), Vector3(ctr.x, y0, ctr.y))
-	var stone := {"Stucco_White_01": "Stone_01", "tints": {"Stone_01": Color(1.06, 0.94, 0.78), "Building_Large_Brick_01": Color(1.0, 0.9, 0.76)}}
-	var blocks := {"Building_Large_Brick_01": "Building_Large_Brick_01", "tints": {"Building_Large_Brick_01": Color(1.02, 0.9, 0.74)}}
-	# толща моста под дорогой (потолок арок), мощёная проезжая часть сверху
-	CatMonuments._box(bp, "#marble", Vector3(0, -0.4, 0), Vector3(hw * 2.0 + 0.12, 0.8, T + 0.1))
-	CatMonuments._put(bp, "SM_Bld_Base_Floor_01", Transform3D(Basis.from_scale(Vector3((hw * 2.0 + 0.1) / 2.5, 1, (T + 0.6) / 2.5)), Vector3(-hw - 0.05, 0.03, -T * 0.5 - 0.3)), {"Stone_01": "Floor_Tiles_04"})
-	for side: float in [-1.0, 1.0]:
-		var x := side * (hw + 0.05)
-		# стенка над насыпью: арки подряд над водой, по краям — сплошная кладка до конца моста
-		for i in n:
-			var z0 := -T * 0.5 + i * aw
-			var d_i := depth + slope * (z0 + aw * 0.5)
-			_side_piece(bp, "SM_Bld_Wall_Door_Double_01", side, x, -d_i, z0, z0 + aw, d_i, 1.0, 2.5, 3.01, stone)
-		for e: float in [-1.0, 1.0]:
-			var za := T * 0.5 if e > 0.0 else -half
-			var zb := half if e > 0.0 else -T * 0.5
-			var d_e := depth + slope * (za + zb) * 0.5
-			if zb - za > 0.2:
-				_side_piece(bp, "SM_Bld_Wall_01", side, x, -d_e, za, zb, d_e, 1.0, 2.5, 3.01, stone)
-		# тяга на уровне дороги и парапет с карнизом
-		_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.05, -0.12, -half - 0.2, half + 0.2, 0.22, 0.9, 5.02, 1.0, stone)
-		_side_piece(bp, "SM_Bld_Wall_01", side, x, 0.0, -half - 0.2, half + 0.2, 0.62, 0.8, 2.5, 3.01, stone)
-		_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.02, 0.62, -half - 0.3, half + 0.3, 0.18, 0.7, 5.02, 1.0, stone)
-		# пилястры: между арками (от воды) и у концов моста
-		var zs := []
-		for i in range(0, n + 1):
-			zs.append(-T * 0.5 + i * aw)
-		zs.append(-half)
-		zs.append(half)
-		for zp: float in zs:
-			var d_p := depth + slope * zp
-			var hp := d_p + 0.62 + 0.15
-			var pb := Basis(Vector3(0, 0, -side), Vector3.UP, Vector3(side, 0, 0)) * Basis.from_scale(Vector3(0.5 / 0.92, hp / 4.55, 0.42 / 0.92))
-			bp.parts.append(["SM_Bld_Wall_Large_Pillar_01", Transform3D(pb, Vector3(x + side * 0.12, -d_p, zp)), blocks])
-	g.parts.place(bp, xf)
-
-
-## Направление дороги у моста (единичный вектор): главная ось клеток мостовой, троп и площадей вокруг точки c (радиус 7 м);
-## нет дороги вокруг — dflt
-static func _road_dir(land: Land, c: Vector2, dflt: Vector2) -> Vector2:
-	var sxx := 0.0
-	var sxy := 0.0
-	var syy := 0.0
-	var n := 0
-	var N := Land.N
-	var ci := int(c.x / Land.CELL)
-	var cj := int(c.y / Land.CELL)
-	var rr := int(7.0 / Land.CELL)
-	for dj in range(-rr, rr + 1, 2):
-		for di in range(-rr, rr + 1, 2):
-			var i := ci + di
-			var j := cj + dj
-			if i < 0 or j < 0 or i >= N or j >= N or di * di + dj * dj > rr * rr:
-				continue
-			if not Land.walk_kind(land.kind[j * N + i]):
-				continue
-			sxx += float(di * di)
-			sxy += float(di * dj)
-			syy += float(dj * dj)
-			n += 1
-	if n < 30:
-		return dflt
-	var th := 0.5 * atan2(2.0 * sxy, sxx - syy)
-	return Vector2(cos(th), sin(th))
+static func _bridge_floor(bp: Bp, slope: float, origin: Vector3, length: float) -> void:
+	var basis := Basis(Vector3.RIGHT, -slope) * Basis.from_scale(Vector3((Land.ROAD_R * 2.0 + 0.1) / 2.5, 0.4, length / 2.5))
+	CatMonuments._put(bp, "SM_Bld_Base_Floor_01", Transform3D(basis, origin), {"Stone_01": "Floor_Tiles_04"})
 
 
 ## Деталь стены Synty вдоль дороги на боку моста: длина по дороге — от z0 до z1, высота h от y0, толщина — tk.

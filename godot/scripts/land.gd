@@ -101,7 +101,7 @@ var bare := PackedByteArray()
 var streams: Array = []
 var streams_saved = null
 var bridges: Array = []
-## Видимая земля под мостом реки (15.11): у дороги над рекой клетки остаются насыпью для ходьбы (высота h — дорога), а
+## Видимая земля под мостом (15.11): у дороги над рекой клетки остаются насыпью для ходьбы (высота h — дорога), а
 ## рисуется под мостом дно реки — чтобы под арками текла вода. Клетка → высота дна; не сохраняется (Streams.apply)
 var vis_h := {}
 var vis_lo := Vector2i(1 << 30, 1 << 30)       # рамка клеток vis_h: узлы вне неё не проверяются (быстро)
@@ -1201,7 +1201,8 @@ func update_surface_rect(img: Image) -> bool:
 		for i in range(x0, x1 + 1):
 			var k0 := (j * SM) * N + i * SM
 			var c := Color(0, 0, 0, 1)
-			for kd: int in [kind[k0], kind[k0 + 1], kind[k0 + N], kind[k0 + N + 1]]:
+			for k: int in [k0, k0 + 1, k0 + N, k0 + N + 1]:
+				var kd := _surface_kind(k)
 				if kd == Kind.ROAD:
 					c.r += 0.25
 				elif kd == Kind.PLAZA:
@@ -1224,7 +1225,7 @@ func update_surface(img: Image, ch: Vector2i) -> void:
 			var b := 0.0
 			for dj in SM:
 				for di in SM:
-					var kd := kind[idx(i * SM + di, j * SM + dj)]
+					var kd := _surface_kind(idx(i * SM + di, j * SM + dj))
 					if kd == Kind.ROAD:
 						r += 0.25
 					elif kd == Kind.PLAZA:
@@ -1248,8 +1249,12 @@ const LOCK := Color("c4bb98")
 
 
 ## Что рисовать на клетке: дороги и дворы — как есть; трава у воды — песок, на обрыве — скала
+func _surface_kind(k: int) -> int:
+	return Kind.SAND if vis_h.has(k) else kind[k]
+
+
 func show_kind(k: int, y: float) -> int:
-	var kd := kind[k]
+	var kd := _surface_kind(k)
 	if kd != Kind.GRASS:
 		return kd
 	if y < WATER_Y + 0.3:
@@ -1392,7 +1397,7 @@ func node_y(vi: int, vj: int) -> float:
 	return (h[j0 * N + i0] + h[j0 * N + i1] + h[j1 * N + i0] + h[j1 * N + i1]) * 0.25
 
 
-## Высота клетки для рисования: под мостом реки — дно (vis_h), иначе h
+## Высота клетки для рисования: под мостами — дно (vis_h), иначе h
 func _vh(k: int) -> float:
 	return vis_h[k] if vis_h.has(k) else h[k]
 

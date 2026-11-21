@@ -31,6 +31,27 @@ static func scale_of(type: String) -> float:
 	return ARCH * float(SHRINK.get(type, 1.0)) * float(LADDER.get(type, 1.0))
 
 
+const FIELD_TILE := 2.5
+const FIELD_DEFAULT := Vector2i(4, 4)
+
+
+static func field_type(type: String) -> bool:
+	return type in ["farm", "grove", "vineyard"]
+
+
+static func field_scale(size: Vector2i) -> float:
+	return float(size.x * size.y) / 16.0 if size != Vector2i.ZERO else 1.0
+
+
+static func field_bp(type: String, size: Vector2i) -> Bp:
+	var key := "%s:%dx%d" % [type, size.x, size.y]
+	if not _cache.has(key):
+		var bp := Bp.new(hash(key))
+		CatCivic.field(bp, type, size)
+		_cache[key] = bp
+	return _cache[key]
+
+
 ## legacy — дом из старого сохранения (стоит на прежнем, более узком следе): свой дом ужимается по нему (KitHouses)
 ## old_lot — постройка из старого сохранения, тип которой с тех пор поменял размер (SizeLadder): облик на прежнем следе
 static func make(type: String, tier := 1, variant := 0, color := 0, legacy := false, old_lot := false) -> Bp:

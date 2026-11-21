@@ -649,10 +649,10 @@ func hover_pick(mp: Vector2) -> Dictionary:
 static func name_of(r: Dictionary) -> String:
 	var m: Dictionary = r.get("m", {})
 	if r.has("hero"):
-		return String(m.get("pn", "Герой"))   # имя героя — как его назвал игрок
+		return I18n.display_name(String(m["pn"])) if m.has("pn") else "Герой"
 	if m.is_empty():
 		return "Житель"
-	return Residents.full_name(m, String(r["fam"]))
+	return I18n.display_name(Residents.full_name(m, String(r["fam"])))
 
 
 ## Подпись у курсора: «Гай Юлий · пекарь»
@@ -4641,7 +4641,7 @@ const CAT_HIND := ["Bone.008", "Bone.009", "Bone.010", "Bone.011", "Bone.012", "
 const CAT_TAIL := ["Bone.004", "Bone.005", "Bone.006", "Bone.007"]
 ## Цвета картинки «Kitten» → что это: светлая шерсть, «маска» (мордочка, уши, лапки), тёмное (хвост, нос, уши изнутри), глаз
 const CAT_TEX := {"cream": Color("e3d1c0"), "mid": Color("785138"), "dark": Color("442a1c"), "eye": Color("4e525a")}
-const CAT_EYE_K := 1.3                 # глаза «Kitten» крупнее (по месту на мордочке): видны и издали, и на тёмной шерсти
+const CAT_EYE_K := 1.47                 # глаза «Kitten» крупнее (по месту на мордочке): видны и издали, и на тёмной шерсти
 
 
 ## Сетка «Kitten» на скелете кошки: одна поверхность, у каждой грани свои вершины (грани плоские, как в файле).
@@ -4712,7 +4712,10 @@ static func _cat_build(sk: Skeleton3D) -> ArrayMesh:
 			eyes[sd] = {"c": Vector3.ZERO, "n": Vector3.ZERO, "ids": {}}
 		var e: Dictionary = eyes[sd]
 		var ar: float = (P[f[1]] - P[f[0]]).cross(P[f[2]] - P[f[0]]).length()
-		e["n"] = (e["n"] as Vector3) + (f[4] as Vector3) * ar
+		var front := Vector3(1.0, sd * 0.4, 0.0).normalized()
+		var fn: Vector3 = f[4]
+		if fn.dot(front) > 0.45:
+			e["n"] = (e["n"] as Vector3) + fn * ar
 		for k in 3:
 			(e["ids"] as Dictionary)[P[f[k]]] = true
 	for sd: int in eyes:
@@ -4722,6 +4725,8 @@ static func _cat_build(sk: Skeleton3D) -> ArrayMesh:
 			c += q
 		c /= float((e["ids"] as Dictionary).size())
 		var n := (e["n"] as Vector3).normalized()
+		if n.is_zero_approx():
+			n = Vector3(1.0, sd * 0.4, 0.0).normalized()
 		var up := (Vector3(0, 0, 1) - n * n.z).normalized()
 		var side := up.cross(n).normalized()
 		var hs := 0.001
@@ -4789,7 +4794,7 @@ static func _cat_build(sk: Skeleton3D) -> ArrayMesh:
 				var d := p - ec
 				var dn := en * d.dot(en)
 				uvv = Vector2((d - dn).dot(e["side"]) / float(e["hs"]), (d - dn).dot(e["up"]) / float(e["hu"]))
-				p = ec + dn + (d - dn) * CAT_EYE_K + en * 0.06
+				p = ec + dn + (d - dn) * CAT_EYE_K + en * 0.11
 			V.append(p * CAT_K)
 			Nn.append(fn)
 			C.append(Color(part, pts, reg, 1.0))
@@ -4884,6 +4889,24 @@ static func _cat_weights(p: Vector3, J: Dictionary, par: Dictionary) -> Dictiona
 	return w
 
 
+static var _cat_eye_mask: ImageTexture
+
+
+static func cat_eye_texture() -> Texture2D:
+	if _cat_eye_mask == null:
+		var img := Image.create(64, 64, false, Image.FORMAT_RGB8)
+		for y in 64:
+			for x in 64:
+				var p := (Vector2(x, y) + Vector2.ONE * 0.5) / 32.0 - Vector2.ONE
+				var pupil := 1.0 - smoothstep(0.82, 1.0, (p * Vector2(2.35, 1.22)).length())
+				var glint := 1.0 - smoothstep(0.09, 0.16, p.distance_to(Vector2(-0.20, 0.32)))
+				var iris := 1.0 - smoothstep(0.84, 1.10, p.length())
+				img.set_pixel(x, y, Color(pupil, glint, iris))
+		img.generate_mipmaps()
+		_cat_eye_mask = ImageTexture.create_from_image(img)
+	return _cat_eye_mask
+
+
 ## Одеть модель кошки окрасом fi: суставы под «Kitten», общая сетка и свой материал (у каждой кошки — свои моргание и сон).
 ## Материал — в meta «fur_mat»
 static func _cat_dress(m: Node3D, fi: int) -> ShaderMaterial:
@@ -4908,6 +4931,7 @@ static func _cat_dress(m: Node3D, fi: int) -> ShaderMaterial:
 	mat.set_shader_parameter("pattern", int(lk[0]))
 	mat.set_shader_parameter("mark", lk[1])
 	mat.set_shader_parameter("eye_col", lk[2])
+	mat.set_shader_parameter("eye_mask", cat_eye_texture())
 	mat.set_shader_parameter("blink_ph", float(m.get_instance_id() % 997) / 997.0)
 	if fi == CAT_MASYA:
 		mat.set_shader_parameter("sheen", CAT_MASYA_SHEEN)

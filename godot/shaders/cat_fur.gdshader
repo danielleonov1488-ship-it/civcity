@@ -10,6 +10,7 @@ uniform vec3 fur : source_color = vec3(0.88, 0.57, 0.25);
 uniform vec3 belly : source_color = vec3(0.96, 0.86, 0.7);
 uniform vec3 mark : source_color = vec3(0.6, 0.32, 0.12);     // полоски и пятна; у сиамской — «маска»
 uniform int pattern = 1;       // 0 — гладкая, 1 — тигровая (полоски), 2 — «во фраке» (белые грудь, лапы, мордочка), 3 — пятна, 4 — сиамская
+uniform sampler2D eye_mask : filter_linear_mipmap, repeat_disable;
 uniform vec3 eye_col : source_color = vec3(0.55, 0.62, 0.18);
 uniform float sleep = 0.0;     // 1 — глаза закрыты (спит)
 uniform float blink_ph = 0.0;  // сдвиг моргания (кошки моргают не в лад)
@@ -53,12 +54,10 @@ void fragment() {
 	if (part > 0.62) {
 		// глаз: радужка цвета глаз, зрачок-щёлочка, блик; моргает веком (цвет шерсти), спит — закрыт
 		vec2 e = euv;
-		float iris = 1.0 - smoothstep(0.86, 1.0, length(e));
-		vec3 col = mix(vec3(0.08, 0.07, 0.06), eye_col, iris);
-		float pupil = 1.0 - smoothstep(0.8, 1.0, length(vec2(e.x * 3.4, e.y * 1.05)));
-		col = mix(col, vec3(0.02), pupil);
-		float gl = 1.0 - smoothstep(0.14, 0.24, length(e - vec2(-0.3, 0.34)));
-		col = mix(col, vec3(1.0), gl * 0.9);
+		vec3 mask = texture(eye_mask, e * 0.5 + vec2(0.5)).rgb;
+		vec3 col = mix(vec3(0.08, 0.07, 0.06), eye_col, mask.b);
+		col = mix(col, vec3(0.008), mask.r);
+		col = mix(col, vec3(0.95), mask.g);
 		float t = fract(TIME * 0.21 + blink_ph);
 		float bl = smoothstep(0.0, 0.025, t) * (1.0 - smoothstep(0.03, 0.06, t));   // мигнула раз в ~5 с
 		float closed = max(sleep, bl);

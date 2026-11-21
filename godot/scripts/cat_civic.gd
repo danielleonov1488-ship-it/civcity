@@ -911,6 +911,75 @@ static func _academy(b: Bp) -> void:
 #   хозяйство
 # =====================================================================
 
+## Новый прямоугольный участок. Старые поля по-прежнему собираются из своих чертежей.
+static func field(b: Bp, type: String, size: Vector2i) -> void:
+	var m := Vector2(size) * Catalog.FIELD_TILE
+	var edge := m * 0.5 - Vector2.ONE * 0.14
+	b.fp_override = [Rect2(-m * 0.5, m)]
+	b.door = Vector3(0, 0, m.y * 0.5)
+	b.fence(-edge.x, -edge.y, edge.x, edge.y)
+	var columns := size.x * (2 if type == "farm" else 1)
+	var rows := size.y * (3 if type == "farm" else 1)
+	for z in rows:
+		for x in columns:
+			var p := Vector3(((x + 0.5) / columns - 0.5) * m.x, 0, ((z + 0.5) / rows - 0.5) * m.y)
+			match type:
+				"farm":
+					var scale := b.rng.randf_range(0.89, 1.05)
+					p.x += b.rng.randf_range(-0.06, 0.06)
+					b.add("#wheat", p, b.rng.randf_range(-0.08, 0.08), scale)
+				"grove":
+					var scale := b.rng.randf_range(0.28, 0.34)
+					_tree(b, "SM_Env_Tree_0%d" % (3 + b.rng.randi() % 2), p, Vector3(scale, scale * 0.82, scale), Color(0.82, 0.92, 0.95))
+				"vineyard":
+					b.add("SM_Env_Vine_0%d" % (1 + (x + z) % 2), p, PI if x % 2 else 0.0, 0.74)
+		if type == "vineyard":
+			var row_z := ((z + 0.5) / rows - 0.5) * m.y
+			for x: float in [-edge.x + 0.2, edge.x - 0.2]:
+				b.add("SM_Bld_Trellis_Pillar_01", Vector3(x, 0, row_z), 0.0, 0.4)
+	var clip := "Fixing_Kneeling" if type == "farm" else "Interact"
+	b.actor(Vector3(0, 0, m.y * 0.5 - 0.8), PI, clip, "pleb")
+	if size.x * size.y >= 12:
+		b.actor(Vector3(0, 0, -m.y * 0.5 + 0.8), 0, clip, "pleb")
+
+
+## Один пучок колосьев для общего MultiMesh. У колоса отдельные зёрна и ости.
+static func wheat_mesh() -> ArrayMesh:
+	var k := Kit.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 704
+	for i in 9:
+		var foot := Vector3((i % 5 - 2) * 0.20 + rng.randf_range(-0.05, 0.05), 0, (i / 5 - 0.5) * 0.25 + rng.randf_range(-0.09, 0.09))
+		var h := rng.randf_range(0.56, 0.88)
+		var lean := Vector3(rng.randf_range(-0.075, 0.075), h, rng.randf_range(-0.06, 0.06))
+		var tip := foot + lean
+		var straw := Color("c7a554").lerp(Color("e6c77a"), rng.randf())
+		k.rod(foot, tip + Vector3.UP * 0.09, 0.008, 3, straw)
+		for leaf in 2:
+			var at := foot + lean * (0.36 + leaf * 0.20)
+			var side := Basis(Vector3.UP, rng.randf() * TAU) * Vector3(0.12, 0.1, 0)
+			var blade := Vector3(-side.z, 0, side.x) * 0.07
+			k.tri(at, at + side * 0.36 + blade, at + side, straw.darkened(0.14))
+			k.tri(at, at + side, at + side * 0.36 + blade, straw.darkened(0.1))
+		var facing := Basis(Vector3.UP, rng.randf() * TAU)
+		for seed_i in 4:
+			var center := tip + Vector3.UP * (seed_i * 0.035)
+			for side_v: float in [-1.0, 1.0]:
+				var side := facing * Vector3(side_v * (0.040 - seed_i * 0.005), 0, 0)
+				var across := facing * Vector3(0, 0, 0.013)
+				var end := center + side + Vector3.UP * 0.048
+				var grain := straw.lightened(0.1 + seed_i * 0.02)
+				k.tri(center, center + side * 0.55 + across, end, grain)
+				k.tri(center, end, center + side * 0.55 - across, grain.darkened(0.13))
+				k.tri(center + side * 0.55 + across, center + side * 0.55 - across, end, grain)
+				k.tri(end, end + across * 0.23, end + side * 0.24 + Vector3.UP * 0.055, grain)
+	var mesh := k.mesh()
+	var mat := Kit.material(0.96).duplicate() as StandardMaterial3D
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mesh.surface_set_material(0, mat)
+	return mesh
+
+
 ## Пшеничное поле: изгородь с воротами, золотая пшеница сзади, зелёные грядки поперёк поля — работники
 ## ((−2,3; −1,2) и (1,4; 1,6)) стоят между рядами; хижина работников с навесом, стога, колодец, плуг, серпы,
 ## корзины. Хижина, стога и колодец — то справа, то слева (у разных полей по-разному)
@@ -921,11 +990,10 @@ static func _farm(b: Bp) -> void:
 	b.remap = b.floor_remap(1)
 	b.fence(-4.9, -4.9, 4.9, 4.9)
 	var m := 1.0 if b.rng.randf() < 0.5 else -1.0
-	# настоящая пшеница набора Meadow Forest (15.11, владелец: «поле с настоящей пшеницей»): ряды колосьев по всему полю,
-	# сзади — густо, напротив хижины; между рядами — тропки, где работают жнецы
+	# Колосья на прежних местах. Клетки старого поля хранятся отдельно от растений.
 	var wheat := func(q: Vector3, k: float) -> void:
-		b.parts.append(["M:SM_Env_CropField_Clump_0%d" % (1 + b.rng.randi() % 2),
-			b.base * Transform3D(Basis(Vector3.UP, b.rng.randf() * TAU).scaled(Vector3(k, k * b.rng.randf_range(0.9, 1.1), k)), q), {}])
+		b.add("#wheat", q, b.rng.randf_range(-0.1, 0.1), k)
+		b.free_parts[b.parts.size() - 1] = true
 	for j in 3:
 		for i in 5:
 			wheat.call(Vector3(m * (-4.0 + i * 1.3 + (0.35 if j % 2 else 0.0)), 0, -4.35 + j * 0.95), 0.95)

@@ -841,6 +841,7 @@ func _set_hour(h: float) -> void:
 
 func _water() -> void:
 	var mi := MeshInstance3D.new()
+	mi.name = "CityWater"
 	var pm := PlaneMesh.new()
 	pm.size = Vector2(Land.SIZE + 8.0, Land.SIZE + 8.0)
 	pm.subdivide_width = 200
@@ -2271,7 +2272,7 @@ func _pets2(b: Dictionary, vis: Dictionary) -> void:
 	for e: Array in list:
 		if e.size() > 5 and int(e[5]) != lk and int(e[5]) >= 0:
 			continue                           # животное только этого облика
-		var at: Vector3 = e[1]
+		var at := CatExtra.pet_position(b["type"], e)
 		var sc := Catalog.scale_of(b["type"]) if Defs.B[b["type"]]["kind"] != "decor" else Catalog.DECOR
 		var n: Node3D
 		if String(e[0]) == "cat":
@@ -2740,7 +2741,9 @@ func _input(e: InputEvent) -> void:
 				_floor_sweep()
 			_floor_end()
 		# мазок дороги (или забор) начат на карте, а кнопку отпустили над окном: окно отпускание себе не возьмёт — кончаем здесь
-		if (painting or fence_drag) and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
+		if (painting or fence_drag or field_from != Vector2.INF) and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
+			if field_from != Vector2.INF:
+				hover = ground_at_mouse()
 			_release()
 
 
@@ -2920,7 +2923,13 @@ func view_blocked(from: Vector3, to: Vector3) -> bool:
 
 # ---------- инструменты ----------
 
+var field_from := Vector2.INF
+var field_copy := Vector2i.ZERO
+
+
 func set_tool(t: String) -> void:
+	field_from = Vector2.INF
+	field_copy = Vector2i.ZERO
 	if decor_arrow != null:
 		decor_arrow.hide()
 	if t != "" and rig != null:
@@ -3095,7 +3104,25 @@ func _bounds(bp: Bp) -> Array:
 ## Куда встанет постройка: у дороги — фасадом к ней, вплотную к соседям в ряд; иначе — как повернул игрок.
 ## Украшение всегда ровно то, что выбрано в меню (у каждого облика своя карточка): у стены оно ни во что
 ## не превращается; настенные украшения — отдельные карточки и вешаются только на стены
+func _field_placement(type: String, p: Vector2) -> Dictionary:
+	var a := Vector2i((p / Catalog.FIELD_TILE).floor())
+	var from := a if field_from == Vector2.INF else Vector2i((field_from / Catalog.FIELD_TILE).floor())
+	var delta := a - from
+	var size := (delta.abs() + Vector2i.ONE).clamp(Vector2i(2, 2), Vector2i(6, 6))
+	if not moving.is_empty():
+		size = City.field_size(moving)
+	elif delta == Vector2i.ZERO and field_copy != Vector2i.ZERO:
+		size = field_copy
+	var lo := from - Vector2i(size.x - 1 if delta.x < 0 else 0, size.y - 1 if delta.y < 0 else 0)
+	var pos := (Vector2(lo) + Vector2(size) * 0.5) * Catalog.FIELD_TILE
+	var chk := city.check_place(type, pos, 0.0, 0, 0, -3 if not moving.is_empty() else -1, PackedInt32Array(), false, size)
+	return {"pos": pos, "yaw": 0.0, "tier": 0, "variant": 0, "color": 0, "err": chk["err"],
+		"cells": chk["cells"], "y": chk["y"], "field_size": size}
+
+
 func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictionary:
+	if tool == type and Catalog.field_type(type) and (moving.is_empty() or City.field_size(moving) != Vector2i.ZERO):
+		return _field_placement(type, p)
 	var d: Dictionary = Defs.B[type]
 	if d.get("wall", false):
 		return _wall_place(type, p)
@@ -4272,11 +4299,13 @@ func _update_tool() -> void:
 	color_lock = true                      # цвет призрака выбран — до постройки не меняется
 	pl["_t"] = tool                        # для чего посчитано (статус у курсора берёт место отсюда)
 	place_info = pl
-	var key := "%s:%d:%d:%d" % [tool, pl["tier"], pl["variant"], pl["color"]]
+	var size := City.field_size(pl)
+	var key := "%s:%d:%d:%d:%s" % [tool, pl["tier"], pl["variant"], pl["color"], size]
 	if ghost == null or ghost_key != key:
 		if ghost:
 			ghost.queue_free()
-		ghost = Parts.ghost(Catalog.make(tool, pl["tier"], pl["variant"], pl["color"]), "place")
+		var bp := Catalog.make(tool, pl["tier"], pl["variant"], pl["color"]) if size == Vector2i.ZERO else Catalog.field_bp(tool, size)
+		ghost = Parts.ghost(bp, "place")
 		add_child(ghost)
 		ghost_key = key
 		if hud:
@@ -4714,6 +4743,8 @@ func copy_building(b: Dictionary) -> bool:
 	var t := String(b["type"])
 	var tv0: int = _copy_tv0 if copy_color else tool_variant
 	set_tool(t)
+	if Catalog.field_type(t):
+		field_copy = b.get("field_size", Catalog.FIELD_DEFAULT)
 	_copy_tv0 = tv0                           # взяли другое — выбор фасада («Случайный» или номер) вернётся
 	var v := int(b["variant"])
 	if t == "house_patrician" and v >= Defs.PAT_TOWN:
@@ -4789,6 +4820,9 @@ func _tool_note(over_ui: bool) -> void:
 		if not zn.is_empty():
 			txt = String(zn[0])
 			col = Color("b4ffae") if bool(zn[1]) else Color("ffc59a")
+	var size := City.field_size(place_info)
+	if not over_ui and hover != Vector2.INF and Catalog.field_type(tool) and place_info.get("_t", "") == tool and size != Vector2i.ZERO:
+		txt = I18n.t("%d × %d · %s ден.") % [size.x, size.y, hud.fmt(city.build_price(tool, size))] if moving.is_empty() else "%d × %d" % [size.x, size.y]
 	hud.cursor_note(txt, col)
 
 
@@ -5298,6 +5332,9 @@ func _unhandled_input(e: InputEvent) -> void:
 			if mb.pressed and painting:
 				cancel_stroke()                   # правая кнопка посреди мазка — мазок отменён, инструмент остаётся
 				_rmb_armed = false
+			elif mb.pressed and field_from != Vector2.INF:
+				field_from = Vector2.INF
+				_rmb_armed = false
 			elif mb.pressed and fence_drag:
 				_fence_cancel()                   # и посреди забора — забор не ставим, инструмент остаётся
 				_rmb_armed = false
@@ -5336,7 +5373,7 @@ func _unhandled_input(e: InputEvent) -> void:
 				_click()
 			else:
 				_release()
-	elif e is InputEventMouseMotion and pressing and Defs.B.has(tool):
+	elif e is InputEventMouseMotion and pressing and Defs.B.has(tool) and City.field_size(moving) == Vector2i.ZERO:
 		var mpos := (e as InputEventMouseMotion).position
 		var dx := mpos.x - press_screen.x
 		# поворот — только если мышь заметно и именно вбок ушла с зажатой кнопкой; дрожь руки при щелчке — не поворот
@@ -5360,6 +5397,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				# как в Town to City: отменить мазок → инструмент → закрыть окна → снять выбор → меню игры
 				if painting:
 					cancel_stroke()                   # мазок дороги отменён целиком; второй Esc снимет инструмент
+				elif field_from != Vector2.INF:
+					field_from = Vector2.INF
 				elif fence_drag:
 					_fence_cancel()                   # забор не дотянули — не ставим; второй Esc снимет инструмент
 				elif tool != "":
@@ -5574,6 +5613,9 @@ func _click() -> void:
 			start_move(b)
 			return
 	if Defs.B.has(tool):
+		if Catalog.field_type(tool) and moving.is_empty():
+			field_from = hover
+			return
 		if Defs.B[tool].get("seg", false) and moving.is_empty():
 			# забор: тянут мышью от точки нажатия (у конца стоящего звена — от него, без щели на углу)
 			fence_drag = true
@@ -5616,7 +5658,7 @@ func start_move(b: Dictionary) -> bool:
 	moving = {"id": b["id"], "type": b["type"], "tier": b["tier"], "variant": b["variant"], "color": b["color"], "pop": b["pop"],
 		"families": b["families"], "pos": b["pos"], "yaw": b["yaw"], "decor": _hosted(b), "hire": b.get("hire", -1),
 		"born": int(b.get("born", b["id"]))}     # порядок постройки едет с ней
-	for key: String in ["happy", "happy_target", "unhappy_h", "down"]:
+	for key: String in ["happy", "happy_target", "unhappy_h", "down", "field_size"]:
 		if b.has(key):
 			moving[key] = b[key]
 	if _pops_for(b["type"]):
@@ -5703,7 +5745,9 @@ func _build_here() -> void:
 		place_lock = {}
 		var b: Dictionary
 		if not moving.is_empty():
-			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(moving["color"]), true)
+			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(moving["color"]), true, City.field_size(pl))
+			if b.is_empty():
+				return
 			b["born"] = int(moving.get("born", b["born"]))
 			b["tier"] = int(moving["tier"])   # Перенос сохраняет облик старой постройки.
 			b["pop"] = int(moving["pop"])
@@ -5721,10 +5765,12 @@ func _build_here() -> void:
 		else:
 			var h0 := city.happy_map() if _pops_for(tool) else {}
 			var snap := _undo_snap()           # до постановки: просьба или ранг, которые она даст, — уже без полного возврата
-			var place_cost := city.build_price(tool)
+			var place_cost := city.build_price(tool, City.field_size(pl))
 			build_anim = true
-			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
+			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]), false, City.field_size(pl))
 			build_anim = false
+			if b.is_empty():
+				return
 			if pl.has("host"):
 				b["host"] = pl["host"]
 				b["y"] = pl["y"]
@@ -5757,7 +5803,7 @@ func _build_here() -> void:
 func _cancel_move() -> void:
 	var m := moving
 	moving = {}
-	var b := city.place(m["type"], m["pos"], m["yaw"], int(m["variant"]), int(m["color"]), true)
+	var b := city.place(m["type"], m["pos"], m["yaw"], int(m["variant"]), int(m["color"]), true, City.field_size(m))
 	b["born"] = int(m.get("born", b["born"]))
 	b["tier"] = int(m["tier"])
 	b["pop"] = int(m["pop"])
@@ -5771,6 +5817,11 @@ func _cancel_move() -> void:
 
 
 func _release() -> void:
+	if field_from != Vector2.INF:
+		if hover != Vector2.INF and not hud.mouse_over_ui():
+			_build_here()
+		field_from = Vector2.INF
+		return
 	if floor_drag:
 		_floor_end()
 		return

@@ -286,7 +286,7 @@ func _migrate_wonders(d: Dictionary) -> void:
 
 ## Сколько вернётся при сносе: за бесплатное старое чудо денарии не выдаём.
 func refund_price(b: Dictionary) -> float:
-	return 0.0 if bool(b.get("wonder_credit", false)) else float(def(b)["cost"]) * Defs.REFUND
+	return 0.0 if bool(b.get("wonder_credit", false)) else float(def(b)["cost"]) * Catalog.field_scale(field_size(b)) * Defs.REFUND
 
 
 ## Есть ли подарок друга этого типа (поставить даром)
@@ -312,6 +312,9 @@ func unlock_id(type: String) -> String:
 func blueprint(b: Dictionary) -> Bp:
 	# дом без "kw" — из старого сохранения: стоит на прежнем следе, новый облик ужимается по нему (KitHouses)
 	# постройка из старого сохранения, чей тип потом поменял размер (SizeLadder), — новый облик на её прежних клетках
+	var size := field_size(b)
+	if size != Vector2i.ZERO:
+		return Catalog.field_bp(b["type"], size)
 	return Catalog.make(b["type"], int(b["tier"]), int(b.get("variant", 0)), int(b.get("color", 0)), not b.has("kw"), SizeLadder.old_lot(b))
 
 
@@ -402,7 +405,7 @@ func house_room_text(b: Dictionary) -> String:
 
 ## Можно ли поставить; возвращает {"err": текст или "", "cells": клетки, "y": высота}
 ## legacy — дом из старого сохранения (KitHouses): след — прежний, узкий (и после перестройки — тоже)
-func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 0, ignore_id := -1, pre := PackedInt32Array(), legacy := false) -> Dictionary:
+func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 0, ignore_id := -1, pre := PackedInt32Array(), legacy := false, size := Vector2i.ZERO) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	var res := {"err": "", "cells": PackedInt32Array(), "y": 0.0}
 	if ignore_id == -1 and not city_buildable(type):
@@ -414,7 +417,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	if not unlocked(type):
 		res["err"] = "Откроется %s" % Defs.unlock_text(unlock_id(type))
 		return res
-	if money < build_price(type) and ignore_id == -1 and not gift_ready(type):
+	if money < build_price(type, size) and ignore_id == -1 and not gift_ready(type):
 		res["err"] = "Не хватает денариев"
 		return res
 	if ignore_id == -1 and d.get("unique", false) and _count(func(o): return o["type"] == type) > 0:
@@ -426,7 +429,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	if d.get("wall", false):
 		return res                            # украшение на стене: место выбирает игра (стена дома)
 	var tier := 1 if d["kind"] == "house" else (6 if type == "center" else 0)   # станция занимает место на вырост
-	var bp := Catalog.make(type, tier, variant, color, legacy)
+	var bp := Catalog.field_bp(type, size) if size != Vector2i.ZERO else Catalog.make(type, tier, variant, color, legacy)
 	var rects: Array = bp.occ_footprint()
 	if d.get("seg", false) and seg_thin:
 		# звено забора занимает узкую полосу посередине: концы свободны — соседнее звено (и угол) встаёт вплотную
@@ -446,6 +449,9 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 			return res
 		if not land.is_owned(q) and ignore_id != -2:
 			res["err"] = "Эта земля ещё не куплена"
+			return res
+		if size != Vector2i.ZERO and Land.walk_kind(land.kind[k]):
+			res["err"] = "Здесь дорога — поставьте рядом с ней"
 			return res
 		var o := land.occ[k]
 		# отрицательная занятость — неподвижное (арка у въезда): занято всегда, при любом ignore_id
@@ -631,7 +637,7 @@ static func _grid_near(g: Dictionary, p: Vector2, r: float) -> Array:
 
 
 ## Поставить постройку (деньги списываются); возвращает запись. free — даром и без проверок (готовый город)
-func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false) -> Dictionary:
+func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false, size := Vector2i.ZERO) -> Dictionary:
 	if bool(Defs.B[type].get("hidden", false)):
 		return {}
 	if not free and not city_buildable(type):
@@ -640,13 +646,15 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	var d: Dictionary = Defs.B[type]
 	if color < 0:
 		color = pick_color(pos)
-	var chk := check_place(type, pos, yaw, variant, color, -2 if free else -1)
-	if not free and d.get("sub", "") == "wonders" and chk["err"] != "":
+	var chk := check_place(type, pos, yaw, variant, color, -2 if free else -1, PackedInt32Array(), false, size)
+	if (size != Vector2i.ZERO or (not free and d.get("sub", "") == "wonders")) and chk["err"] != "":
 		return {}
 	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else 0),
 		"pos": pos, "yaw": yaw, "variant": variant, "color": color, "y": float(chk["y"]), "cells": chk["cells"],
 		"pop": 0, "families": [], "happy": 50, "up": 0, "down": 0, "staff": 1.0, "active": true, "road": true,
 		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0, "born": next_id, "hz": clock_h}   # born — порядок постройки (перенос его не меняет)
+	if size != Vector2i.ZERO:
+		b["field_size"] = size
 	if manual_hiring() and d.has("jobs"):
 		b["hire"] = 0
 	next_id += 1
@@ -667,8 +675,9 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		if not bulk:
 			Chronicle.add(self, "built")
 	elif not free:
-		money -= build_price(type)
-		flow("build", -build_price(type))
+		var price := build_price(type, size)
+		money -= price
+		flow("build", -price)
 		if not bulk:
 			Chronicle.add(self, "decor" if d["kind"] == "decor" else "built")   # летопись: построено игроком
 	var cells: PackedInt32Array = b["cells"]
@@ -851,7 +860,7 @@ func _staff_roster() -> Array:
 		var b: Dictionary = buildings.get(id, {})
 		var slot := String(m.get("job_class", ""))
 		if not b.is_empty():
-			var allowed: Dictionary = def(b).get("jobs", {})
+			var allowed: Dictionary = _job_slots(b)
 			if slot == "":
 				for cl: String in Defs.CLASS_ORDER:
 					if allowed.has(cl) and worker["cls"] in WORK_CLASSES[cl] and int(b["hire_classes"].get(cl, 0)) < int(allowed[cl]):
@@ -879,13 +888,13 @@ func empty_jobs(cls: String) -> int:
 	var n := 0
 	for b: Dictionary in buildings.values():
 		if not b.get("over", false):
-			n += maxi(0, int(def(b).get("jobs", {}).get(cls, 0)) - int(jobs_of(b).get(cls, 0)))
+			n += maxi(0, int(_job_slots(b).get(cls, 0)) - int(jobs_of(b).get(cls, 0)))
 	return n
 
 
 ## Классы, которым разрешено занять хотя бы одно место в здании.
 func accepted_worker_classes(b: Dictionary) -> Array:
-	var slots: Dictionary = def(b).get("jobs", {})
+	var slots: Dictionary = _job_slots(b)
 	for slot: String in Defs.CLASS_ORDER:
 		if int(slots.get(slot, 0)) > 0:
 			return WORK_CLASSES[slot].duplicate()
@@ -895,7 +904,7 @@ func accepted_worker_classes(b: Dictionary) -> Array:
 func has_vacancy(b: Dictionary, worker_class: String) -> bool:
 	if b.get("over", false):
 		return false
-	var slots: Dictionary = def(b).get("jobs", {})
+	var slots: Dictionary = _job_slots(b)
 	var filled := jobs_of(b)
 	for slot: String in Defs.CLASS_ORDER:
 		if worker_class in WORK_CLASSES[slot] and int(filled.get(slot, 0)) < int(slots.get(slot, 0)):
@@ -907,7 +916,7 @@ func _hire_candidate(b: Dictionary, worker_class := "") -> Dictionary:
 	if b.is_empty() or not buildings.has(int(b["id"])) or hired_of(b) >= job_max(b) or b.get("over", false):
 		return {}
 	var roster := _staff_roster()
-	var slots: Dictionary = def(b).get("jobs", {})
+	var slots: Dictionary = _job_slots(b)
 	var hired := jobs_of(b)
 	var profession := Defs.building_profession(def(b))
 	var order: Array = Defs.CLASS_ORDER.duplicate()
@@ -1066,33 +1075,53 @@ func rp_per_hour(type: String) -> float:
 
 ## «Уютный Рим»: очки исследований копятся медленнее (Balance.RP_MULT) — город растёт вместе с открытиями
 func rp_mult() -> float:
-	var early := float(Balance.EARLY_RP[level]) if cozy_v >= 1 and level >= 0 and level < Balance.EARLY_RP.size() else 1.0
-	return (Balance.RP_MULT if cozy_v >= 1 else 1.0) * early * edict_mul("rp_rate")
+	var rate := Balance.RP_MULT * float(Balance.RANK_RP[clampi(level, 0, Balance.RANK_RP.size() - 1)]) if cozy_v >= 1 else 1.0
+	return rate * edict_mul("rp_rate")
+
+
+static func field_size(b: Dictionary) -> Vector2i:
+	return b.get("field_size", Vector2i.ZERO)
+
+
+func farm_output(b: Dictionary) -> float:
+	if not bool(b.get("active", false)):
+		return 0.0
+	var staff := float(b["staff"]) if manual_hiring() else 1.0
+	return staff * edict_mul("work_output") * Catalog.field_scale(field_size(b))
 
 
 func job_max(b: Dictionary) -> int:
 	var n := 0
-	for c in def(b).get("jobs", {}):
-		n += int(def(b)["jobs"][c])
+	for slots: int in _job_slots(b).values():
+		n += slots
 	return n
+
+
+func _job_slots(b: Dictionary) -> Dictionary:
+	var jobs: Dictionary = def(b).get("jobs", {})
+	var size := field_size(b)
+	if size == Vector2i.ZERO:
+		return jobs
+	var scaled := {}
+	for cls: String in jobs:
+		scaled[cls] = maxi(1, roundi(int(jobs[cls]) * Catalog.field_scale(size)))
+	return scaled
 
 
 ## Рабочие места постройки с учётом найма: сначала младшие классы
 func jobs_of(b: Dictionary) -> Dictionary:
-	var d := def(b)
-	if not d.has("jobs"):
-		return {}
 	if manual_hiring():
 		return (b.get("hire_classes", {}) as Dictionary).duplicate()
+	var slots := _job_slots(b)
 	var h := int(b.get("hire", -1))
-	if h < 0 or h >= job_max(b):
-		return (d["jobs"] as Dictionary).duplicate()
+	if h < 0:
+		return slots.duplicate()
 	var out := {}
 	var left := h
-	for c in Defs.CLASS_ORDER:
-		if d["jobs"].has(c):
-			var n := mini(int(d["jobs"][c]), left)
-			out[c] = n
+	for cls: String in Defs.CLASS_ORDER:
+		if slots.has(cls):
+			var n := mini(int(slots[cls]), left)
+			out[cls] = n
 			left -= n
 	return out
 
@@ -1195,6 +1224,7 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 	var class_output := _class_work_output(houses)
 	var ratio := _work_ratio(jobs, filled)
 	goods = {}
+	var legacy_supply := {}
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		var d := def(b)
@@ -1210,7 +1240,12 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 			b["staff"] = 0.0
 			b["active"] = false
 		if d["kind"] == "farm" and b["active"]:
-			goods[d["makes"]] = float(goods.get(d["makes"], 0.0)) + float(b["staff"]) * edict_mul("work_output") if manual_hiring() else (true if edict_mul("work_output") == 1.0 else edict_mul("work_output"))
+			var output := farm_output(b)
+			if not manual_hiring() and field_size(b) == Vector2i.ZERO:
+				if legacy_supply.has(d["makes"]):
+					continue
+				legacy_supply[d["makes"]] = true
+			goods[d["makes"]] = float(goods.get(d["makes"], 0.0)) + output
 		elif d["kind"] == "store" and b["active"]:
 			stores.append(b)
 	for id in buildings:
@@ -3322,7 +3357,7 @@ func new_family(cls: String) -> Dictionary:
 	if name == "":
 		name = "%s %d" % [Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()], rng.randi() % 1000]
 	var roll := rng.randf()
-	var f := {"name": name, "n": 2 if roll < 0.25 else (3 if roll < 0.70 else 4), "cls": cls}
+	var f := {"name": I18n.remember_name(name), "n": 2 if roll < 0.25 else (3 if roll < 0.70 else 4), "cls": cls}
 	if wants_v >= 1:
 		f["want"] = FamilyWant.roll(rng, level)
 	Residents.new_professions(f, cls, rng, Residents.key_new(self, name))
@@ -4636,6 +4671,9 @@ func save_data() -> Dictionary:
 			e["kw"] = 1
 		if b.has("sz"):
 			e["sz"] = int(b["sz"])
+		var size := field_size(b)
+		if size != Vector2i.ZERO:
+			e["field_size"] = [size.x, size.y]
 		bl.append(e)
 	return {"magis_v": 1, "magis": Magis.save_state(self), "money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
 		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return waiting_save(f)),
@@ -4673,7 +4711,7 @@ func load_data(d: Dictionary) -> void:
 			research[g["unlock"]] = true
 	arrivals = []
 	for f in d.get("arrivals", []):
-		var af := {"name": f["name"], "n": int(f["n"]), "cls": f.get("cls", "plebs"), "back": bool(f.get("back", false)) or int(f["n"]) < 2 or int(f["n"]) > 4}
+		var af := {"name": I18n.remember_name(String(f["name"])), "n": int(f["n"]), "cls": f.get("cls", "plebs"), "back": bool(f.get("back", false)) or int(f["n"]) < 2 or int(f["n"]) > 4}
 		copy_family_state(f, af)
 		if typeof(f.get("m")) == TYPE_ARRAY and not (f["m"] as Array).is_empty():
 			af["m"] = f["m"]
@@ -4740,6 +4778,8 @@ func load_data(d: Dictionary) -> void:
 	_drop_roads2()
 	magis_treasury = loaded_treasury
 	legion.from_dict(d.get("legion", {}))
+	for person: Dictionary in legion.soldiers + legion.recruits:
+		I18n.remember_name(String(person.get("name", "")))
 	Magis.migrate_gate(self, d)
 	hero = Hero.norm(d.get("hero", {}))           # старые сохранения — героя ещё нет: его создаст игра (Game._hero_check)
 	cats = []
@@ -4776,6 +4816,9 @@ func load_data(d: Dictionary) -> void:
 			b["sz"] = int(bd["sz"])
 		if int(bd.get("host", -1)) >= 0:
 			b["host"] = int(bd["host"])
+		var size = bd.get("field_size")
+		if Catalog.field_type(b["type"]) and size is Array and size.size() == 2:
+			b["field_size"] = Vector2i(clampi(int(size[0]), 2, 6), clampi(int(size[1]), 2, 6))
 		if int(bd.get("hire", -1)) >= 0:
 			b["hire"] = int(bd["hire"])
 		elif manual_hiring():
@@ -4785,6 +4828,7 @@ func load_data(d: Dictionary) -> void:
 			b["gift"] = String(bd["gift"])       # подарок друга: помнит дарителя
 		if is_house(b):
 			for family: Dictionary in b["families"]:
+				I18n.remember_name(String(family["name"]))
 				Residents.fit(family, hash([String(family["name"]), int(b["id"])]), String(def(b)["cls"]))
 		buildings[b["id"]] = b
 		for k in cells:
@@ -4814,8 +4858,9 @@ func edict_add(key: String) -> float:
 	return Magis.add(self, key)
 
 
-func build_price(type: String) -> float:
-	return 0.0 if wonder_credit_ready(type) else float(Defs.B[type]["cost"]) * edict_mul("build_cost")
+func build_price(type: String, size := Vector2i.ZERO) -> float:
+	var cost := float(Defs.B[type]["cost"]) * edict_mul("build_cost") * Catalog.field_scale(size)
+	return 0.0 if wonder_credit_ready(type) else (roundf(cost) if size != Vector2i.ZERO else cost)
 
 
 func need_range(d: Dictionary) -> float:

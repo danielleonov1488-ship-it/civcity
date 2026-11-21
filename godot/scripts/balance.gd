@@ -40,7 +40,7 @@ const LEVELS := [
 		{"p": ["count", "forum"], "n": 1, "text": "Форум", "icon": "caesar", "say": "форум"},
 		{"p": ["shops", "services"], "n": 2, "text": "Разные лавки услуг", "icon": "services", "say": "две разные лавки услуг"},
 		{"p": ["cls", "patricians"], "n": 15, "text": "Патриции", "icon": "toga", "say": "15 патрициев"}]},
-	{"pop": 500, "happy": 67, "need": [
+	{"pop": 475, "happy": 67, "need": [
 		{"p": ["tier", 6], "n": TIER_PCT, "pct": true, "text": "Исследования ряда «Большой город»", "icon": "book", "say": "70% исследований ряда «Большой город»"},
 		{"p": ["count", "academy"], "n": 1, "text": "Академия", "icon": "book", "say": "академия"},
 		{"p": ["count", "theatre"], "n": 1, "text": "Театр", "icon": "fun", "say": "театр"},
@@ -51,8 +51,9 @@ const LEVELS := [
 ## Очки исследований (скриптории, школы, почта) копятся медленнее: исследования — главный темп игры
 const RP_MULT := 0.5
 ## Старт быстрый, дальше медленнее (владелец, 17.11: «рост в начале должен быть быстрым, дальше — медленным»):
-## множитель очков исследований по уровню города — «Стоянка», «Хутор», «Деревня»; с «Посёлка» — 1
-const EARLY_RP := [4.0, 3.0, 2.0]
+## Множитель очков исследований по уровню города — от «Стоянки» до «Вечного города».
+const RANK_RP := [4.0, 3.0, 2.0, 2.0, 2.0, 2.5, 3.0, 5.0]
+const EARLY_RP := [RANK_RP[0], RANK_RP[1], RANK_RP[2]]
 ## свитков на полке в начале новой игры — первые открытия сразу
 const START_RP := 60.0
 
@@ -70,7 +71,8 @@ const SIZE_MAX := 8
 
 ## Жителей уже больше, чем нужно следующему рангу, — повозка ещё в AHEAD_SLOW раз реже: город ждёт развития
 ## (исследований и построек ранга), а не растёт вширь
-const AHEAD_SLOW := 1.5
+const AHEAD_SLOW := 4.0
+const FINAL_AHEAD_SLOW := 16.0
 
 
 ## Этап 3: походы жителей в большие здания. Семья побывала на службе, в термах, на зрелище — её дому +% счастья
@@ -127,4 +129,7 @@ static func size_penalty(pop: int) -> int:
 
 ## Множитель промежутка между повозками при pop жителях; next_pop — жителей нужно следующему рангу (0 — рангов больше нет)
 static func arrive_slow(pop: int, next_pop := 0) -> float:
-	return minf(ARRIVE_SLOW_MAX, 1.0 + float(pop) / ARRIVE_SLOW_POP) * (AHEAD_SLOW if next_pop > 0 and pop >= next_pop else 1.0)
+	var final_pop := int(LEVELS[-1]["pop"])
+	var target := next_pop if next_pop > 0 else final_pop
+	var ahead := FINAL_AHEAD_SLOW if target == final_pop else AHEAD_SLOW
+	return minf(ARRIVE_SLOW_MAX, 1.0 + float(pop) / ARRIVE_SLOW_POP) * (ahead if pop >= target else 1.0)

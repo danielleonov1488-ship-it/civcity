@@ -369,7 +369,6 @@ static func cells(land: Land, id: int) -> Dictionary:
 	var psh := 1.8 if river else SHORE
 	var out := {}
 	var road := []
-	var rvis := {}                                  # высота ложбины под дорогой (для видимой земли под мостом)
 	var band := PackedInt32Array()                  # клетки (i, j) левого верхнего угла квадратов 1 м полосы ручья — для проверки «свободно»
 	var R := REACH + MARGIN
 	var per := int(round(1.0 / Land.CELL))
@@ -421,10 +420,9 @@ static func cells(land: Land, id: int) -> Dictionary:
 					if Land.walk_kind(land.base_kind[k]):
 						if y1 < Land.WATER_Y + 0.3:
 							road.append(k)                    # дорога исходной карты над ручьём — насыпь под мостом
-							rvis[k] = y1
 						continue
 					out[k] = y1
-	var res := {"cells": out, "road": road, "band": band, "rvis": rvis}
+	var res := {"cells": out, "road": road, "band": band}
 	_cells[id] = res
 	return res
 
@@ -475,11 +473,6 @@ static func apply(land: Land, list: Array) -> void:
 			if mine:
 				land.h[k] = y
 			dirty[Vector2i((k % Land.N) / Land.CH, (k / Land.N) / Land.CH)] = true
-		var rv: Dictionary = cs["rvis"]
-		if bool(def_of(id).get("river", false)):
-			for k: int in rv:
-				land.set_vis(k, rv[k])                    # под мостом видимая земля — дно реки (дорога остаётся насыпью для ходьбы)
-				dirty[Vector2i((k % Land.N) / Land.CH, (k / Land.N) / Land.CH)] = true
 		for ch: Vector2i in dirty:
 			land.dirty[ch] = true
 			land.dirty_walk[ch] = true
@@ -493,28 +486,65 @@ static func apply(land: Land, list: Array) -> void:
 		var rd: Array = cs["road"]
 		if not rd.is_empty():
 			var br := _bridge(land, id, rd)
-			if bool(def_of(id).get("river", false)):
-				br["river"] = true
-				br["cells"] = rd
 			land.bridges.append(br)
+			_open_bridge_bed(land, br)
 	land.gen += 1
 
 
-## Мост там, где ручей проходит под дорогой исходной карты: середина, направление ручья, высота дороги, пролёт
+## Пролёт большой дороги. Ось совпадает с дорогой, настил горизонтальный.
 static func _bridge(land: Land, id: int, road: Array) -> Dictionary:
-	var c := Vector2.ZERO
-	var y := 0.0
+	var lo := INF
+	var hi := -INF
 	for k: int in road:
-		c += land.cell_center(k % Land.N, k / Land.N)
-		y += land.hq(k)
-	c /= road.size()
-	y /= road.size()
-	var p := plan(id)
-	var nr := nearest(p, c)
-	var pts: PackedVector2Array = p["pts"]
-	var i: int = maxi(int(nr[2]), 0)
-	var dir := (pts[mini(i + 1, pts.size() - 1)] - pts[i]).normalized()
-	return {"id": id, "pos": c, "dir": dir, "y": y, "w": float(nr[1])}
+		var q := land.cell_center(k % Land.N, k / Land.N)
+		lo = minf(lo, q.y)
+		hi = maxf(hi, q.y)
+	var river := bool(def_of(id).get("river", false))
+	var center := Vector2(Land.ROAD_X, (lo + hi) * 0.5)
+	var span := maxf(hi - lo + 1.0, 4.0)
+	var arches := maxi(3, ceili(span / 3.5)) if river else 1
+	var half := maxf(span, float(arches) * 2.9) * 0.5
+	var y := maxf(Land.WATER_Y + 1.25, land.height_at(center.x, center.y))
+	return {"id": id, "pos": center, "dir": Vector2.RIGHT, "y": y,
+		"river": river, "cells": road, "half": half, "arches": arches}
+
+
+## Для ходьбы остаётся дорога. Видимая земля опущена по всей ширине и длине настила.
+static func _open_bridge_bed(land: Land, br: Dictionary) -> void:
+	var center: Vector2 = br["pos"]
+	var margin := float(Land.RS) * Land.CELL
+	var radius := Vector2(Land.ROAD_R + 0.18, float(br["half"])) + Vector2.ONE * margin
+	var lo := land.cell(center - radius)
+	var hi := land.cell(center + radius)
+	var half: float = br["half"]
+	var y: float = br["y"]
+	var shore := Vector2(land.height_at(center.x, center.y - half - 1.8), land.height_at(center.x, center.y + half + 1.8))
+	br["shore"] = shore
+	for j in range(maxi(0, lo.y), mini(Land.N - 1, hi.y) + 1):
+		for i in range(maxi(0, lo.x), mini(Land.N - 1, hi.x) + 1):
+			var k := land.idx(i, j)
+			land.set_vis(k, minf(land.h[k], Land.WATER_Y - 0.42))
+	for j in range(lo.y - 7, hi.y + 8):
+		for i in range(lo.x, hi.x + 1):
+			if not land.inside(i, j):
+				continue
+			var p := land.cell_center(i, j) - center
+			var k := land.idx(i, j)
+			if absf(p.x) >= Land.ROAD_R or not Land.walk_kind(land.base_kind[k]):
+				continue
+			var ramp := clampf((absf(p.y) - half) / 1.8, 0.0, 1.0)
+			if ramp >= 1.0:
+				continue
+			var height := lerpf(y, shore.x if p.y < 0.0 else shore.y, ramp)
+			if land.h[k] == land.base_h[k]:
+				land.h[k] = height
+			land.base_h[k] = height
+			land.dirty_walk[Vector2i(i / Land.CH, j / Land.CH)] = true
+	var ch0 := Vector2i(lo.x / Land.CH, lo.y / Land.CH)
+	var ch1 := Vector2i(hi.x / Land.CH, hi.y / Land.CH)
+	for j in range(maxi(0, ch0.y - 1), mini(Land.CHN - 1, ch1.y + 1) + 1):
+		for i in range(maxi(0, ch0.x - 1), mini(Land.CHN - 1, ch1.x + 1) + 1):
+			land.dirty[Vector2i(i, j)] = true
 
 
 ## Какие ручьи проложить в этом городе: из сохранения — ровно те (saved != null), иначе — все, что свободны.

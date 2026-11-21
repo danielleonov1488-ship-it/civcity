@@ -70,7 +70,7 @@ static func _fill_person(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tv.add_child(hud._wrap(hud._label(People.name_of(r), 24, false, Hud.C_INK, hud.font_title), W - PORTRAIT - 60.0))
 	var role := Residents.role(m, ms) if not m.is_empty() else ("ребёнок" if r["child"] else "житель")
-	tv.add_child(hud._wrap(hud._label("%s · семья %s" % [_cap(role), StoryDefs.fam_gen(fam)], 15, true, Hud.C_SOFT), W - PORTRAIT - 60.0))
+	tv.add_child(hud._wrap(hud._label("%s · семья %s" % [_cap(I18n.t(role)), I18n.display_name(StoryDefs.fam_gen(fam))], 15, true, Hud.C_SOFT), W - PORTRAIT - 60.0))
 	var chip := HBoxContainer.new()
 	chip.add_theme_constant_override("separation", 4)
 	chip.add_child(hud._cls_pic(cls, 26))
@@ -100,7 +100,10 @@ static func _fill_person(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 			continue
 		var om: Dictionary = o.get("m", {})
 		var b := Button.new()
-		b.text = "%s — %s" % [String(om.get("pn", "?")).get_slice(" ", 0) if int(om.get("sx", 0)) == 0 else String(om.get("pn", "?")), Residents.role(om, ms)]
+		var pn := String(om.get("pn", "?"))
+		if int(om.get("sx", 0)) == 0:
+			pn = pn.get_slice(" ", 0)
+		b.text = "%s — %s" % [I18n.display_name(pn), I18n.t(Residents.role(om, ms))]
 		b.focus_mode = Control.FOCUS_NONE
 		b.add_theme_font_size_override("font_size", 14)
 		b.add_theme_stylebox_override("normal", hud._box_pill(20, 4))
@@ -1247,16 +1250,17 @@ static func family_chips(hud: Hud, b: Dictionary, f: Dictionary, w: float) -> Co
 	for m: Dictionary in ms:
 		var r: Dictionary = live.get("%s|%d" % [String(m.get("pn", "")), int(m.get("sd", 0))], {})
 		var nm := String(m.get("pn", "?"))
+		var display := I18n.display_name(nm)
 		var job := int(r.get("job", m.get("job", -1)))
 		var jb: Dictionary = c.buildings.get(job, {})
 		var t := ""
 		if not jb.is_empty():
 			var noun := Residents.job_noun(String(jb["type"]), int(m.get("sx", 0)) == 1)
-			t = "%s — %s" % [nm, noun if noun != "" else String(c.def(jb)["name"]).to_lower()]
+			t = "%s — %s" % [display, I18n.t(noun if noun != "" else String(c.def(jb)["name"]).to_lower())]
 		elif int(m.get("age", 1)) == 1 and Residents.role(m, ms) in ["отец семьи", "глава семьи", "мать семьи", "жена"]:
-			t = "%s — %s" % [nm, Residents.role(m, ms)]
+			t = "%s — %s" % [display, I18n.t(Residents.role(m, ms))]
 		else:
-			t = "%s, %s" % [nm, Residents.role(m, ms)]
+			t = "%s, %s" % [display, I18n.t(Residents.role(m, ms))]
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 4)
 		row.add_child(hud._icon("person", 18, Hud.C_SOFT))

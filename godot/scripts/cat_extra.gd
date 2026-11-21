@@ -7,14 +7,43 @@ extends RefCounted
 const M := Bp.M
 const FL := Bp.FL
 
+const CATSHOP_PILLOW := "SM_Prop_Pillow_06"
+const CATSHOP_BEDS := [
+	Vector3(1.45, CatShops.CTR, 1.53),
+	Vector3(-2.02, 0, 1.02),
+	Vector3(-1.17, 0, 1.97),
+]
+const CATSHOP_PILLOW_SCALE := 0.76
+const CATSHOP_KIT_BED := Vector3(-1.10, 0, 2.10)
+
+
+## На верх подушки: центр и высоту берём из той же модели, что рисует лавка.
+static func catshop_seat(bed: Vector3) -> Vector3:
+	var box := Bp.model_aabb(CATSHOP_PILLOW)
+	return bed + Vector3(0, box.size.y * CATSHOP_PILLOW_SCALE - 0.012, 0)
+
+
+static func catshop_pillow(b: Bp, bed: Vector3, unit := 1.0) -> void:
+	var box := Bp.model_aabb(CATSHOP_PILLOW)
+	var center := box.get_center()
+	var offset := Vector3(center.x, box.position.y, center.z) * CATSHOP_PILLOW_SCALE
+	b.add(CATSHOP_PILLOW, (bed - offset) * unit, 0, CATSHOP_PILLOW_SCALE * unit)
+
+
+static func pet_position(type: String, entry: Array) -> Vector3:
+	if type == "catshop" and entry.size() > 7:
+		return catshop_seat(CATSHOP_BEDS[int(entry[7])])
+	return entry[1]
+
+
 ## Животные при здании (game._pets2): тип → [[кто, где, поворот, движение, масштаб, облик (−1 — всегда)], …]
 ## «Кошачья лавка» (Д14): кошка может носить вещицу — седьмое поле (Defs.CAT_ITEMS); «acc» — вещица на витрине
 ## (движение — её id), «toy» — клубок на нитке качается под навесом (кошка в «Pet» тянется к нему)
 const PETS := {
 	"shelter": [["cat", Vector3(1.1, 0.5, -3.25), 2.4, "sleep", 1.0, -1], ["cat", Vector3(2.1, 0.5, -3.25), 0.6, "sleep", 1.0, -1],
 		["donkey", Vector3(2.7, 0, -1.9), PI / 2 + 0.2, "Eating", 0.95, -1]],
-	"catshop": [["cat", Vector3(1.55, 0.97, 1.5), 0.35, "sit", 1.0, -1, "petasos"], ["cat", Vector3(-2.1, 0.14, 1.0), 2.2, "sleep", 0.9, -1, "bow"],
-		["cat", Vector3(0.0, 0.0, 1.05), 0.1, "pet", 1.0, -1, "collar"], ["cat", Vector3(1.75, 1.27, -0.6), 0.2, "sleep", 0.9, -1, "bandana"],
+	"catshop": [["cat", Vector3.ZERO, 0.10, "sit", 0.95, -1, "petasos", 0], ["cat", Vector3.ZERO, 1.57, "sleep", 0.9, -1, "bow", 1],
+		["cat", Vector3(0.05, 0.0, 1.00), 0.1, "pet", 0.95, -1, "collar"], ["cat", Vector3.ZERO, -1.57, "sleep", 0.9, -1, "bandana", 2],
 		["toy", Vector3(-0.45, 2.42, 1.42), 0.0, "", 1.0, -1], ["acc", Vector3(0.75, 1.05, 1.42), 0.4, "pileus", 1.6, -1],
 		["acc", Vector3(2.0, 1.02, 1.4), -0.3, "wreath", 1.5, -1], ["acc", Vector3(-0.15, 1.0, -0.55), 0.3, "cape", 1.3, -1],
 		["acc", Vector3(-0.85, 1.48, -0.55), 0.0, "flower", 1.8, -1]],
@@ -166,10 +195,8 @@ static func _catshop(b: Bp) -> void:
 	for j in 4:
 		var sl: Vector2 = CatShops.SHELF_SLOTS[j]
 		b.add(["SM_Prop_Basket_06", "SM_Prop_Pillow_05", "SM_Prop_Basket_12", "SM_Prop_Pillow_06"][j], c + Vector3(sl.x, sl.y, 0.0), j * 0.7, [0.45, 0.42, 0.5, 0.45][j])
-	# кошка спит на подушке верхней доски полки (раньше — выше доски, «в воздухе»)
-	# у двери: корзинка-лежанка с подушкой (в ней спит кошка), миски с молоком и рыбкой
-	b.add("SM_Prop_Basket_11", Vector3(-2.15, 0, 0.95), 0.3, 0.8)
-	b.add("SM_Prop_Pillow_06", Vector3(-2.15, 0.06, 0.95), 0.5, 0.65)
+	for bed: Vector3 in CATSHOP_BEDS:
+		catshop_pillow(b, bed)
 	for x: float in [-0.75, -0.45]:
 		b.add("SM_Prop_Bowl_04", Vector3(x, 0, 1.15), 0.0, 0.5)
 	CatShops._sign(b, Vector3(-1.25, 2.6, 0.14), 0.0, "H", CatShops.PINK, 0.5)

@@ -25,6 +25,9 @@ const STREETS := [
 	[Vector2(158, 192), Vector2(192, 192)], [Vector2(192, 178), Vector2(192, 206)], [Vector2(158, 206), Vector2(192, 206)],
 ]
 
+signal balance_finished
+var embedded := false
+
 var game
 var c                                # City (без типа: на старых данных нет новых методов)
 var K: Dictionary                    # константы defs.gd по имени
@@ -74,14 +77,17 @@ func _run() -> void:
 	game.hud.quiet_tips = 0
 	game.hud.apply_reveal(3)
 	await frames(5)
-	if "bot" in OS.get_cmdline_user_args():
+	if embedded or "bot" in OS.get_cmdline_user_args():
 		await _bot()
 	else:
 		c.auto_hire = true                   # проверяем темп при занятых местах писцов
 		c.wants_v = 1
 		c.cozy_v = 1
 		await _checks()
-	get_tree().quit()
+	if embedded:
+		balance_finished.emit()
+	else:
+		get_tree().quit()
 
 
 # ---------- помощники ----------
@@ -669,8 +675,61 @@ var upg_spent := 0.0
 var leg_spent := 0.0
 
 
+var city13 := false
+var city13_seen := {}
+var city13_late := 0.0
+var city13_full := 0
+var city13_min := 100
+var city13_research := {}
+var city13_rank_pop := -1
+var city13_last_build_pop := 0
+
+
+func _city13_progress() -> void:
+	if not city13:
+		return
+	var pop: int = c.stats["pop"]
+	var happy: int = c.stats["happy"]
+	if not city13_seen.has(c.level):
+		city13_seen[c.level] = true
+		print("CITY13 RANK %d t=%.2f pop=%d happy=%d" % [c.level, t, pop, happy])
+		if c.level == Defs.LEVELS.size() - 1:
+			city13_late = t + 72.0
+			city13_rank_pop = pop
+	for tech: Dictionary in Defs.RESEARCH:
+		var id: String = tech["id"]
+		if not city13_research.has(id) and c.research_visible(id) and c.research_done(id):
+			city13_research[id] = true
+			print("CITY13 RESEARCH %s t=%.2f pop=%d" % [id, t, pop])
+	for id: String in Defs.B:
+		if not city13_seen.has(id) and c.city_buildable(id) and c.unlocked(id):
+			city13_seen[id] = true
+			city13_last_build_pop = maxi(city13_last_build_pop, pop)
+			print("CITY13 BUILD %s t=%.2f pop=%d" % [id, t, pop])
+
+
+func _city13_pending() -> bool:
+	if not city13 or city13_late <= 0.0 or t >= city13_late + 168.0:
+		return false
+	if t < city13_late:
+		return true
+	for tech: Dictionary in Defs.RESEARCH:
+		var id: String = tech["id"]
+		if not city13_research.has(id) and c.research_visible(id) and Defs.story_of(tech) == "":
+			return true
+	return false
+
+
 func _bot() -> void:
-	headless = DisplayServer.get_name() == "headless"
+	headless = embedded or DisplayServer.get_name() == "headless"
+	city13 = embedded or "city13" in OS.get_cmdline_user_args()
+	if embedded:
+		c.rng.seed = 13
+		game.hud.root.hide()
+	if city13 and headless:
+		# Пересчёт, люди и повозка остаются те же. Собирать сетки новых домов без окна незачем.
+		c.building_added.disconnect(game._on_added)
+		c.building_removed.disconnect(game._on_removed)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("seed="):                # «-- bot seed=7» — другой случай: семьи, цвета (разброс итогов)
 			c.rng.seed = int(a.substr(5))
@@ -692,7 +751,8 @@ func _bot() -> void:
 	check(c.has_connected_house(), "bot starts with houses connected to station")
 	var lvl := 0
 	var wall0 := Time.get_ticks_msec()
-	while t < MAX_H and c.level < Defs.LEVELS.size() - 1:
+	_city13_progress()
+	while t < MAX_H and (c.level < Defs.LEVELS.size() - 1 or _city13_pending()):
 		for k in 8:
 			_bot_step()
 		if c.level != lvl:
@@ -707,7 +767,7 @@ func _bot() -> void:
 					left.append("%s %d/%d" % [e["text"], int(e["have"]), int(e["need"])])
 			print("  .. %d h (%.0f min): lvl %d pop %d happy %d money %d rp %d houses %d buildings %d · wall %.0f s · next needs %s" % [int(t), t * SEC_H / 60.0, c.level,
 				int(c.stats["pop"]), int(c.stats["happy"]), int(c.money), int(c.rp), _houses().size(), c.buildings.size(), (Time.get_ticks_msec() - wall0) / 1000.0, left])
-		if t - float(rk["t0"]) > (700.0 if int(c.cozy_v) >= 1 else 250.0):   # «Уютный Рим»: ранг — сотни часов
+		if c.level < Defs.LEVELS.size() - 1 and t - float(rk["t0"]) > (700.0 if int(c.cozy_v) >= 1 else 250.0):   # «Уютный Рим»: ранг — сотни часов
 			var alive := {}
 			for tp in ["house_pleb", "house_artisan", "house_patrician"]:
 				var dd: Dictionary = dead.get(tp, {})
@@ -721,6 +781,13 @@ func _bot() -> void:
 		game.rig.set_view(Vector3(192, 2, 165), 20, 58, 150)
 		await shot("pace_bot_end.png")
 	_summary()
+	if city13:
+		print("CITY13 LATE hours_at_100=%d min=%d sampled=%d" % [city13_full, city13_min, 72 if city13_late > 0 else 0])
+		for id: String in Defs.B:
+			if c.city_buildable(id) and not city13_seen.has(id):
+				print("CITY13 LOCKED %s by=%s" % [id, c.unlock_id(id)])
+		check(city13_rank_pop >= 0 and city13_rank_pop <= 520, "CITY13 all ranks at 520 residents or fewer")
+		print("CITY13 BALANCE fails=%d" % fails)
 
 
 ## Улицы бота: ряды по отрезкам между поперечными улицами, от станции наружу; не через пруды
@@ -999,8 +1066,17 @@ func _bot_step() -> void:
 					print("ECONREQ t=%.1f lvl=%d %s +%d rp +%d den (rp now %d/%d, money %d/%d)" % [t, c.level, g, int(gq["rp"]), int(gq["money"]), int(c.rp), int(c.rp_cap()), int(c.money), int(c.money_cap())])
 		_econ_hour()
 		_bstory()
-		if c.rank_ok():
+		if c.rank_ok() and c.level < Defs.LEVELS.size() - 1:
 			_press()
+		if city13:
+			print("CITY13 HOUR t=%.0f lvl=%d pop=%d happy=%d free=%s block=%s" % [
+				t, c.level, int(c.stats["pop"]), int(c.stats["happy"]), c.stats.get("free", {}), c.stats.get("arrive_block", "")])
+			if city13_late > 0.0 and t <= city13_late:
+				var happy: int = c.stats["happy"]
+				city13_full += int(happy == 100)
+				city13_min = mini(city13_min, happy)
+	if city13 and (int(floor(t)) != h0 or not walks.is_empty()):
+		_city13_progress()
 
 
 ## Семьи с площади — в дома: сперва туда, где уже живут (полный дом можно надстроить), счастливее — раньше.
@@ -1170,7 +1246,7 @@ func _bresearch() -> void:
 		order.append(r["id"])
 	for id in order:
 		var r := Defs.research(id)
-		if r.is_empty() or c.research_done(id) or int(r["lvl"]) > c.level or id in B_SKIP or Defs.story_of(r) != "":
+		if r.is_empty() or c.research_done(id) or int(r["lvl"]) > c.level or (id in B_SKIP and not city13) or not c.research_visible(id) or Defs.story_of(r) != "":
 			continue
 		if c.missing_research_prerequisite(r) != "":
 			continue
@@ -1627,7 +1703,7 @@ func _blegion(save: float) -> void:
 func _econ_hour() -> void:
 	var avail := []
 	for r in Defs.RESEARCH:
-		if c.research_done(String(r["id"])) or int(r["lvl"]) > c.level or r["id"] in B_SKIP or r.has("story"):
+		if c.research_done(String(r["id"])) or int(r["lvl"]) > c.level or (r["id"] in B_SKIP and not city13) or not c.research_visible(String(r["id"])) or Defs.story_of(r) != "":
 			continue
 		if c.missing_research_prerequisite(r) != "":
 			continue

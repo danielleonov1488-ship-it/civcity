@@ -15,6 +15,7 @@ var ppl: People
 var hud
 var fails := 0
 var mode := ""
+var out_shots := SHOTS
 var cands := []
 
 
@@ -22,6 +23,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("mode="):
 			mode = a.trim_prefix("mode=")
+		elif a.begins_with("out="):
+			out_shots = a.trim_prefix("out=").trim_suffix("/") + "/"
 	if mode == "owner" and FileAccess.file_exists(OWNER):
 		DirAccess.copy_absolute(OWNER, GamePaths.save_dir().path_join("city.json"))
 		_boot({"play": "1", "hour": "11"})
@@ -71,10 +74,10 @@ func check(ok: bool, what: String, extra = null) -> bool:
 func shot(name: String) -> void:
 	hud.advisor_panel.visible = false          # совет советника не закрывает снимок
 	await frames(8)
-	DirAccess.make_dir_recursive_absolute(SHOTS)
+	DirAccess.make_dir_recursive_absolute(out_shots)
 	if mode == "owner" and not name.begins_with("res_owner"):
 		name = name.replace("res_", "res_owner_")
-	get_viewport().get_texture().get_image().save_png(SHOTS + name)
+	get_viewport().get_texture().get_image().save_png(out_shots + name)
 	print("SHOT ", name)
 
 

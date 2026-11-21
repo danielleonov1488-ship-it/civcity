@@ -147,6 +147,9 @@ static func _tint_mat(m: StandardMaterial3D, a: float) -> StandardMaterial3D:
 ## в среднем 0,1 из 255, теней на 20% меньше вызовов (город владельца: 2828 → 2248), +5–7% кадров
 const SMALL_SHADOW := 0.9
 static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
+	if name == "#wheat":
+		(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		return
 	var mesh: Mesh = (sub["mm"] as MultiMesh).mesh
 	if mesh != null:
 		var sz := mesh.get_aabb().size
@@ -242,6 +245,10 @@ func _sub(mesh: Mesh, local: Transform3D, colors := false) -> Dictionary:
 
 
 static func _special_mesh(name: String) -> Mesh:
+	if name == "#wheat":
+		if not _special.has(name):
+			_special[name] = CatCivic.wheat_mesh()
+		return _special[name]
 	if _special.has(name):
 		return _special[name]
 	if name.begins_with("#mil_"):                  # палатки, мишени, баллисты… Легиона (cat_military.gd)
@@ -461,15 +468,13 @@ func _grow(g: Dictionary) -> void:
 	var cap: int = maxi(16, int(g["cap"]) * 2)
 	for sub in g["subs"]:
 		var mm: MultiMesh = sub["mm"]
-		var old := mm.buffer
+		var buffer := mm.buffer
 		mm.instance_count = cap
-		var buf := mm.buffer
-		for i in old.size():
-			buf[i] = old[i]
-		# новые места — пустые (нулевой масштаб)
-		for i in range(old.size(), buf.size()):
-			buf[i] = 0.0
-		mm.buffer = buf
+		# В оконном рендере сохраняем старые экземпляры и добавляем пустые места.
+		if DisplayServer.get_name() != "headless":
+			var stride := 12 + 4 * int(mm.use_colors) + 4 * int(mm.use_custom_data)
+			buffer.resize(cap * stride)
+			mm.buffer = buffer
 	g["cap"] = cap
 
 
