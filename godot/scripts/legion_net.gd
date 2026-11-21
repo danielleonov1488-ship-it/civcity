@@ -111,8 +111,8 @@ func pvp_opponents(cb: Callable) -> void:
 	if int(pr.get("status", 200)) == 0:
 		cb.call([], _err(pr))                       # связи нет — второй запрос не ждём, говорим сразу
 		return
-	# hero=1: мы понимаем героя в отряде обороны (старым играм сервер отдаёт отряды без героя)
-	var r := await _call(HTTPClient.METHOD_GET, "/pvp/opponents?hero=1")
+	# Сервер знает, что мы показываем героя, снаряжение и два ряда.
+	var r := await _call(HTTPClient.METHOD_GET, "/pvp/opponents?hero=1&v=%d" % Legion.PVP_FORT_SNAPSHOT)
 	if r["status"] != 200:
 		cb.call([], _err(r))
 		return
@@ -143,7 +143,8 @@ func pvp_attack(opp: Dictionary, cb: Callable) -> void:
 		cb.call({}, wait)
 		return
 	# hero: true — мы понимаем героя в отряде обороны соперника (старой игре сервер ставит соперника без героя)
-	var r := await _call(HTTPClient.METHOD_POST, "/pvp/attack", {"target": String(opp.get("id", "")), "squad": attack_snapshot(lg), "hero": true})
+	var r := await _call(HTTPClient.METHOD_POST, "/pvp/attack", {"target": String(opp.get("id", "")), "squad": attack_snapshot(lg),
+		"hero": true, "v": Legion.PVP_FORT_SNAPSHOT})
 	if r["status"] != 200:
 		if (r["data"] as Dictionary).get("me") is Dictionary:
 			_apply_me(r["data"]["me"])
@@ -248,8 +249,7 @@ func pvp_rename(nm: String, cb: Callable) -> void:
 		cb.call(""))
 
 
-## Отряд похода — тот, что пойдёт в бой (сервер сверит его с городом в облаке); герой — на первом месте, если сервер
-## его знает (Legion.pvp_hero)
+## Отряд похода — тот, что пойдёт в бой. Сервер сверит его с городом в облаке.
 static func attack_snapshot(lg: Legion) -> Dictionary:
 	return lg.pvp_snapshot("pvp")
 

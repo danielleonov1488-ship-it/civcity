@@ -6,6 +6,9 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const sim = require('./legion_sim');
+// Фиксируем неделю «Молодых бойцов», чтобы состав и таймер проверялись в любой месяц.
+process.env.EVENT_WEEK_MS = String(7 * 864e5);
+process.env.EVENT_EPOCH_MS = String(Date.now() - 22 * 864e5);
 const ev = require('./events');
 
 const DATA = process.env.TEST_DATA_DIR || path.join(__dirname, '..', '.work', 'srvtest_events', String(Date.now()));
@@ -74,9 +77,10 @@ function city({ level, buildings, levels, progress = 40 }) {
     const inputs = [[0, 'auto', true]];
     const rp = sim.replayPvp(A.attack, A.enemy, A.seed, inputs);
     ok(rp && rp.win, `test replays the same battle: win in ${rp && rp.time.toFixed(1)} s`);
-    // слишком рано — не засчитан
-    r = await call('POST', '/events/trial/result', { battle: A.battle, win: true, inputs }, tok);
+    // Для совсем короткого боя выдерживаем порог, иначе проверяем ранний отчёт.
     const early = (rp.time / 3 - 2) > 0.5;
+    if (!early) await sleep(Math.max(0, (rp.time / 3 - 2) * 1000) + 50);
+    r = await call('POST', '/events/trial/result', { battle: A.battle, win: true, inputs }, tok);
     if (early) ok(r.data.accepted === false && r.data.score === 0 && /быстрее/.test(r.data.reason), 'too fast → not counted', r.data);
     else ok(r.data.accepted && r.data.score > 1000, 'short battle counted', r.data);
     // второй бой — честно ждём
@@ -91,6 +95,24 @@ function city({ level, buildings, levels, progress = 40 }) {
     ok(r.data.me.best === r.data.score && r.data.top.length === 1 && r.data.top[0].score === r.data.score && r.data.me.place === 1, 'best score and table');
     r = await call('POST', '/events/trial/result', { battle: B.battle, win: true, inputs }, tok);
     ok(r.data.repeat === true, 'same battle again → repeat');
+
+    r = await call('POST', '/register', { email: 'fort@events.test', password: 'fort-test-pass' });
+    const fortToken = r.data.token;
+    const fortCity = { version: 2, level: 6, legion_v: 3, money: 9000, research: [], buildings: [],
+      hero: { m: { pn: 'Гай Валерий', sx: 0, look: {} } }, legion: {
+        v: 3, fort: { roles_v: 1, plots: [{ b: 'hq', lv: 6 }, { b: 'barracks', lv: 10 }], know: { smith: true, weap3: true } },
+        squad3: [1, 0, 0, 2, 0], perks: {}, flags: { camp_open: true },
+        soldiers: [{ id: 1, cls: 'legionary', rank: 39, stars: 1, gear: { weapon: 1 } }, { id: 2, cls: 'legionary', rank: 49, stars: 1, hero: true }],
+        items: [{ id: 1, on: 1, slot: 'weapon', cls: 'legionary', tier: 3, rarity: 0 }],
+      } };
+    r = await call('PUT', '/save?game=rome2', { data: JSON.stringify(fortCity), force: true }, fortToken);
+    ok(r.status === 200, 'cloud upload stores the new fort format');
+    const fortSnapshot = { v: 2, squad: [{ type: 'legionary', level: 40, place: 0, sid: 1 },
+      { type: 'hero', unit: 'legionary', level: 50, place: 3, sid: 2 }] };
+    r = await call('POST', '/events/trial/attack', { tier: 1, snapshot: fortSnapshot }, fortToken);
+    const ft = r.data.attack;
+    ok(r.status === 200 && ft?.v === 2 && ft.squad.every(e => e.level === 15) && ft.squad[0].stats3.atk === 71 &&
+      ft.squad[1].type === 'hero' && ft.squad[1].place === 3, 'level-15 trial recomputes fort stats with gear, preserving hero position', r.data);
     // сочинённая победа — не сходится
     r = await call('POST', '/events/trial/attack', { tier: 3, snapshot: { squad: [{ type: 'legionary', level: 1 }] } }, tok);
     const C = r.data;

@@ -11,15 +11,14 @@
    Нашествие варваров и подземелья — бои без сервера (godot/scripts/legion_events.gd), по тому же номеру недели. */
 
 const crypto = require('crypto');
-const { replayPvp, cleanInputs } = require('./legion_sim');
-const { unitStats, power, snapPower, noHero } = require('./pvp');
+const { replayPvp, cleanInputs, FORT_SNAPSHOT, LEGACY_MAX_LEVEL } = require('./legion_sim');
+const { unitStats, power, snapPower, noHero, snapshotForClient } = require('./pvp');
 
 const WEEK = +process.env.EVENT_WEEK_MS || 7 * 864e5;
 const EPOCH = +process.env.EVENT_EPOCH_MS || Date.UTC(2026, 10, 2);
 const TRIES = 5;
 const BATTLE_TTL = 30 * 60e3;
 const MAX_SPEED = 3;
-const MAX_LEVEL = 40;
 const RULES = [
   { id: 'infantry', name: 'Только пехота', text: 'В бой идут только легионеры и копейщики (герой — легионером).', types: ['legionary', 'spearman'] },
   { id: 'noperks', name: 'Без умений', text: 'Умения в этом бою не действуют: всё решают бойцы.', perks: false },
@@ -54,7 +53,7 @@ function enemyOf(week, tier) {
   const types = Array.from({ length: n }, () => pool[Math.floor(rnd() * pool.length)]);
   const pw = (t, l) => power(unitStats(t, l, 0, 0));
   let best = 1, diff = Infinity;
-  for (let L = 1; L <= MAX_LEVEL; L++) {
+  for (let L = 1; L <= LEGACY_MAX_LEVEL; L++) {
     const d = Math.abs(types.reduce((a, t) => a + pw(t, L), 0) - T.power);
     if (d < diff) { diff = d; best = L; }
   }
@@ -65,12 +64,14 @@ function enemyOf(week, tier) {
 
 // правило недели — на проверенный сервером отряд
 function applyRule(rule, snap) {
-  let s = noHero(snap);
+  const fort = snap.v === FORT_SNAPSHOT;
+  const s = fort ? snap : noHero(snap);
   let squad = Array.isArray(s.squad) ? s.squad.slice() : [];
-  if (rule.types) squad = squad.filter(e => e && rule.types.includes(e.type));
-  if (rule.maxlvl) squad = squad.map(e => Object.assign({}, e, { level: Math.min(int(e.level) || 1, rule.maxlvl) }));
+  if (rule.types) squad = squad.filter(e => e && rule.types.includes(e.type === 'hero' ? e.unit : e.type));
+  // Форт уже пересчитан checkSquad с пределом недели: уровень и боевые числа ограничены вместе.
+  if (rule.maxlvl && !fort) squad = squad.map(e => Object.assign({}, e, { level: Math.min(int(e.level) || 1, rule.maxlvl) }));
   if (rule.max) squad = squad.slice(0, rule.max);
-  return { v: 1, squad, perks: rule.perks === false ? {} : Object.assign({}, s.perks || {}), atk_b: num(s.atk_b), hp_b: num(s.hp_b) };
+  return { v: fort ? FORT_SNAPSHOT : 1, squad, perks: rule.perks === false ? {} : Object.assign({}, s.perks || {}), atk_b: num(s.atk_b), hp_b: num(s.hp_b) };
 }
 
 function scoreOf(tier, r) {
@@ -147,9 +148,10 @@ function install({ db, routes, auth, json, limited, Fail, pvpPlayer, checkSquad,
     const now = Date.now(), w = weekAt(now);
     const f = facts(a.userId);
     if (f && !f.legion) throw new Fail(409, 'Легион ещё не собран');
-    const c = checkSquad(f, b.snapshot);
-    const att = applyRule(ruleOf(w), c.snap);
-    if (!att.squad.length) throw new Fail(409, `Правило недели «${ruleOf(w).name}»: в вашем отряде нет подходящих бойцов. ${ruleOf(w).text}`);
+    const rule = ruleOf(w);
+    const c = checkSquad(f, b.snapshot, rule.maxlvl);
+    const att = applyRule(rule, snapshotForClient(c.snap, b.snapshot.v === FORT_SNAPSHOT, true));
+    if (!att.squad.length) throw new Fail(409, `Правило недели «${rule.name}»: в вашем отряде нет подходящих бойцов. ${rule.text}`);
     const r = row(a.userId, w);
     const left = triesLeft(r, now);
     if (left <= 0) throw new Fail(429, 'Попытки на сегодня кончились — завтра снова');
@@ -158,7 +160,7 @@ function install({ db, routes, auth, json, limited, Fail, pvpPlayer, checkSquad,
     const token = crypto.randomBytes(18).toString('base64url');
     q.tries.run(dayAt(now), r.tries_day === dayAt(now) ? r.tries_n + 1 : 1, w, a.userId);
     q.addBattle.run(token, a.userId, w, tier, JSON.stringify(att), JSON.stringify(def), seed, now);
-    return { battle: token, seed, tier, enemy: def, attack: att, rule: ruleOf(w), tries_left: left - 1, name: `${TIERS[tier - 1].name}: «${ruleOf(w).name}»` };
+    return { battle: token, seed, tier, enemy: def, attack: att, rule, tries_left: left - 1, name: `${TIERS[tier - 1].name}: «${rule.name}»` };
   };
 
   routes['POST /api/events/trial/result'] = async (req) => {

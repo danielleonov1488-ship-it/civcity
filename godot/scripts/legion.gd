@@ -563,6 +563,7 @@ const WONDERS := [
 ## charges — сколько атак в запасе, regen — секунд на один заряд; рейтинг побед не уходит ниже нуля
 const PVP := {"charges": 5, "regen": 1800, "win_base": 20, "win_min": 8, "win_max": 40, "loss_base": 10, "loss_min": 3, "loss_max": 20,
 	"loot_money": 2.0, "loot_base": 150, "glory": 2}
+const PVP_FORT_SNAPSHOT := 2
 ## Бои с городами — с «Посёлка», как до Д9: Легион теперь с «Хутора», а добыча боёв (~1000 ден. за победу) рассчитана
 ## на казну «Посёлка»; на «Хуторе» и в «Деревне» она обесценила бы тесные деньги. Сервер проверяет то же (server/pvp.js)
 const PVP_MIN_LEVEL := 3
@@ -2294,11 +2295,11 @@ func hero_entry() -> Dictionary:
 
 ## Боец-герой из снимка отряда (бой с городом): числа — из уровней и общих прибавок снимка, без брони Склада
 ## (сервер считает так же: server/legion_sim.js heroStats); имя — из снимка (его прислал сервер из сохранения героя)
-static func snap_hero(e: Dictionary, atk_b: float, hp_b: float) -> Dictionary:
+static func snap_hero(e: Dictionary, atk_b: float, hp_b: float, max_level := MAX_LEVEL) -> Dictionary:
 	var unit := String(e.get("unit", ""))
 	var s: Dictionary
 	if int(e.get("hero_v", 0)) == 3 and unit in V3_UNITS:
-		s = unit_stats(unit, clampi(int(e.get("level", 1)), 1, MAX_LEVEL), atk_b, hp_b)
+		s = unit_stats(unit, clampi(int(e.get("level", 1)), 1, max_level), atk_b, hp_b)
 		s["key"] = "hero"
 	else:
 		s = hero_unit_stats(clampi(int(e.get("level", 1)), 1, MAX_LEVEL), clampi(int(e.get("city", 0)), 0, HERO_CITY_MAX),
@@ -3888,18 +3889,16 @@ func defense_snapshot() -> Dictionary:
 	return s
 
 
-## Места отряда для боя с городом (снимок для сервера): which "pvp" — отряд нападения (отряд походов), "defense" — отряд
-## обороны ([] — как отряд походов). Герой (pvp_hero) — на первом месте вместо бойца этого места, как в походах
+## В форте нападение и оборона берут отряд Штаба. sid сверяется с городом в облаке и сопернику не передаётся.
 func pvp_entries(which := "pvp") -> Array:
 	if v3():
 		var entries := []
 		for stats3: Dictionary in squad_v3():
-			if bool(stats3.get("hero", false)):
-				var entry := hero_entry()
-				entry["place"] = stats3["place"]
-				entries.append(entry)
-			else:
-				entries.append({"type": stats3["key"], "level": stats3["level"], "place": stats3["place"], "gear_v": 1, "stats3": gear_snapshot_stats(stats3)})
+			var sid := int(stats3["sid"])
+			var entry: Dictionary = hero_entry() if bool(stats3.get("hero", false)) else {"type": stats3["key"]}
+			entry.merge({"sid": sid, "level": int(soldier(sid).get("rank", 0)) + 1, "place": stats3["place"],
+				"gear_v": 1, "stats3": gear_snapshot_stats(stats3)}, true)
+			entries.append(entry)
 		return entries
 	var sq := []
 	var hero := pvp_hero()
@@ -3917,7 +3916,7 @@ func pvp_entries(which := "pvp") -> Array:
 
 ## Снимок отряда для сервера: места (pvp_entries), умения и общие прибавки, которые знает сервер
 func pvp_snapshot(which := "pvp") -> Dictionary:
-	return {"v": 1, "squad": pvp_entries(which), "perks": pvp_perks(), "atk_b": pvp_bonus("atk"), "hp_b": pvp_bonus("hp")}
+	return {"v": PVP_FORT_SNAPSHOT if v3() else 1, "squad": pvp_entries(which), "perks": pvp_perks(), "atk_b": pvp_bonus("atk"), "hp_b": pvp_bonus("hp")}
 
 
 ## Умения для боёв с городами: только те, что знает сервер (без умений похода 2.0), и не выше PERK_MAX
@@ -3998,7 +3997,7 @@ static func no_hero(snap: Dictionary) -> Dictionary:
 	return out
 
 
-## Герой снимка отряда ({} — героя нет): только первое место (так же server/legion_sim.js и server/pvp.js)
+## Герой снимка отряда ({} — героя нет) может стоять в любом ряду.
 static func snap_hero_entry(snap: Variant) -> Dictionary:
 	if not (snap is Dictionary) or not (snap.get("squad") is Array):
 		return {}
@@ -4008,8 +4007,7 @@ static func snap_hero_entry(snap: Variant) -> Dictionary:
 	return {}
 
 
-## Бойцы снимка отряда (свой отряд с сервера или отряд обороны соперника) — так же считает server/legion_sim.js.
-## Герой — только на первом месте (на других местах не в счёт)
+## Бойцы снимка отряда — так же считает server/legion_sim.js.
 static func snapshot_stats(snap: Dictionary) -> Array:
 	var out := []
 	var list = snap.get("squad", [])
@@ -4017,25 +4015,25 @@ static func snapshot_stats(snap: Dictionary) -> Array:
 		return out
 	var ab := clampf(float(snap.get("atk_b", 0.0)), 0.0, 0.6)
 	var hb := clampf(float(snap.get("hp_b", 0.0)), 0.0, 0.6)
+	var max_level := HERO_MAX3 if int(snap.get("v", 1)) == PVP_FORT_SNAPSHOT else MAX_LEVEL
 	for i in (list as Array).size():
 		var e = list[i]
 		if not (e is Dictionary):
 			continue
 		var t := String(e.get("type", ""))
+		var stats: Dictionary
 		if t == "hero":
-			var stats := snap_hero(e, ab, hb)
-			if e.has("place"):
-				stats["place"] = int(e["place"])
-				stats["row"] = place_row(int(e["place"]))
-			out.append(stats)
+			stats = snap_hero(e, ab, hb, max_level)
 		elif UNITS.has(t):
-			var st := unit_stats(t, clampi(int(e.get("level", 1)), 1, MAX_LEVEL), ab, hb)
-			if int(e.get("gear_v", 0)) == 1 and e.get("stats3", null) is Dictionary:
-				st.merge(gear_snapshot_stats(e["stats3"]), true)
-			if e.has("place"):
-				st["place"] = int(e["place"])
-				st["row"] = place_row(int(e["place"]))
-			out.append(st)
+			stats = unit_stats(t, clampi(int(e.get("level", 1)), 1, max_level), ab, hb)
+		else:
+			continue
+		if int(e.get("gear_v", 0)) == 1 and e.get("stats3", null) is Dictionary:
+			stats.merge(gear_snapshot_stats(e["stats3"]), true)
+		if e.has("place"):
+			stats["place"] = int(e["place"])
+			stats["row"] = place_row(int(e["place"]))
+		out.append(stats)
 	return out
 
 

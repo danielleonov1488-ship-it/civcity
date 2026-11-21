@@ -370,9 +370,120 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
   // имя и облик — тоже оттуда (не со слов игры); подделки срезаются; старые сохранения без героя и старые игры (без hero=1 /
   // hero: true) — как раньше, и бой всегда повторяется так, как его видела игра
   await heroTests();
+  await fortTests();
   console.log(fails ? `${fails} FAILED` : 'ALL OK');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(2); });
+
+async function fortTests() {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  const routes = {};
+  class Fail extends Error { constructor(status, msg) { super(msg); this.status = status; } }
+  db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)');
+  for (let i = 1; i <= 4; i++) db.prepare('INSERT INTO users (id, email) VALUES (?, ?)').run(i, `fort${i}@pvp.test`);
+  const legion = {
+    v: 3, fort: { roles_v: 1, plots: [{ b: 'hq', lv: 6 }, { b: 'barracks', lv: 12 }],
+      know: { smith: true, bows: true, weap3: true, armor1: true, armor3: true, outfit: true, outfit2: true } },
+    squad3: [1, 2, 3, 4, 5], perks: { oil: 2 }, flags: { camp_open: true },
+    soldiers: [
+      { id: 1, cls: 'archer', rank: 39, stars: 3, gear: { weapon: 10, armor: 11, outfit: 12 } },
+      { id: 2, cls: 'legionary', rank: 30, stars: 2 },
+      { id: 3, cls: 'cavalry', rank: 35, stars: 3, gear: { weapon: 13 } },
+      { id: 4, cls: 'priest', rank: 49, stars: 3, hero: true, gear: { weapon: 14 } },
+      { id: 5, cls: 'legionary', rank: 33, stars: 1 },
+      { id: 6, cls: 'legionary', rank: 33, stars: 1, train_end: 30 },
+      { id: 7, cls: 'archer', rank: 0, stars: 1, gear: { weapon: 10 } },
+    ],
+    items: [
+      { id: 10, on: 1, slot: 'weapon', cls: 'archer', tier: 3, rarity: 2 },
+      { id: 11, on: 1, slot: 'armor', tier: 3, rarity: 2 },
+      { id: 12, on: 1, slot: 'outfit', kind: 'cook', tier: 10, rarity: 2 },
+      { id: 13, on: 3, slot: 'weapon', cls: 'cavalry', tier: 3, rarity: 1 },
+      { id: 14, on: 4, slot: 'weapon', cls: 'priest', tier: 3, rarity: 3 },
+    ],
+  };
+  const city = { level: 6, legion_v: 3, research: [], legion, hero: { m: { pn: 'Гай Валерий', sx: 0, look: { cape: '2F5585' } } } };
+  const lowHq = structuredClone(city);
+  lowHq.legion.fort.plots[0].lv = 1;
+  lowHq.legion.squad3 = [1, 2, 0, 0, 0];
+  lowHq.legion.flags = {};
+  lowHq.buildings = [{ type: 'house_pleb', pop: 50, families: [] }];
+  const legacyCity = { level: 6, research: ['legion'], buildings: [{ type: 'barracks' }], legion: { levels: { legionary: 40 }, progress: 70 } };
+  const saves = [null, city, lowHq, legacyCity, city];
+  const api = pvp.install({ db, routes, auth: req => ({ userId: req.uid }), json: async req => req.body, limited: () => false, Fail,
+    latestSave: uid => ({ id: 1, load: () => JSON.stringify(saves[uid]) }) });
+  const call = (route, uid, body, query = '') => routes[route]({ uid, body }, new URL('http://test.local/' + query));
+  const snapshot = { v: 2, perks: { oil: 2 }, squad: [
+    { type: 'archer', place: 0, sid: 1, level: 40 }, { type: 'legionary', place: 1, sid: 2, level: 31 },
+    { type: 'cavalry', place: 2, sid: 3, level: 36 }, { type: 'hero', unit: 'priest', place: 3, sid: 4, level: 50 },
+    { type: 'legionary', place: 4, sid: 5, level: 34 },
+  ] };
+  const checked = api.checkSquad(api.facts(1), snapshot);
+  const [archer, , cavalry, hero] = checked.snap.squad;
+  ok(!checked.clamped && checked.snap.squad.length === 5 && archer.level === 40 && archer.stats3.atk === 84 &&
+    Math.abs(archer.stats3.armor - 49.08) < 1e-9 && archer.stats3.gear_look.weapon === 2 && !('outfit' in archer.stats3.gear_look),
+  'HQ VI: 5 fighters, level 40 trainee, tier III gear and work outfit from the cloud', checked);
+  ok(hero.place === 3 && hero.level === 50 && hero.name === 'Гай Валерий' && hero.look.cape === '2f5585' && hero.stats3.heal === 3 &&
+    sim.snapStats(checked.snap)[2].backline && cavalry.type === 'cavalry', 'hero at index 3 retains his priest weapon, heal, look and level 50', hero);
+  const rounded = { ...archer, stats3: { ...archer.stats3, armor: Number(archer.stats3.armor.toFixed(6)) } };
+  ok(!api.checkSquad(api.facts(1), { v: 2, squad: [rounded] }).clamped, 'JSON rounding does not mark an unchanged loadout as stale');
+  const preVersion = { v: 1, squad: snapshot.squad.map(({ sid, ...e }) => e) };
+  ok(api.checkSquad(api.facts(1), preVersion).snap.squad.length === 5, 'unversioned fort requests resolve their saved positions');
+  const attempted = { ...snapshot, perks: { oil: 99 }, atk_b: 1, squad: [
+    { ...snapshot.squad[0], level: 999, gear_v: 1, stats3: { atk: 999999, set_revive: true } },
+    { ...snapshot.squad[0], place: 1 }, { type: 'legionary', place: 0, sid: 2 },
+    { type: 'legionary', place: 2, sid: 6 }, { type: 'catapult', place: 4, sid: 7 },
+  ] };
+  const clean = api.checkSquad(api.facts(1), attempted);
+  ok(clean.clamped && clean.snap.squad.length === 1 && clean.snap.squad[0].stats3.atk === 84 &&
+    !clean.snap.squad[0].stats3.set_revive && clean.snap.perks.oil === 2 && clean.snap.atk_b === 0,
+  'rejects fabricated stats, rank, effects, duplicate places/dwellers, trainees and siege classes', clean);
+  ok(api.facts(2).legion && api.checkSquad(api.facts(2), snapshot).snap.squad.length === 2,
+    '50 residents open the fort without research, HQ I admits only two places');
+  const invalidItem = api.checkSquad(api.facts(1), { v: 2, squad: [{ type: 'archer', place: 0, sid: 7 }] });
+  ok(invalidItem.clamped && invalidItem.snap.squad[0].type === 'legionary' && !invalidItem.snap.squad[0].stats3.gear_look,
+    'a dweller cannot borrow an item equipped by another dweller', invalidItem);
+
+  const realNow = Date.now;
+  let clock = realNow();
+  Date.now = () => clock;
+  try {
+    await call('PUT /api/pvp/defense', 1, { snapshot });
+    const oldSnapshot = { v: 1, squad: [{ type: 'legionary', level: 1 }], perks: {}, atk_b: 0, hp_b: 0 };
+    await call('PUT /api/pvp/defense', 3, { snapshot: oldSnapshot });
+    const modern = await call('GET /api/pvp/opponents', 4, undefined, '?v=2&hero=1');
+    const defender = modern.opponents.find(o => o.snapshot.v === 2);
+    const old = modern.opponents.find(o => !o.bot && o.snapshot.v === 1);
+    ok(defender?.snapshot.squad[3]?.type === 'hero' && !('sid' in defender.snapshot.squad[3]) && old?.snapshot.squad[0].level === 1,
+      'a modern list reads old stored defenses and sends protected modern stats and looks', modern.opponents);
+    const attack = await call('POST /api/pvp/attack', 4, { target: old.id, squad: snapshot, hero: true, v: 2 });
+    const fight = sim.replayPvp(attack.attack, attack.opponent.snapshot, attack.seed, []);
+    clock += 200e3;
+    const result = await call('POST /api/pvp/result', 4, { battle: attack.battle, win: fight.win, alive: fight.alive, total: fight.total, time: fight.time });
+    ok(fight.win && result.accepted && result.reward.money === 150 + 2 * attack.opponent.power && result.reward.glory === 5 &&
+      !('food' in result.reward) && attack.me.charges === 4, 'mixed-format battle counted with server rating, denarii, glory and one charge', result);
+    const legacy = await call('GET /api/pvp/opponents', 3, undefined, '?hero=1');
+    const projected = legacy.opponents.find(o => !o.bot && o.snapshot.squad.length === 5);
+    ok(projected?.snapshot.v === 1 && projected.snapshot.squad[0].type === 'hero' && projected.snapshot.squad.every(e => e.level <= 40 && !('place' in e) && !('stats3' in e)),
+      'build 52 protocol gets only legacy fields and an understood formation', projected);
+    const oldAttack = await call('POST /api/pvp/attack', 3, { target: projected.id, squad: { squad: [{ type: 'legionary', level: 40 }] }, hero: true });
+    ok(JSON.stringify(oldAttack.opponent.snapshot) === JSON.stringify(projected.snapshot), 'legacy battle stores the same defense it gave the client');
+    const legacyFight = sim.replayPvp(oldAttack.attack, oldAttack.opponent.snapshot, oldAttack.seed, []);
+    clock += 200e3;
+    const legacyResult = await call('POST /api/pvp/result', 3, { battle: oldAttack.battle, win: legacyFight.win, alive: legacyFight.alive,
+      total: legacyFight.total, time: legacyFight.time });
+    ok(legacyResult.accepted, 'legacy result accepted against a projected fort defense', legacyResult);
+    const unversioned = await call('GET /api/pvp/opponents', 2, undefined, '?hero=1');
+    const trainingOpponent = unversioned.opponents.find(o => o.bot);
+    const unversionedAttack = await call('POST /api/pvp/attack', 2, { target: trainingOpponent.id, squad: preVersion, hero: true });
+    ok(unversionedAttack.attack.v === 1 && unversionedAttack.attack.squad.length === 2 &&
+      unversionedAttack.attack.squad.every(e => !('gear_v' in e) && !('place' in e)), 'fort client without a version marker receives the legacy replay format');
+  } finally {
+    Date.now = realNow;
+    db.close();
+  }
+}
 
 // Герой в боях с городами — без сети (pvp.install на базе в памяти, свои сохранения; часы — свои, чтобы бой «досмотрели»)
 async function heroTests() {
