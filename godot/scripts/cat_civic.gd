@@ -18,6 +18,9 @@ const TRAVERTINE := {"tints": {"Building_Large_Brick_01": Color(1.0, 0.93, 0.8)}
 const MARBLE := {"Building_Large_Brick_01": "Building_Marble_01"}
 ## Статуя в нише стены (SM_Bld_Wall_Alcove_01) — почти в рост ниши, крупнее прохожих
 const NICHE := 0.76
+const WHEAT := "#wheat"
+const WHEAT_DENSE := "#wheat_dense"
+const WHEAT_STEP := Catalog.FIELD_TILE / 4.0
 
 
 # =====================================================================
@@ -918,64 +921,106 @@ static func field(b: Bp, type: String, size: Vector2i) -> void:
 	b.fp_override = [Rect2(-m * 0.5, m)]
 	b.door = Vector3(0, 0, m.y * 0.5)
 	b.fence(-edge.x, -edge.y, edge.x, edge.y)
-	var columns := size.x * (2 if type == "farm" else 1)
-	var rows := size.y * (3 if type == "farm" else 1)
-	for z in rows:
-		for x in columns:
-			var p := Vector3(((x + 0.5) / columns - 0.5) * m.x, 0, ((z + 0.5) / rows - 0.5) * m.y)
-			match type:
-				"farm":
-					var scale := b.rng.randf_range(0.89, 1.05)
-					p.x += b.rng.randf_range(-0.06, 0.06)
-					b.add("#wheat", p, b.rng.randf_range(-0.08, 0.08), scale)
-				"grove":
-					var scale := b.rng.randf_range(0.28, 0.34)
-					_tree(b, "SM_Env_Tree_0%d" % (3 + b.rng.randi() % 2), p, Vector3(scale, scale * 0.82, scale), Color(0.82, 0.92, 0.95))
-				"vineyard":
-					b.add("SM_Env_Vine_0%d" % (1 + (x + z) % 2), p, PI if x % 2 else 0.0, 0.74)
-		if type == "vineyard":
-			var row_z := ((z + 0.5) / rows - 0.5) * m.y
-			for x: float in [-edge.x + 0.2, edge.x - 0.2]:
-				b.add("SM_Bld_Trellis_Pillar_01", Vector3(x, 0, row_z), 0.0, 0.4)
+	_field_cover(b, type, m)
+	if type == "farm":
+		for z in size.y * 4:
+			for x in size.x * 4:
+				var p := Vector3((x + 0.5) * WHEAT_STEP - m.x * 0.5, 0, (z + 0.5) * WHEAT_STEP - m.y * 0.5)
+				p += Vector3(b.rng.randf_range(-0.09, 0.09), 0, b.rng.randf_range(-0.065, 0.065))
+				# Оставляем каждый четвёртый пучок на дальнем плане, в шахматном порядке.
+				var distant := z % 2 == 0 and (x + z / 2) % 2 == 0
+				b.add(WHEAT if distant else WHEAT_DENSE, p, b.rng.randf() * TAU, b.rng.randf_range(0.90, 1.09))
+	else:
+		for z in size.y:
+			var row_z := (z + 0.5) * Catalog.FIELD_TILE - m.y * 0.5
+			for x in size.x:
+				var p := Vector3((x + 0.5) * Catalog.FIELD_TILE - m.x * 0.5, 0, row_z)
+				if type == "grove":
+					var scale := b.rng.randf_range(0.36, 0.43)
+					_tree(b, "SM_Env_Tree_03", p, Vector3(scale, scale * 0.86, scale), Color(0.81, 0.94, 0.94))
+				else:
+					b.add("SM_Env_Vine_0%d" % (1 + (x + z) % 2), p, PI if x % 2 else 0.0, 0.94)
+			if type == "vineyard":
+				for x: float in [-edge.x + 0.2, edge.x - 0.2]:
+					b.add("SM_Bld_Trellis_Pillar_01", Vector3(x, 0, row_z), 0.0, 0.42)
 	var clip := "Fixing_Kneeling" if type == "farm" else "Interact"
 	b.actor(Vector3(0, 0, m.y * 0.5 - 0.8), PI, clip, "pleb")
 	if size.x * size.y >= 12:
 		b.actor(Vector3(0, 0, -m.y * 0.5 + 0.8), 0, clip, "pleb")
 
 
-## Один пучок колосьев для общего MultiMesh. У колоса отдельные зёрна и ости.
-static func wheat_mesh() -> ArrayMesh:
+static func _field_cover(b: Bp, type: String, size: Vector2) -> void:
+	# Края покрова под изгородью; поверхность земли уже выровнена при постройке.
+	b.add_xf("#field_cover_" + type, Transform3D(
+		Basis.from_scale(Vector3(size.x, 1, size.y)), Vector3(0, 0.025, 0)))
+
+
+static func field_cover_mesh(type: String) -> PlaneMesh:
+	var mat := ShaderMaterial.new()
+	mat.shader = preload("res://shaders/field_cover.gdshader")
+	match type:
+		"farm":
+			mat.set_shader_parameter("cover", Color("cdb849"))
+			mat.set_shader_parameter("furrow", Color("bda745"))
+		"grove":
+			mat.set_shader_parameter("cover", Color("91934e"))
+			mat.set_shader_parameter("furrow", Color("7b7940"))
+			mat.set_shader_parameter("row_pitch", Catalog.FIELD_TILE)
+			mat.set_shader_parameter("row_width", 0.075)
+		"vineyard":
+			mat.set_shader_parameter("cover", Color("8f984a"))
+			mat.set_shader_parameter("furrow", Color("928049"))
+			mat.set_shader_parameter("row_pitch", Catalog.FIELD_TILE)
+			mat.set_shader_parameter("row_width", 0.23)
+	var mesh := PlaneMesh.new()
+	mesh.size = Vector2.ONE
+	mesh.material = mat
+	return mesh
+
+
+## Двенадцать стеблей разной высоты, с листьями, зёрнами и остями.
+static func wheat_mesh(dense: bool) -> ArrayMesh:
 	var k := Kit.new()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 704
-	for i in 9:
-		var foot := Vector3((i % 5 - 2) * 0.20 + rng.randf_range(-0.05, 0.05), 0, (i / 5 - 0.5) * 0.25 + rng.randf_range(-0.09, 0.09))
-		var h := rng.randf_range(0.56, 0.88)
-		var lean := Vector3(rng.randf_range(-0.075, 0.075), h, rng.randf_range(-0.06, 0.06))
-		var tip := foot + lean
-		var straw := Color("c7a554").lerp(Color("e6c77a"), rng.randf())
-		k.rod(foot, tip + Vector3.UP * 0.09, 0.008, 3, straw)
-		for leaf in 2:
-			var at := foot + lean * (0.36 + leaf * 0.20)
-			var side := Basis(Vector3.UP, rng.randf() * TAU) * Vector3(0.12, 0.1, 0)
-			var blade := Vector3(-side.z, 0, side.x) * 0.07
-			k.tri(at, at + side * 0.36 + blade, at + side, straw.darkened(0.14))
-			k.tri(at, at + side, at + side * 0.36 + blade, straw.darkened(0.1))
-		var facing := Basis(Vector3.UP, rng.randf() * TAU)
-		for seed_i in 4:
-			var center := tip + Vector3.UP * (seed_i * 0.035)
-			for side_v: float in [-1.0, 1.0]:
-				var side := facing * Vector3(side_v * (0.040 - seed_i * 0.005), 0, 0)
-				var across := facing * Vector3(0, 0, 0.013)
-				var end := center + side + Vector3.UP * 0.048
-				var grain := straw.lightened(0.1 + seed_i * 0.02)
-				k.tri(center, center + side * 0.55 + across, end, grain)
-				k.tri(center, end, center + side * 0.55 - across, grain.darkened(0.13))
-				k.tri(center + side * 0.55 + across, center + side * 0.55 - across, end, grain)
-				k.tri(end, end + across * 0.23, end + side * 0.24 + Vector3.UP * 0.055, grain)
+	for i in 12:
+		var foot := Vector3((i % 4 - 1.5) * 0.147 + rng.randf_range(-0.043, 0.043), 0,
+			(i / 4 - 1) * 0.177 + rng.randf_range(-0.055, 0.055))
+		var yaw := Basis(Vector3.UP, rng.randf() * TAU)
+		var stem := yaw * Vector3(rng.randf_range(0.065, 0.205), rng.randf_range(0.56, 0.86), 0)
+		var tip := foot + stem
+		var straw := Color("b99e3b").lerp(Color("d4bc5a"), rng.randf())
+		var ear := Color("d1b044").lerp(Color("efdb86"), rng.randf())
+		for dir: Vector3 in [yaw.x, yaw.z]:
+			var width := dir * 0.012
+			k.quad(foot - width, foot + width, tip + width * 0.44, tip - width * 0.44, straw)
+		for i_leaf in 2:
+			var at := foot + stem * (0.44 + i_leaf * 0.25)
+			var along := yaw.x * (1.0 if i_leaf == 0 else -1.0)
+			var rib := at + along * 0.105 + Vector3.UP * 0.16
+			var end := at + along * rng.randf_range(0.23, 0.34) + Vector3.UP * 0.19
+			var spread := yaw.z * 0.047
+			k.tri(at, rib - spread, end, straw.lightened(0.13))
+			k.tri(at, end, rib + spread, straw)
+		# Зёрна попарно поднимаются вдоль колоса и сужаются к макушке.
+		var up := stem.normalized()
+		for layer in 3:
+			var center := tip + up * (layer * 0.053)
+			for side: float in [-1.0, 1.0]:
+				var along := yaw.x * side * (0.067 - layer * 0.011)
+				var peak := center + along * 0.75 + up * 0.052
+				var crown := center + along * 0.32 + up * 0.099
+				var rib := center + along * 0.4 + up * 0.05
+				k.tri(center, peak, crown + yaw.z * 0.023, ear)
+				k.tri(center, crown - yaw.z * 0.023, peak, ear.darkened(0.12))
+				k.tri(peak, rib, crown + up * 0.062 + along * 0.4, ear.lightened(0.1))
 	var mesh := k.mesh()
-	var mat := Kit.material(0.96).duplicate() as StandardMaterial3D
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# Запас на кончики колосьев, отклонённые ветром.
+	mesh.custom_aabb = mesh.get_aabb().grow(0.15)
+	var mat := ShaderMaterial.new()
+	mat.shader = preload("res://shaders/wheat.gdshader")
+	if dense:
+		mat.set_shader_parameter("fade", Vector2(48, 66))
 	mesh.surface_set_material(0, mat)
 	return mesh
 

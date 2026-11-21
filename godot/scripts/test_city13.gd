@@ -1,6 +1,7 @@
 extends Node3D
 
-const OUTPUT := "D:/CivCity/.work/stage7/city13/"
+const OUTPUT := "D:/CivCity/.work/stage7/city13b/"
+const PREVIOUS_TOP := "D:/CivCity/.work/stage7/city13/shots/3_fields_sizes.png"
 const TestCat := preload("res://scripts/test_cat.gd")
 const TestPace := preload("res://scripts/test_pace.gd")
 var out := OUTPUT + "shots/"
@@ -47,12 +48,34 @@ func frames(count: int) -> void:
 		await get_tree().process_frame
 
 
-func shot(file: String) -> void:
+func capture() -> Image:
 	await frames(10)
 	await RenderingServer.frame_post_draw
+	return get_viewport().get_texture().get_image()
+
+
+func save_shot(img: Image, file: String) -> void:
 	var path := out + file
-	if check(get_viewport().get_texture().get_image().save_png(path) == OK, "save " + file):
+	if check(img.save_png(path) == OK, "save " + file):
 		print("CITY13 SHOT ", path)
+
+
+func shot(file: String) -> void:
+	save_shot(await capture(), file)
+
+
+func compare_top(after: Image) -> void:
+	var before := Image.load_from_file(PREVIOUS_TOP)
+	if not check(before != null and not before.is_empty(), "previous CITY13 top screenshot"):
+		return
+	before.convert(after.get_format())
+	before.resize(after.get_width(), after.get_height(), Image.INTERPOLATE_LANCZOS)
+	var size := after.get_size()
+	var pair := Image.create_empty(size.x * 2 + 4, size.y, false, after.get_format())
+	pair.fill(Color("f6e3aa"))
+	pair.blit_rect(before, Rect2i(Vector2i.ZERO, size), Vector2i.ZERO)
+	pair.blit_rect(after, Rect2i(Vector2i.ZERO, size), Vector2i(size.x + 4, 0))
+	save_shot(pair, "5_before_after.png")
 
 
 func boot(river: bool) -> bool:
@@ -143,19 +166,19 @@ func drag_plot(type: String, size: Vector2i, start: Vector2) -> Dictionary:
 	return b
 
 
-func grain(b: Dictionary) -> int:
+func grain(b: Dictionary, name_v: String) -> int:
 	var n := 0
 	for part: Array in city.blueprint(b).parts:
-		n += int(String(part[0]) == "#wheat")
+		n += int(part[0] == name_v)
 	return n
 
 
-func batched_wheat(b: Dictionary) -> int:
+func batched_wheat(b: Dictionary, name_v: String) -> int:
 	var n := 0
 	var visual: Dictionary = game.visuals.get(b["id"], {})
 	for h: Array in visual.get("h", []):
 		var group: Dictionary = h[0]
-		if not String(group["key"]).begins_with("#wheat|") or group["subs"].is_empty():
+		if not String(group["key"]).begins_with(name_v + "|") or group["subs"].is_empty():
 			continue
 		var mm: MultiMesh = group["subs"][0]["mm"]
 		var xf := mm.get_instance_transform(int(h[1]))
@@ -164,12 +187,136 @@ func batched_wheat(b: Dictionary) -> int:
 	return n
 
 
+func shader_and_lod() -> void:
+	var ranges := {}
+	for name_v: String in [CatCivic.WHEAT, CatCivic.WHEAT_DENSE]:
+		var mesh := Parts._special_mesh(name_v)
+		var mat := mesh.surface_get_material(0) as ShaderMaterial
+		if check(mat != null and mat.shader != null, name_v + " uses a shader"):
+			var code := mat.shader.code
+			check(code.contains("TIME") and code.contains("VERTEX += wind") and code.contains("height * height"),
+				name_v + " wind bends tips and anchors roots")
+		for group: Dictionary in game.parts.groups.values():
+			if String(group["key"]).begins_with(name_v + "|"):
+				var batch: MultiMeshInstance3D = group["subs"][0]["mmi"]
+				ranges[name_v] = batch.visibility_range_end
+				check(batch.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF, name_v + " has no shadow pass")
+				break
+	check(float(ranges.get(CatCivic.WHEAT, 0)) > float(ranges.get(CatCivic.WHEAT_DENSE, 0))
+		and float(ranges.get(CatCivic.WHEAT_DENSE, 0)) > 0, "distant batches retain only the sparse layer")
+
+
+func gold_share(img: Image, b: Dictionary) -> float:
+	var half := Vector2(City.field_size(b)) * Catalog.FIELD_TILE * 0.5 - Vector2.ONE * 0.18
+	var xf := city.xf(b)
+	var cam := game.rig.cam
+	# Проекция камеры в логических пикселях, PNG — в физических пикселях окна.
+	var center := cam.unproject_position(cam.global_position - cam.global_basis.z * 10.0)
+	var pixel_scale := Vector2(img.get_size()) / (center * 2.0)
+	var outline := PackedVector2Array()
+	for edge: Vector2 in [Vector2(-half.x, -half.y), Vector2(half.x, -half.y), half, Vector2(-half.x, half.y)]:
+		outline.append(cam.unproject_position(xf * Vector3(edge.x, 0.025, edge.y)) * pixel_scale)
+	var bounds := Rect2(outline[0], Vector2.ZERO)
+	for v: Vector2 in outline:
+		bounds = bounds.expand(v)
+	var sample := Rect2i(bounds).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
+	var total := 0
+	var gold := 0
+	for y in range(sample.position.y, sample.end.y, 2):
+		for x in range(sample.position.x, sample.end.x, 2):
+			if not Geometry2D.is_point_in_polygon(Vector2(x + 0.5, y + 0.5), outline):
+				continue
+			total += 1
+			var c := img.get_pixel(x, y)
+			# Золото и солома — жёлтые; коричневая почва и оранжевая глина сюда не входят.
+			if c.h >= 0.105 and c.h <= 0.183 and c.s >= 0.23 and c.v >= 0.47:
+				gold += 1
+	print("CITY13 GOLD ROI ", sample, " samples=", total, " scale=", pixel_scale)
+	check(total >= 1000, "enough pixels in the projected field")
+	return float(gold) / maxf(total, 1)
+
+
 func render_time() -> float:
-	await frames(24)
+	await frames(16)
+	await RenderingServer.frame_post_draw
 	var start := Time.get_ticks_usec()
 	for i in 90:
 		await RenderingServer.frame_post_draw
 	return float(Time.get_ticks_usec() - start) / 90000.0
+
+
+func field_perf() -> void:
+	# Отдельный пул позволяет скрыть все десять полей без пересчёта земли и симуляции.
+	var perf_parts := Parts.new()
+	game.parts.get_parent().add_child(perf_parts)
+	perf_parts.tint_split = game.parts.tint_split
+	var city_parts := game.parts
+	var old_anim := game.build_anim
+	game.parts = perf_parts
+	game.build_anim = false
+	city.bulk = true
+	var placed: Array[Dictionary] = []
+	var size := Vector2i(6, 6)
+	for z in range(70, 100, 7):
+		for x in range(52, 96, 7):
+			var start := plot("farm", size, x * 2.5, (x + 2) * 2.5, z * 2.5, (z + 2) * 2.5)
+			if start == Vector2.INF:
+				continue
+			var at := start - Vector2.ONE * 0.4 + Vector2(size) * Catalog.FIELD_TILE * 0.5
+			var b := city.place("farm", at, 0.0, 0, 0, true, size)
+			if not b.is_empty():
+				placed.append(b)
+			if placed.size() == 10:
+				break
+		if placed.size() == 10:
+			break
+	city.bulk = false
+	game.build_anim = old_anim
+	game.parts = city_parts
+	if not check(placed.size() == 10, "performance fixture adds ten 6x6 fields"):
+		return
+	var bounds := Rect2(placed[0]["pos"], Vector2.ZERO)
+	for b: Dictionary in placed:
+		bounds = bounds.expand(b["pos"])
+	view_at(bounds.get_center(), 2.0, 0, 68, 99)
+	for b: Dictionary in placed:
+		var center := game.rig.cam.unproject_position(city.xf(b).origin)
+		check(get_viewport().get_visible_rect().has_point(center), "performance field on screen")
+		check(batched_wheat(b, CatCivic.WHEAT) == 144 and batched_wheat(b, CatCivic.WHEAT_DENSE) == 432,
+			"6x6 clumps survived MultiMesh growth")
+	for i in 1800:
+		var icons_drawing := false
+		for child: Node in game.hud.get_children():
+			if child is SubViewport and child.size == Vector2i(200, 168):
+				icons_drawing = true
+				break
+		if not icons_drawing and game.land.dirty.is_empty() and game.land.dirty_walk.is_empty():
+			break
+		await frames(1)
+	check(game.land.dirty.is_empty() and game.land.dirty_walk.is_empty(), "land finished rebuilding before timing")
+	var old_cap := Engine.max_fps
+	var old_vsync := DisplayServer.window_get_vsync_mode()
+	Engine.max_fps = 0
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	await frames(60)
+	var before: Array[float] = []
+	var after: Array[float] = []
+	for visible_v: bool in [false, true, true, false, false, true, true, false]:
+		perf_parts.visible = visible_v
+		var ms := await render_time()
+		(after if visible_v else before).append(ms)
+	Engine.max_fps = old_cap
+	DisplayServer.window_set_vsync_mode(old_vsync)
+	perf_parts.visible = true
+	before.sort()
+	after.sort()
+	var off := (before[1] + before[2]) * 0.5
+	var on := (after[1] + after[2]) * 0.5
+	var delta := on - off
+	print("CITY13 PERF fields=%d ms_before=%.3f ms_after=%.3f delta=%.3f batches=%d" % [
+		placed.size(), off, on, delta, perf_parts.groups.size()])
+	print("CITY13 PERF SAMPLES hidden=", before, " shown=", after)
+	check(delta <= 1.0, "ten fields add at most 1.0 ms (%.3f ms)" % delta)
 
 
 func fields() -> void:
@@ -177,20 +324,26 @@ func fields() -> void:
 	var big := drag_plot("farm", Vector2i(5, 4), plot("farm", Vector2i(5, 4), 145, 180, 132, 171))
 	if small.is_empty() or big.is_empty():
 		return
-	check(grain(small) == 24 and grain(big) == 120, "wheat instances scale with area")
+	check(grain(small, CatCivic.WHEAT) == 16 and grain(small, CatCivic.WHEAT_DENSE) == 48
+		and grain(big, CatCivic.WHEAT) == 80 and grain(big, CatCivic.WHEAT_DENSE) == 240,
+		"wheat clumps scale with area at both distances")
 	check(city.job_max(small) == 1 and city.job_max(big) == 4, "rounded field job slots")
 	check(city.build_price("farm", Vector2i(5, 4)) == 5.0 * city.build_price("farm", Vector2i(2, 2)), "area cost ratio")
 	for i in 360:
 		if game.visuals.has(small["id"]) and game.visuals.has(big["id"]):
 			break
 		await frames(1)
-	check(batched_wheat(small) == 24 and batched_wheat(big) == 120, "all wheat is present in MultiMesh batches")
+	check(batched_wheat(small, CatCivic.WHEAT) == 16 and batched_wheat(big, CatCivic.WHEAT_DENSE) == 240,
+		"both density layers are present in MultiMesh")
+	shader_and_lod()
 	await get_tree().create_timer(2.0).timeout
 	var mid: Vector2 = (small["pos"] + big["pos"]) * 0.5
 	view_at(mid, float(big["y"]), -10, 63, 26)
-	await shot("3_fields_sizes.png")
+	var top := await capture()
+	save_shot(top, "1_fields_top.png")
+	compare_top(top)
 	view_at(big["pos"], float(big["y"]) + 0.4, 18, 33, 11)
-	await shot("4_field_close.png")
+	await shot("2_field_close.png")
 	var old := city.place("farm", Vector2(166, 173), 0.0, 0, 0, true)
 	var old_cells: PackedInt32Array = old["cells"]
 	var data: Dictionary = JSON.parse_string(JSON.stringify(city.save_data()))
@@ -213,37 +366,38 @@ func fields() -> void:
 	var output_small := city.farm_output(small) / maxf(float(small["staff"]), 0.001)
 	var output_big := city.farm_output(big) / maxf(float(big["staff"]), 0.001)
 	check(output_small > 0 and is_equal_approx(output_big, output_small * 5.0), "staffed fields produce in proportion to area")
-	check(drag_plot("grove", Vector2i(3, 2), plot("grove", Vector2i(3, 2), 150, 180, 156, 203)).size() > 0, "olive grove resizing")
-	check(drag_plot("vineyard", Vector2i(2, 3), plot("vineyard", Vector2i(2, 3), 150, 180, 156, 203)).size() > 0, "vineyard resizing")
-	view_at(Vector2(163, 196), 2, 0, 68, 115)
-	var old_cap := Engine.max_fps
-	var old_vsync := DisplayServer.window_get_vsync_mode()
-	Engine.max_fps = 0
-	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
-	var before := await render_time()
-	var draw_before := int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
-	var count := 0
 	var size := Vector2i(6, 6)
-	for z in range(70, 97, 7):
-		for x in range(52, 96, 7):
-			var start := plot("farm", size, x * 2.5, (x + 2) * 2.5, z * 2.5, (z + 2) * 2.5)
-			if start == Vector2.INF:
-				continue
-			var at := start - Vector2.ONE * 0.4 + Vector2(size) * Catalog.FIELD_TILE * 0.5
-			if not city.place("farm", at, 0.0, 0, 0, true, size).is_empty():
-				count += 1
-			if count == 10:
+	var large := drag_plot("farm", size, plot("farm", size, 200, 232, 166, 190))
+	if not large.is_empty():
+		for i in 360:
+			if game.visuals.has(large["id"]):
 				break
-		if count == 10:
-			break
-	var after := await render_time()
-	var draw_after := int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
-	Engine.max_fps = old_cap
-	DisplayServer.window_set_vsync_mode(old_vsync)
-	check(count == 10, "performance fixture adds ten 6x6 fields")
-	check(batched_wheat(small) == 24 and batched_wheat(big) == 120, "instances survive batch growth")
-	print("CITY13 PERF fields=%d ms_before=%.2f ms_after=%.2f fps_before=%.1f fps_after=%.1f draws_before=%d draws_after=%d" % [
-		count, before, after, 1000.0 / before, 1000.0 / after, draw_before, draw_after])
+			await frames(1)
+		await get_tree().create_timer(2.0).timeout
+		view_at(large["pos"], float(large["y"]), -10, 63, 34)
+		var share := gold_share(await capture(), large)
+		print("CITY13 GOLD size=6x6 camera=34 share=%.1f%%" % (share * 100.0))
+		check(share >= 0.70, "golden pixels cover at least 70% of the field")
+		view_at(large["pos"], float(large["y"]), -10, 63, 84)
+		var far := await capture()
+		var far_share := gold_share(far, large)
+		print("CITY13 GOLD size=6x6 camera=84 share=%.1f%%" % (far_share * 100.0))
+		check(far_share >= 0.70, "distant field remains gold")
+		save_shot(far, "3_field_far.png")
+	var grove_size := Vector2i(3, 2)
+	var vine_size := Vector2i(2, 3)
+	var grove := drag_plot("grove", grove_size, plot("grove", grove_size, 150, 180, 156, 203))
+	var vines := drag_plot("vineyard", vine_size, plot("vineyard", vine_size, 150, 180, 156, 203))
+	if not grove.is_empty() and not vines.is_empty():
+		for i in 360:
+			if game.visuals.has(grove["id"]) and game.visuals.has(vines["id"]):
+				break
+			await frames(1)
+		await get_tree().create_timer(2.0).timeout
+		var center: Vector2 = (grove["pos"] + vines["pos"]) * 0.5
+		view_at(center, float(grove["y"]), 170, 63, 26)
+		await shot("4_grove_vineyard.png")
+	await field_perf()
 
 
 func cats() -> void:
@@ -323,7 +477,7 @@ func cats() -> void:
 	cam.position = p + Vector3(0.07, 0.40, 0.75)
 	cam.look_at(p + Vector3(0.0, 0.33, 0.10))
 	cam.make_current()
-	await shot("5_cat_eyes_close.png")
+	await shot("8_cat_eyes_close.png")
 	game.rig.cam.make_current()
 	cam.queue_free()
 
