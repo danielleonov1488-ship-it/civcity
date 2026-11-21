@@ -15,17 +15,14 @@ var next_btn: Button
 var show_btn: Button
 var _move0 := 0.0
 var _zoom0 := 0
-var _step_age := 0.0
-var _house_seen := false
-var _road_chosen := false
+var _card_fade: Tween
+var _script_built := false
+var _research_hint: Control
 var hint: Label
 var _rp0 := 0
-var _t := 0.0
-var _wait := 0.0
-var _place_key := ""
-var _place_pos := Vector2.INF
 var _opening := false
 
+const MapBadge = preload("res://scripts/map_badge.gd")
 const OLD_IDS := ["move", "turn", "road", "houses", "cart", "settle", "house", "food", "workers", "script", "research", "done"]
 const STEPS := [
 	{"id": "move", "title": "Осмотримся", "icon": "move", "text": "Подвигайте камеру и смените масштаб."},
@@ -34,6 +31,7 @@ const STEPS := [
 	{"id": "cart", "title": "Едут!", "icon": "horse", "text": "Дождитесь семей у станции."},
 	{"id": "settle", "title": "Новоселье", "icon": "family", "text": "Выберите семью, затем светящийся дом."},
 	{"id": "house", "title": "Как им живётся?", "icon": "info", "text": "Откройте дом, в котором живёт семья."},
+	{"id": "house_info", "title": "Как им живётся?", "icon": "info", "next": true, "text": "Посмотрите на значки в карточке дома."},
 	{"id": "food", "title": "Еда", "icon": "food", "text": "Поставьте фруктовую лавку у домов."},
 	{"id": "workers", "title": "Работники", "icon": "hammer", "text": "Нажмите «+» в карточке лавки."},
 	{"id": "script", "title": "Знания", "icon": "quill", "text": "Поставьте скрипторий и наймите писца."},
@@ -70,7 +68,6 @@ func setup(g) -> void:
 	_card()
 	step = resume_step(game.city)
 	game.city.family_assigned.connect(_assigned)
-	(hud.road_btns["road"] as Button).pressed.connect(_road_selected)
 	if step >= 0:
 		_enter(step)
 	else:
@@ -161,7 +158,7 @@ func _card() -> void:
 	show_btn.custom_minimum_size = Vector2(76, 30)
 	show_btn.add_theme_font_size_override("font_size", 12)
 	actions.add_child(show_btn)
-	# Клавиши и финальное действие рядом: стрелка не закрывает текст карточки.
+	# Клавиши показываем рядом с карточкой осмотра.
 	camera_keys = TextureRect.new()
 	camera_keys.name = "TutorialCameraKeys"
 	camera_keys.texture = preload("res://assets/ui/tutorial_keys.svg")
@@ -180,11 +177,10 @@ func _card() -> void:
 
 
 func _enter(i: int) -> void:
+	var changed := step != i
 	step = i
-	_wait = 0.0
-	_step_age = 0.0
-	_house_seen = false
-	_road_chosen = false
+	_script_built = false
+	_research_hint = null
 	game.city.tips["tut_v"] = 8
 	game.city.tips["tut"] = i
 	game.city.tips["tut_id"] = cur_id()
@@ -193,10 +189,17 @@ func _enter(i: int) -> void:
 	title.text = s["title"]
 	text.text = s["text"]
 	camera_keys.visible = cur_id() == "move"
-	show_btn.visible = cur_id() not in ["move", "done"]
-	next_btn.visible = cur_id() in ["move", "done"]
-	next_btn.disabled = cur_id() == "move"
-	hint.hide()
+	next_btn.visible = bool(s.get("next", false))
+	show_btn.visible = cur_id() not in ["move", "cart"] and not next_btn.visible
+	hint.visible = cur_id() == "house_info"
+	if hint.visible:
+		hint.text = "Значки — что нужно семье.\nЗелёное — есть, бледное — нужно поставить рядом."
+	if changed:
+		if _card_fade != null:
+			_card_fade.kill()
+		card.modulate.a = 0.55
+		_card_fade = create_tween()
+		_card_fade.tween_property(card, "modulate:a", 1.0, 0.2).set_trans(Tween.TRANS_SINE)
 	for j in dots.get_child_count():
 		var style := StyleBoxFlat.new()
 		style.bg_color = CityStyle.OLIVE if j == i else (Color("9b9468") if j < i else Color("d9cdb3"))
@@ -209,7 +212,6 @@ func _enter(i: int) -> void:
 	_move0 = game.rig.look_distance
 	_zoom0 = game.rig.look_zooms
 	_rp0 = game.city.research.size()
-	_place_key = ""
 	hud.clear_badge("tutorial_target")
 	hud._ptr_shown = {}
 	hud.advisor_panel.hide()
@@ -236,7 +238,7 @@ func _enter(i: int) -> void:
 					cheapest = minf(cheapest, float(r["cost"]))
 			if cheapest < 1e9:
 				c.rp = maxf(c.rp, minf(c.rp_cap(), cheapest))
-		"houses", "road", "house", "food", "script", "done":
+		"houses", "road", "house", "food", "workers", "script", "done":
 			game.set_tool("")
 			hud._close_tray()
 			hud._hide_info()
@@ -262,8 +264,9 @@ func layout() -> void:
 		return
 	var pos := Vector2(8, hud.TASKS_Y + 24)
 	var required: Array[Rect2] = []
-	if is_instance_valid(hud.pointer_target) and hud.pointer_target != camera_keys and hud.pointer_target != next_btn:
-		required.append(hud.pointer_target.get_global_rect().grow(62))
+	if is_instance_valid(hud.pointer_target) and hud.pointer_target.is_visible_in_tree():
+		var margin := 12.0 if hud.pointer_target is MapBadge else 62.0
+		required.append(hud.pointer_target.get_global_rect().grow(margin))
 		# Не накрываем карточку исследования, в которую ведёт стрелка.
 		var parent: Node = hud.pointer_target.get_parent()
 		while parent != null and parent != hud.root:
@@ -305,7 +308,6 @@ func show_target() -> void:
 	match cur_id():
 		"road":
 			hud._do_click({"kind": "road"})
-			_road_chosen = true
 		"houses", "food", "script":
 			if cur_id() != "script" or c._count(func(b): return b["type"] == "scriptorium") == 0:
 				hud._do_click({"kind": "build", "type": BUILD_STEPS[cur_id()]})
@@ -326,47 +328,33 @@ func show_target() -> void:
 	hud._ensure_pointer_visible()
 
 
-func _road_selected() -> void:
-	if cur_id() == "road":
-		_road_chosen = true
-		hud._update_pointer()
-
-
 func _confirm() -> void:
-	if cur_id() == "move" and _step_age < 3.0:
-		return
-	if cur_id() == "house" and not _house_seen:
-		return
-	_done()
+	if active() and bool(STEPS[step].get("next", false)):
+		_done()
 
 
 func _assigned(_name: String, home: int) -> void:
-	if active() and cur_id() == "settle":
-		game.city.tips["ui"] = maxi(1, int(game.city.tips.get("ui", 0)))
+	if cur_id() == "settle":
 		game.city.tips["tut_home"] = home
-		_enter(step_index("house"))
-		hud.pointer_target = null
-		hud.pointer.hide()
-		hud.pointer_text.hide()
+		_done()
 
 
 func _done() -> void:
-	if not active() or _wait > 0.0:
+	if not active():
 		return
+	hud._hide_guidance_pointer(true)
 	var id := cur_id()
 	if UI_AFTER.has(id):
 		game.city.tips["ui"] = maxi(int(game.city.tips.get("ui", 0)), int(UI_AFTER[id]))
-		hud.apply_reveal(int(game.city.tips["ui"]))
 	if step >= STEPS.size() - 1:
 		finish()
 		return
 	game.sound.ui("coins")
-	_wait = 0.35
+	_enter(step + 1)
 
 
 func finish() -> void:
 	step = STEPS.size()
-	_wait = 0.0
 	game.city.tips["tut"] = -1
 	game.city.tips["tut_id"] = ""
 	game.city.tips["ui"] = 3
@@ -376,6 +364,8 @@ func finish() -> void:
 	camera_keys.hide()
 	next_btn.hide()
 	hud.clear_badge("tutorial_target")
+	hud._ptr_shown = {}
+	hud._hide_guidance_pointer(true)
 	hud.apply_reveal(3)
 	hud.refresh()
 
@@ -386,35 +376,25 @@ func _process(dt: float) -> void:
 			return
 		_cine_tick(dt)
 		return
-	if not active() or game == null or not game.ready_done:
+	if not active() or game == null or not game.ready_done or _opening or HeroScreen.is_open(game):
 		return
-	if _opening or HeroScreen.is_open(game):
-		return
-	_step_age += dt
-	if cur_id() == "move" and next_btn.disabled and _step_age >= 3.0:
-		next_btn.disabled = false
-		hud._update_pointer()
-	_house_hint()
-	layout()
-	if _wait > 0.0:
-		_wait -= dt
-		if _wait <= 0.0:
-			_enter(step + 1)
-		return
-	_t += dt
-	if _t < 0.2:
-		return
-	_t = 0.0
-	hud._update_pointer()
 	if _check(cur_id()):
 		_done()
+	else:
+		# Лавку закрывает переход к найму; у скриптория найм в этом же шаге.
+		if cur_id() == "script" and not _script_built and game.city._count(func(b): return b["type"] == "scriptorium") > 0:
+			_script_built = true
+			if game.tool == "scriptorium":
+				game.set_tool("")
+			hud._update_pointer()
+		layout()
 
 
 func _check(id: String) -> bool:
 	var c: City = game.city
 	match id:
 		"move":
-			return _step_age >= 3.0 and float(game.rig.look_distance) - _move0 >= 12.0 and int(game.rig.look_zooms) > _zoom0
+			return float(game.rig.look_distance) - _move0 >= 12.0 and int(game.rig.look_zooms) > _zoom0
 		"road":
 			return c.has_connected_house()
 		"houses":
@@ -424,7 +404,8 @@ func _check(id: String) -> bool:
 		"settle":
 			return c.settled_total > 0 or not c.pending.is_empty()
 		"house":
-			return false # Подтверждение после чтения, а не открытие окна.
+			var b: Dictionary = hud.info_b
+			return hud.info_panel.visible and not b.is_empty() and c.is_house(b) and int(b.get("pop", 0)) > 0
 		"food":
 			return c._count(func(b): return b["type"] == "stall_fruit") >= 1
 		"workers":
@@ -434,20 +415,6 @@ func _check(id: String) -> bool:
 		"research":
 			return c.research.size() > _rp0
 	return false
-
-
-func _house_hint() -> void:
-	if cur_id() != "house":
-		return
-	var b: Dictionary = hud.info_b
-	if hud.info_panel.visible and not b.is_empty() and game.city.is_house(b) and int(b.get("pop", 0)) > 0:
-		_house_seen = true
-	if _house_seen:
-		text.text = "Посмотрите на значки в карточке дома."
-		hint.text = "Значки — что нужно семье.\nЗелёное — есть, бледное — нужно поставить рядом."
-		hint.show()
-		next_btn.show()
-		next_btn.disabled = false
 
 
 func _world(pos: Vector3, icon: String, cb := Callable()) -> Control:
@@ -463,51 +430,9 @@ func _building(b: Dictionary, icon := "info") -> Control:
 
 
 func _build_target(type: String) -> Control:
-	var c: City = game.city
-	if not c.unlocked(type):
+	if not game.city.unlocked(type):
 		return null
-	if game.tool != type:
-		return hud._card_or_cat(String(Defs.B[type]["cat"]), type)
-	var ghost: Node3D = game.ghost
-	var ghost_ready: bool = is_instance_valid(ghost) and ghost.visible and game.place_info.get("_t") == type and game.place_info.get("err") == ""
-	if game.rot_drag and ghost_ready:
-		return _world(ghost.global_position + Vector3.UP, "build")
-	var key := str([type, c.next_id, game.land.walk_ver, game.next_variant, game.tool_yaw, game.manual_yaw, game.snap])
-	if _place_key != key:
-		_place_key = key
-		var dp := c.door_point(c.center())
-		_place_pos = Vector2.INF
-		for home: Dictionary in c.buildings.values():
-			if c.is_house(home) and (type == "house_pleb" or int(home.get("pop", 0)) > 0):
-				_place_pos = _suggest_place(type, c.door_point(home))
-				break
-		if not _place_pos.is_finite():
-			_place_pos = _suggest_place(type, dp)
-	if _place_pos.is_finite():
-		var world := Vector3(_place_pos.x, game.land.height_at(_place_pos.x, _place_pos.y) + 0.3, _place_pos.y)
-		if not ghost_ready or game.rig.cam.is_position_in_frustum(world):
-			return _world(world, "build")
-	if ghost_ready:
-		return _world(ghost.global_position + Vector3.UP, "build")
 	return hud._card_or_cat(String(Defs.B[type]["cat"]), type)
-
-
-## Ищем свободное место у домов. Для лавки и писца нужна мостовая у входа.
-func _suggest_place(type: String, near: Vector2) -> Vector2:
-	var house := type == "house_pleb"
-	var other := Vector2.INF
-	for d in range(2, 34, 2):
-		for off: Vector2 in [Vector2(0, d), Vector2(0, -d), Vector2(d, 0), Vector2(-d, 0),
-				Vector2(3, d), Vector2(-3, d), Vector2(3, -d), Vector2(-3, -d)]:
-			var at := near + off
-			var pl: Dictionary = game.placement_hint(type, at)
-			if pl.get("err", "") != "":
-				continue
-			if bool(pl.get("noroad", false)) == house:
-				return at
-			if house and not other.is_finite():
-				other = at
-	return other
 
 
 ## Маленькая первая семья иногда даёт лишь одного работника.
@@ -528,17 +453,25 @@ func _more_workers() -> Array:
 	if not c.arrivals.is_empty():
 		hud._hide_info()
 		text.text = "Поселите ещё семью — нужен работник."
-		return [hud._do_target({"kind": "fam"}), "Семья"]
+		return [family_target(), "Семья"]
 	text.text = "Ещё одна семья скоро приедет."
 	return [null, ""]
 
 
 func pointer() -> Array:
-	if _opening or not cine.is_empty() or HeroScreen.is_open(game) or _wait > 0.0:
+	if _opening or not cine.is_empty() or HeroScreen.is_open(game):
 		return [null, ""]
-	_house_hint()
 	var c: City = game.city
 	var id := cur_id()
+	var tool: String = game.tool
+	var placing: bool = Defs.B.has(tool) or game.is_road_tool(tool)
+	show_btn.visible = id not in ["move", "cart"] and not next_btn.visible and not placing
+	if id == "research" and hud.research_panel.visible:
+		show_btn.hide()
+	if id == "houses":
+		text.text = "Поставьте дома рядом с площадью." if tool == "house_pleb" else STEPS[step]["text"]
+	if placing:
+		return [null, ""]
 	if id in ["workers", "script"]:
 		var type := "stall_fruit" if id == "workers" else "scriptorium"
 		for b: Dictionary in c.buildings.values():
@@ -550,23 +483,10 @@ func pointer() -> Array:
 					hud.open_info(b)
 				return [hud._do_target(hud.hire_do(b)), "Нанять работника"]
 	match id:
-		"move":
-			return [camera_keys if next_btn.disabled else next_btn, ""]
 		"road":
-			if game.tool == "road" and _road_chosen:
-				var dp: Vector2 = c.door_point(c.center())
-				return [_world(Vector3(dp.x, game.land.height_at(dp.x, dp.y) + 0.3, dp.y + 4), "road"), "Мостовая"]
 			return [hud.road_target(), "Дороги"]
 		"houses":
 			return [_build_target("house_pleb"), "Дом плебеев"]
-		"cart":
-			var cart: Dictionary = game.people.cart
-			var node: Node3D = cart.get("n")
-			if is_instance_valid(node) and node.visible and cart.get("state", "") in ["in", "unload"]:
-				return [_world(node.global_position + Vector3(0, 2, 0), "family"), "Едут!"]
-			var ctr := c.center()
-			var dp := c.door_point(ctr)
-			return [_world(Vector3(dp.x, float(ctr["y"]) + 2.0, dp.y), "family"), "Едут!"]
 		"settle":
 			if game.tool == "settle":
 				var homes: Array = c.homes_for(game.settle_fam)
@@ -578,15 +498,12 @@ func pointer() -> Array:
 						return [hud.badges[key]["n"], "Выберите дом"]
 			if not c.pending.is_empty() or c.settled_total > 0:
 				return [null, ""]
-			return [hud._do_target({"kind": "fam"}), "Семья"]
+			return [family_target(), "Семья"]
 		"house":
-			if _house_seen:
-				return [next_btn, ""]
 			for b: Dictionary in c.buildings.values():
 				if c.is_house(b) and int(b.get("pop", 0)) > 0:
 					return [_building(b), "Как им живётся?"]
 		"food":
-			text.text = "Поставьте рядом с домами." if game.tool == "stall_fruit" else String(STEPS[step]["text"])
 			return [_build_target("stall_fruit"), "Еда"]
 		"script":
 			return [_build_target("scriptorium"), "Знания"]
@@ -596,13 +513,21 @@ func pointer() -> Array:
 			var tree = hud.research_tree
 			if tree.pending != "":
 				return [tree.confirm_yes, "Да"]
-			var target: Button = tree.cheapest_available()
-			if target != null and not tree.is_on_scroll(target):
-				return [tree.scroll.get_v_scroll_bar(), "Исследования"]
+			var target: Control = tree.cheapest_available()
+			if target != _research_hint:
+				_research_hint = target
+				hud._ensure_pointer_visible.call_deferred()
 			return [target, "Изучить"]
-		"done":
-			return [next_btn, ""]
 	return [null, ""]
+
+
+func family_target() -> Control:
+	var arrivals: Array = game.city.arrivals
+	if not arrivals.is_empty():
+		var key := "fam_" + String(arrivals[0]["name"])
+		if hud.badges.has(key):
+			return hud.badges[key]["n"] as Control
+	return hud._do_target({"kind": "fam"})
 
 
 # ---------- вступительный ролик: первая повозка въезжает в город (как поезд в Town to City) ----------

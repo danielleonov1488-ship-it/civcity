@@ -4,6 +4,10 @@ var game
 var out := "D:/CivCity/.work/gd/"
 
 func _ready() -> void:
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("out="):
+			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
+	DirAccess.make_dir_recursive_absolute(out)
 	Game.boot = {"new": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -131,8 +135,12 @@ func _run() -> void:
 			game.select_building(c.buildings[id])
 			game.hud.open_info(c.buildings[id])
 			break
-	await frames(10)
-	game.tutorial.next_btn.pressed.emit()
+	await wait_step("house_info")
+	if tut.cur_id() != "house_info" or not tut.next_btn.visible or game.hud.pointer.visible:
+		print("FAIL открытие дома завершает действие, памятка без стрелки")
+		get_tree().quit(1)
+		return
+	tut.next_btn.pressed.emit()
 	await wait_step("food")
 	game.hud.close_panels()
 	await frames(10)

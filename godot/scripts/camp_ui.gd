@@ -90,6 +90,15 @@ var _guide_lesson_id := ""
 var hq_window_id := -1
 var _guide_target: Control
 var _guide_rect := Rect2()
+var _guide_arrow_rect := Rect2()
+var _guide_arrow_id := ""
+var _guide_arrow_above := true
+var _guide_arrow_blocked := 0.0
+var _guide_arrow_goal := Vector2.ZERO
+var _guide_arrow_from := Vector2.ZERO
+var _guide_arrow_progress := 1.0
+var _guide_arrow_draw_gliding := false
+var _guide_arrow_glide: Tween
 var _guide_dragging := false
 var _collection_fx: Array[Dictionary] = []
 var _city_render_owned := false
@@ -709,6 +718,8 @@ func _layout() -> void:
 
 
 func _process(dt: float) -> void:
+	if guide_layer.is_visible_in_tree() and guide_pointer.visible:
+		_place_guide_pointer(dt)
 	if not visible:
 		return
 	for resource: String in bubbles:
@@ -1976,6 +1987,7 @@ func _layout_guide() -> void:
 		return
 	_guide_target = null
 	_guide_rect = Rect2()
+	_guide_arrow_rect = Rect2()
 	if not guide_active():
 		guide_layer.hide()
 		return
@@ -1990,6 +2002,7 @@ func _layout_guide() -> void:
 	var bounds := Rect2(guide_layer.global_position, area)
 	if is_instance_valid(_guide_target) and _guide_target.is_visible_in_tree():
 		_guide_rect = _guide_target.get_global_rect()
+		_guide_arrow_rect = _guide_rect
 		if _guide_target == lu.guide_stage_button and is_instance_valid(lu.fort_map):
 			_guide_rect = _guide_rect.intersection(lu.fort_map.get_global_rect())
 		var parent := _guide_target.get_parent()
@@ -1997,8 +2010,10 @@ func _layout_guide() -> void:
 			if parent.clip_contents:
 				_guide_rect = _guide_rect.intersection((parent as Control).get_global_rect())
 			parent = parent.get_parent()
+	if not _guide_arrow_rect.has_area():
+		_guide_arrow_rect = _guide_rect
 	_guide_rect = _guide_rect.intersection(bounds)
-	if tip == "" or (not _guide_rect.has_area() and _guide_lesson_id == ""):
+	if tip == "" or (not _guide_arrow_rect.has_area() and _guide_lesson_id == ""):
 		guide_layer.hide()
 		return
 	_draw_guide(tip, area)
@@ -2235,17 +2250,10 @@ func _draw_guide(tip: String, area: Vector2) -> void:
 		guide_skip.position = Vector2(dims.x - guide_skip.size.x - 22, (dims.y - guide_skip.size.y) * 0.5)
 	var rect := Rect2(_guide_rect.position - guide_layer.global_position, _guide_rect.size)
 	var has_target := rect.has_area()
-	guide_pointer.visible = has_target
 	guide_pointer.scale = Vector2.ONE * k
 	if has_target:
 		var arrow_size := guide_pointer.size * k
-		var above := rect.position.y >= arrow_size.y
-		var target_x := rect.get_center().x
-		if selected == "hq" and _guide_target == upgrade_button:
-			target_x = rect.end.x - arrow_size.x
-		var x := clampf(target_x, arrow_size.x * 0.5, area.x - arrow_size.x * 0.5)
-		guide_pointer.flip_v = not above
-		guide_pointer.position = Vector2(x - arrow_size.x * 0.5, rect.position.y - arrow_size.y + 2.0 if above else rect.end.y - 2.0)
+		var above := _guide_arrow_above
 		# Полоса не перекрывает подсвеченную кнопку.
 		var strip := Rect2(guide.position, dims * k)
 		if strip.intersects(rect.grow(6)):
@@ -2261,6 +2269,11 @@ func _draw_guide(tip: String, area: Vector2) -> void:
 	var corner := guide_spotlight.position / area
 	var end := guide_spotlight.end / area
 	(guide_shade.material as ShaderMaterial).set_shader_parameter("spotlight", Vector4(corner.x, corner.y, end.x, end.y))
+	if _guide_arrow_rect.has_area():
+		_place_guide_pointer(0.0)
+		guide_pointer.show()
+	else:
+		guide_pointer.hide()
 	guide_layer.move_to_front()
 	guide_layer.show()
 	guide.show()
@@ -2277,6 +2290,53 @@ func _draw_guide(tip: String, area: Vector2) -> void:
 		guide_portrait.position = Vector2(10, -23)
 		guide_portrait.size = Vector2.ONE * 150
 	guide_portrait.visible = not read
+
+
+## Держим стрелку с одной стороны цели даже при прокрутке у края.
+func _place_guide_pointer(dt: float) -> void:
+	var screen := Rect2(Vector2.ZERO, guide_layer.size)
+	var target_rect := _guide_rect if _guide_rect.has_area() else _guide_arrow_rect
+	var rect := Rect2(target_rect.position - guide_layer.global_position, target_rect.size)
+	var arrow_size := guide_pointer.size * guide_pointer.scale
+	var strip := Rect2(guide.position, guide.size * guide.scale)
+	var target_id := str(_guide_target.get_instance_id()) if is_instance_valid(_guide_target) else str([lg.fort_guide_step(), _guide_lesson_id, guide_text.text, _guide_dragging])
+	var new_target := target_id != _guide_arrow_id
+	var x := rect.get_center().x
+	if selected == "hq" and _guide_target == upgrade_button:
+		x = rect.end.x - arrow_size.x
+	x -= arrow_size.x * 0.5
+	var above := Vector2(x, rect.position.y - arrow_size.y + 2.0)
+	var below := Vector2(x, rect.end.y - 2.0)
+	var box := Rect2(above if _guide_arrow_above else below, arrow_size)
+	var blocked := not screen.intersects(box) or strip.encloses(box)
+	_guide_arrow_blocked = _guide_arrow_blocked + dt if blocked else 0.0
+	var was_above := _guide_arrow_above
+	if new_target or _guide_arrow_blocked > 0.5:
+		var maximum := (screen.end - arrow_size).max(Vector2.ZERO)
+		var over := Rect2(above.clamp(Vector2.ZERO, maximum), arrow_size)
+		var under := Rect2(below.clamp(Vector2.ZERO, maximum), arrow_size)
+		var over_cost := above.distance_squared_to(over.position) + 4.0 * over.intersection(strip).get_area()
+		var under_cost := below.distance_squared_to(under.position) + 4.0 * under.intersection(strip).get_area()
+		_guide_arrow_above = over_cost <= under_cost
+		_guide_arrow_blocked = 0.0
+	var limit := (screen.end - arrow_size).max(Vector2.ZERO)
+	var goal := (above if _guide_arrow_above else below).clamp(Vector2.ZERO, limit)
+	var bob := 3.0 * sin(Time.get_ticks_msec() / 650.0) * (-1.0 if _guide_arrow_above else 1.0)
+	var at := (goal + Vector2(0.0, bob)).clamp(Vector2.ZERO, limit)
+	var retarget := new_target or was_above != _guide_arrow_above or _guide_arrow_goal.distance_to(goal) > 40.0
+	retarget = retarget or not _guide_arrow_draw_gliding and guide_pointer.position.distance_to(at) > 40.0
+	if _guide_arrow_id != "" and retarget:
+		if _guide_arrow_glide != null:
+			_guide_arrow_glide.kill()
+		_guide_arrow_from = guide_pointer.position
+		_guide_arrow_progress = 0.0
+		_guide_arrow_glide = create_tween()
+		_guide_arrow_glide.tween_property(self, "_guide_arrow_progress", 1.0, 0.2).set_trans(Tween.TRANS_SINE)
+	_guide_arrow_id = target_id
+	_guide_arrow_goal = goal
+	guide_pointer.flip_v = not _guide_arrow_above
+	_guide_arrow_draw_gliding = _guide_arrow_progress < 1.0
+	guide_pointer.position = _guide_arrow_from.lerp(at, _guide_arrow_progress).clamp(Vector2.ZERO, limit)
 
 
 func _stock(resource: String) -> float:
