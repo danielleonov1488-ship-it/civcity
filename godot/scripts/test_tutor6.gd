@@ -30,20 +30,14 @@ func wait_step(id: String, limit := 3600) -> bool:
 
 func expected_target(id: String) -> Control:
 	match id:
-		"move":
-			return tut.camera_keys if tut.next_btn.disabled else tut.next_btn
 		"road":
-			return hud.badges["tutorial_target"]["n"] if game.tool == "road" and tut._road_chosen else hud.road_target()
+			return hud.road_target() if not game.is_road_tool(game.tool) else null
 		"houses":
 			return hud._card_or_cat("housing", "house_pleb")
 		"house":
-			if tut._house_seen:
-				return tut.next_btn
-			return hud.badges["tutorial_target"]["n"] if hud.badges.has("tutorial_target") else null
-		"cart":
 			return hud.badges["tutorial_target"]["n"] if hud.badges.has("tutorial_target") else null
 		"settle":
-			return hud._do_target({"kind": "fam"})
+			return tut.family_target()
 		"food":
 			return hud._card_or_cat("commerce", "stall_fruit")
 		"workers":
@@ -52,8 +46,6 @@ func expected_target(id: String) -> Control:
 			return hud._card_or_cat("farming", "scriptorium")
 		"research":
 			return hud.top_btns["research"]
-		"done":
-			return tut.next_btn
 	return null
 
 
@@ -63,13 +55,16 @@ func snapshot_step(id: String) -> bool:
 	game.speed = 0.0
 	hud._update_pointer()
 	await frames(10)
-	await check_arrow_frames(id)
+	if expected_target(id) != null:
+		await check_arrow_frames(id)
+	else:
+		check(not hud.pointer.visible, id + " no actionable target")
 	tut.layout()
 	var target: Control = hud.pointer_target
 	check(I18n.t(tut.text.text).length() <= 60, id + " translated step is short")
 	check(tut.text.get_theme_font("font").get_string_size(I18n.t(tut.text.text), HORIZONTAL_ALIGNMENT_LEFT, -1, tut.text.get_theme_font_size("font_size")).x <= tut.text.size.x + 1.0, id + " complete step text fits")
-	check(is_instance_valid(target) and target == expected_target(id), id + " expected pointer target")
-	if id in ["cart", "house"]:
+	check(target == expected_target(id), id + " expected pointer target")
+	if id == "house":
 		check(not hud._pointer_badge.is_empty() and hud._pointer_badge["n"] == target, id + " world anchor")
 	check(not hud.badges.has("quest_target"), id + " no story pointer")
 	check(not hud.advisor_panel.visible and not hud.notes_box.is_visible_in_tree(), id + " no competing advisor/toast")
@@ -132,9 +127,7 @@ func run() -> void:
 	if not await snapshot_step("move"):
 		return
 	check(not tut._check("move"), "camera needs movement and zoom")
-	if tut._step_age < 3.0:
-		tut.next_btn.pressed.emit()
-		check(tut.cur_id() == "move" and tut._wait == 0.0, "camera minimum three seconds applies to confirm")
+	check(not tut.next_btn.visible, "camera has no confirm button")
 	# Обычный правый drag: через тот же обработчик, что у игрока.
 	var down := InputEventMouseButton.new()
 	down.button_index = MOUSE_BUTTON_RIGHT
@@ -187,12 +180,11 @@ func run() -> void:
 	(hud.pointer_target as Button).pressed.emit()
 	hud._update_pointer()
 	await frames()
-	await pointer_shot(hud.road_btns["road"], "03_road_card.png")
-	(hud.pointer_target as Button).pressed.emit()
-	hud._update_pointer()
-	await frames()
-	check(tut._road_chosen and game.tool == "road", "explicit cobblestone choice")
-	await pointer_shot(hud.badges["tutorial_target"]["n"], "03_road_place.png")
+	if game.tool != "road":
+		hud.road_btns["road"].pressed.emit()
+		await frames()
+	check(game.tool == "road" and hud.pointer_target == null and not hud.pointer.visible, "cobblestone brush has no arrow")
+	await shot("03_road_place.png")
 	# Отдельный кусок у двери не соединяет дом с площадью.
 	var door := city.door_point(homes[0])
 	paint_path([door - Vector2(0.7, 0), door + Vector2(0.7, 0)])
@@ -215,10 +207,8 @@ func run() -> void:
 	game.speed = 8.0
 	if not await snapshot_step("settle"):
 		return
-	var family_button := hud._do_target({"kind": "fam"}) as Button
-	if not check(family_button != null, "family medallion"):
+	if not click_family():
 		return
-	family_button.pressed.emit()
 	hud._update_pointer()
 	await frames()
 	var fitting: Array = city.homes_for(game.settle_fam)
@@ -251,13 +241,12 @@ func run() -> void:
 			game.select_building(home)
 			hud.open_info(home)
 			break
-	await frames(30)
-	hud._update_pointer()
-	check(tut.cur_id() == "house" and not tut._check("house") and tut.next_btn.visible and tut.hint.visible, "opening house needs explicit understood")
+	check(await wait_step("house_info"), "opening the house finishes the action")
+	check(tut.next_btn.visible and tut.hint.visible and not hud.pointer.visible, "house icons are a separate info card")
 	check(tut.hint.text == "Значки — что нужно семье.\nЗелёное — есть, бледное — нужно поставить рядом.", "two-line house hint")
 	for line: String in I18n.t(tut.hint.text).split("\n"):
 		check(line.length() <= 60, "short translated house hint line")
-	await pointer_shot(tut.next_btn, "06_house_understood.png")
+	await shot("06_house_understood.png")
 	tut.next_btn.pressed.emit()
 	if not await snapshot_step("food"):
 		return
@@ -285,8 +274,8 @@ func run() -> void:
 		game.speed = 0.0
 		if not check(not city.arrivals.is_empty(), "second family for scribe"):
 			return
-		await pointer_shot(hud._do_target({"kind": "fam"}), "09_scribe_family.png")
-		(hud.pointer_target as Button).pressed.emit()
+		await pointer_shot(tut.family_target(), "09_scribe_family.png")
+		click_family()
 		hud._update_pointer()
 		await frames()
 		var fit := city.homes_for(game.settle_fam)
@@ -345,15 +334,22 @@ func run() -> void:
 	await frames(3)
 	check(not hud.advisor_panel.visible and hud.notes_box.get_child_count() == 1, "queued toast appears after advisor")
 	clear_guidance()
-	tut._enter(Tutorial.step_index("move"))
-	await get_tree().create_timer(3.1).timeout
-	await pointer_shot(tut.next_btn, "01_camera_understood.png")
-	tut.next_btn.pressed.emit()
-	check(await wait_step("houses"), "camera understood offers manual completion")
 	tut._enter(Tutorial.step_index("food"))
 	var skip := tut.card.find_child("TutorialSkip", true, false) as Button
 	skip.pressed.emit()
 	check(not tut.active() and Tutorial.saved_step((JSON.parse_string(JSON.stringify(city.save_data())) as Dictionary).get("tips", {})) == -1, "skip is saved")
+
+
+func click_family() -> bool:
+	var target := tut.family_target()
+	if target is Button:
+		(target as Button).pressed.emit()
+		return true
+	for key: String in hud.badges:
+		if hud.badges[key]["n"] == target:
+			hud._badge_click(key)
+			return true
+	return check(false, "family target")
 
 
 func pointer_shot(expected: Control, file: String) -> void:
@@ -362,11 +358,6 @@ func pointer_shot(expected: Control, file: String) -> void:
 	await check_arrow_frames(file)
 	var anchored: bool = not hud._pointer_badge.is_empty() and hud._pointer_badge.get("n") == expected
 	check(is_instance_valid(expected) and hud.pointer_target == expected and (expected.is_visible_in_tree() or anchored), file + " exact control")
-	if expected == tut.next_btn:
-		var from := hud.pointer.position + hud.pointer.size * 0.5
-		var delta := expected.get_global_rect().get_center() - from
-		var aim := Vector2.DOWN.rotated(hud.pointer.rotation)
-		check(delta.dot(aim) > 0.0 and absf(delta.cross(aim)) <= 2.0, file + " arrow points at Understood")
 	check(not hud.advisor_panel.visible and not hud.notes_box.is_visible_in_tree() and not hud.badges.has("quest_target"), file + " one voice")
 	await shot(file)
 
@@ -403,16 +394,8 @@ func choose_build(cat: String, type: String, prefix: String) -> void:
 			break
 	check(game.tool == type, type + " selected")
 	hud._update_pointer()
-	var badge: Dictionary = hud.badges.get("tutorial_target", {})
-	var at := tut._place_pos
-	var pl := game.placement_hint(type, at) if at.is_finite() else {}
-	check(pl.get("err", "?") == "" and (type == "house_pleb" or not bool(pl.get("noroad", false))), type + " suggested spot can be built")
-	if check(not badge.is_empty(), type + " world placement anchor"):
-		var point: Vector3 = badge["pos"]
-		var ghost := game.ghost
-		var at_ghost: bool = is_instance_valid(ghost) and ghost.visible and game.place_info.get("err", "?") == "" and point.is_equal_approx(ghost.global_position + Vector3.UP)
-		check(at.is_equal_approx(Vector2(point.x, point.z)) or at_ghost, type + " arrow anchored to site or valid ghost")
-		await pointer_shot(badge["n"], prefix + "_placement.png")
+	check(not hud.badges.has("tutorial_target") and not hud.pointer.visible and hud.pointer_target == null, type + " no placement guidance")
+	await shot(prefix + "_placement.png")
 
 
 func paint_path(points: Array[Vector2]) -> void:

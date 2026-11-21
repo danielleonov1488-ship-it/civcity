@@ -193,6 +193,18 @@ var pointer: TextureRect
 var pointer_target: Control
 var _pointer_badge := {}
 var pointer_text: Label
+var _pointer_id := 0
+var _pointer_side := Vector2.ZERO
+var _pointer_blocked := 0.0
+var _pointer_clear_frame := -1
+var _pointer_goal := Vector2.ZERO
+var _pointer_from := Vector2.ZERO
+var _pointer_progress := 1.0
+var _pointer_draw_gliding := false
+var _pointer_glide: Tween
+const POINTER_MARGIN := 6.0
+const POINTER_BOB := 3.0
+const POINTER_GLIDE_TIME := 0.2
 var credits_panel: PanelContainer         # титры: кто и что сделал для игры
 var journal_panel: PanelContainer = null  # журнал «Истории горожан» (собирает StoryUi при первом открытии)
 var hover_tip: PanelContainer             # мгновенная подсказка у плашки города и фишек классов
@@ -3538,19 +3550,17 @@ func _update_pointer() -> void:
 	pointer_target = null
 	_pointer_badge = {}
 	if game == null or game.city == null or game.mode == "demo" or game.mode == "menu":
+		_hide_guidance_pointer()
 		return
 	var camp := CampUI.of(self)
 	var legion_ui := LegionUi.of(self)
 	if (camp != null and camp.visible) or (game.city.legion.v3() and legion_ui != null and legion_ui.visible):
-		if pointer != null:
-			pointer.hide()
-			pointer_text.hide()
+		_hide_guidance_pointer()
 		return
 	if tutorial_busy():
 		if game.tutorial != null:
 			var pt: Array = game.tutorial.pointer()
-			pointer_target = pt[0]
-			pointer_text.text = pt[1]
+			_set_guidance_target(pt[0], pt[1])
 			if badges.has("tutorial_target") and pointer_target != badges["tutorial_target"]["n"]:
 				clear_badge("tutorial_target")
 			if pointer_target is MapBadge:
@@ -3559,19 +3569,31 @@ func _update_pointer() -> void:
 						_pointer_badge = badge
 						break
 		return
-	# щёлкнули по строке (просьба, условие уровня, цель истории) — стрелка PTR_SHOW_MS к тому, что нужно сделать
-	if not _ptr_shown.is_empty():
-		if Time.get_ticks_msec() < int(_ptr_shown["until"]):
-			pointer_target = _do_target(_ptr_shown["do"], true)
-			pointer_text.text = String((_ptr_shown["do"] as Dictionary).get("tip", ""))
-			if pointer_target != null:
-				return
-		else:
-			_ptr_shown = {}
-	# Владелец, 17.11: «после обучения эта стрелка не нужна вообще — мешает играть и сбивает с толку».
-	# Сама стрелка больше не появляется: ни к просьбам, ни к историям, ни к кнопке уровня, ни к Легиону.
-	# Стрелка — только в обучении и по щелчку строки просьбы / условия уровня (show_pointer, PTR_SHOW_MS).
-	return
+	# Вне обучения стрелка появляется только после щелчка по строке.
+	if not _ptr_shown.is_empty() and Time.get_ticks_msec() < int(_ptr_shown["until"]):
+		var request: Dictionary = _ptr_shown["do"]
+		_set_guidance_target(_do_target(request, true), String(request.get("tip", "")))
+	else:
+		_ptr_shown = {}
+		_hide_guidance_pointer()
+
+
+func _set_guidance_target(target: Control, caption: String) -> void:
+	pointer_target = target
+	if not is_instance_valid(target):
+		_hide_guidance_pointer()
+	if pointer_text.text != caption:
+		pointer_text.text = caption
+		pointer_text.reset_size()
+
+
+func _hide_guidance_pointer(for_frame := false) -> void:
+	if for_frame:
+		_pointer_clear_frame = Engine.get_process_frames()
+	if pointer != null:
+		pointer.hide()
+		pointer_text.hide()
+
 
 const PTR_SHOW_MS := 6000              # стрелка по щелчку строки — столько мс, потом гаснет
 var _ptr_shown := {}                   # {"do": need_do, "until": мс} — стрелка по щелчку
@@ -3592,9 +3614,21 @@ func early_request(g: Dictionary) -> bool:
 
 ## Показать стрелкой (на PTR_SHOW_MS) то, что нужно сделать (need_do): щелчок по строке просьбы, условия уровня, цели
 func show_pointer(w: Dictionary) -> void:
-	if w.is_empty() or _do_target(w, true) == null and String(w.get("kind", "")) in ["", "wait", "locked"]:
+	if tutorial_busy():
+		_update_pointer()
 		return
-	_ptr_shown = {"do": w, "until": Time.get_ticks_msec() + PTR_SHOW_MS}
+	var kind := String(w.get("kind", ""))
+	if w.is_empty() or _do_target(w, true) == null and kind in ["", "wait", "locked"]:
+		return
+	var now := Time.get_ticks_msec()
+	var until := now + PTR_SHOW_MS
+	if kind == "study":
+		# ????????????? ????? ?????????? ??????? ??????, ?? ???? ?? ?? ????????.
+		var request: Dictionary = _ptr_shown.get("do", {})
+		until = int(_ptr_shown.get("until", 0))
+		if until <= now or String(request.get("kind", "")) not in ["research", "research_any", "study"]:
+			return
+	_ptr_shown = {"do": w, "until": until}
 	_update_pointer()
 	_ensure_pointer_visible.call_deferred()
 
@@ -4035,7 +4069,7 @@ func _process(_dt: float) -> void:
 			advisor_panel.hide()
 			notes_box.hide()
 			_ptr_tick -= _dt
-			if _ptr_tick <= 0.0 or game.tutorial != null and game.tutorial.cur_id() == "cart":
+			if _ptr_tick <= 0.0:
 				_ptr_tick = 0.2
 				_update_pointer()
 		else:
@@ -4083,48 +4117,15 @@ func _process(_dt: float) -> void:
 			_ptr_tick = 0.25
 			_update_pointer()
 	if pointer:
-		var t: Control = pointer_target
-		# мировая цель обучения (повозка, дом) — проекция; цели внутри форта и окна Легиона тоже показываем (обучение Легиона)
+		var target := pointer_target
 		var world := _tutorial_pointer_projection()
-		var show := is_instance_valid(t) and (t.is_visible_in_tree() or world.is_finite()) and root.visible
-		pointer.visible = show
-		pointer_text.visible = show and pointer_text.text != ""
-		if show:
-			if tutorial_busy():
-				_place_tutorial_pointer(t, world)
-				return
-			var r := t.get_global_rect()
-			var bob := sin(Time.get_ticks_msec() / 450.0) * 4.0
-			var above := r.position.y > 200.0
-			pointer.rotation = 0.0 if above else PI
-			pointer.position = Vector2(r.get_center().x - 32, (r.position.y - 68 - bob) if above else (r.end.y + 4 + bob))
-			if info_panel.visible and info_panel.is_ancestor_of(t):
-				# В карточке наконечник стоит у кнопки, подпись — за левым краем окна.
-				var tip := 59.0  # наконечник с обводкой на SVG 64×64
-				pointer.rotation = 0.0
-				pointer.position = Vector2(r.get_center().x - 32, r.position.y - tip)
-				var label_y := r.position.y - 26.0
-				if t.has_meta("hire_class"):
-					# Крупная стрелка слева: наконечник точно у «+».
-					pointer.rotation = -PI / 2.0
-					pointer.position = Vector2(r.position.x - tip, r.get_center().y - 32)
-					label_y = r.get_center().y
-				pointer_text.position = Vector2(maxf(6.0, info_panel.get_global_rect().position.x - pointer_text.size.x - 12.0), label_y - pointer_text.size.y / 2.0)
-			elif above:
-				pointer_text.position = pointer.position + Vector2(32 - pointer_text.size.x / 2.0, -26)
-			else:
-				# стрелка снизу смотрит вверх: подпись сбоку от неё, чтобы не налезать на окна ниже
-				var vw := root.size.x
-				var px := pointer.position.x + 64.0
-				if px + pointer_text.size.x > vw - 6.0:
-					px = pointer.position.x + 2.0 - pointer_text.size.x
-				pointer_text.position = Vector2(px, pointer.position.y + 32.0 - pointer_text.size.y / 2.0)
-			# стрелка к медальону или кнопке легла бы на открытую карточку (подпись — поверх имени героя): пока карточка
-			# открыта, стрелки нет (проверка 26.10); стрелка к кнопке в самой карточке («Улучшить» Казарм) — остаётся
-			if info_panel.visible and not info_panel.is_ancestor_of(t) and Rect2(pointer.position, pointer.size).merge(
-					Rect2(pointer_text.position, pointer_text.size)).intersects(info_panel.get_global_rect()):
-				pointer.visible = false
-				pointer_text.visible = false
+		if Engine.get_process_frames() != _pointer_clear_frame and root.visible and is_instance_valid(target) \
+				and not target.is_queued_for_deletion() and (target.is_visible_in_tree() or world.is_finite()):
+			_place_tutorial_pointer(target, world, _dt)
+			pointer.show()
+			pointer_text.visible = pointer_text.text != ""
+		else:
+			_hide_guidance_pointer()
 
 
 func _tutorial_pointer_projection() -> Vector2:
@@ -4141,37 +4142,95 @@ func _tutorial_pointer_projection() -> Vector2:
 	return point if point.is_finite() else Vector2.INF
 
 
-## Подбираем сторону у самой цели, чтобы карточки не прятали стрелку.
-func _place_tutorial_pointer(target: Control, world: Vector2) -> void:
-	var screen := get_viewport().get_visible_rect().grow(-4)
-	var r := target.get_global_rect()
+## Сторону выбираем по неподвижной стрелке. Колебание только при отрисовке.
+func _place_tutorial_pointer(target: Control, world: Vector2, dt: float) -> void:
+	var viewport_rect := get_viewport().get_visible_rect()
+	var screen := viewport_rect.grow(-4.0)
+	var rect := target.get_global_rect()
 	if world.is_finite() and (not target.is_visible_in_tree() or not screen.has_point(world)):
-		r = Rect2(world.clamp(screen.position, screen.end), Vector2.ZERO)
-	var half := pointer.size * 0.5
-	var bob := 6.0 + sin(Time.get_ticks_msec() / 450.0) * 4.0
-	var sides: Array[Vector2] = [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]
-	if target == game.tutorial.next_btn or r.get_center().y < 120.0:
-		sides = [Vector2.DOWN, Vector2.RIGHT, Vector2.LEFT, Vector2.UP]
-	elif target.has_meta("hire_class") or target == game.tutorial.camera_keys:
-		sides = [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]
-	var best := INF
-	var direction := Vector2.DOWN
-	for side: Vector2 in sides:
-		var desired := r.get_center() + side * (half.x + (r.size * 0.5).dot(side.abs()) + bob) - half
-		var at := desired.clamp(screen.position, screen.end - pointer.size).round()
-		var box := Rect2(at, pointer.size)
-		var cost := desired.distance_squared_to(at)
-		for panel: Control in [game.tutorial.card, info_panel, tray, tool_panel, fam_box, research_panel]:
-			if panel.is_visible_in_tree() and not panel.is_ancestor_of(target):
-				cost += box.intersection(panel.get_global_rect()).get_area()
-		if cost < best:
-			best = cost
-			pointer.position = at
-			direction = side
-	pointer.rotation = Vector2.UP.angle_to(direction)
-	var label_at := pointer.position + Vector2(half.x - pointer_text.size.x * 0.5, -pointer_text.size.y - 4.0)
-	pointer_text.position = label_at.clamp(screen.position, screen.end - pointer_text.size)
+		rect = Rect2(world, Vector2.ZERO)
+	var panels: Array[Control] = [info_panel, tray, tool_panel, fam_box, research_panel, bar_left, bar_mid, bar_right]
+	if tutorial_busy() and game.tutorial != null:
+		panels.append(game.tutorial.card)
+	var obstacles: Array[Rect2] = []
+	var hosts: Array[Rect2] = []
+	for panel: Control in panels:
+		if not panel.is_visible_in_tree() or panel == target:
+			continue
+		if panel.is_ancestor_of(target):
+			hosts.append(panel.get_global_rect())
+		else:
+			obstacles.append(panel.get_global_rect())
 
+	var new_target := target.get_instance_id() != _pointer_id
+	var side := _pointer_side
+	if not new_target:
+		var box := Rect2(_guidance_arrow_at(rect, side), pointer.size)
+		var blocked := not viewport_rect.intersects(box)
+		for obstacle: Rect2 in obstacles:
+			blocked = blocked or obstacle.encloses(box)
+		_pointer_blocked = _pointer_blocked + dt if blocked else 0.0
+	if new_target or _pointer_blocked > 0.5:
+		var sides: Array[Vector2] = [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]
+		if target.has_meta("hire_class"):
+			sides = [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]
+		elif rect.get_center().y < 120.0:
+			sides = [Vector2.DOWN, Vector2.RIGHT, Vector2.LEFT, Vector2.UP]
+		var best := INF
+		for candidate: Vector2 in sides:
+			var desired := _guidance_arrow_at(rect, candidate)
+			var at := desired.clamp(screen.position, screen.end - pointer.size)
+			var footprint := Rect2(at, pointer.size).grow(POINTER_BOB)
+			var label_box := Rect2(_guidance_label_at(at, candidate, screen), pointer_text.size)
+			var cost := desired.distance_squared_to(at)
+			# ???? ???? ????????? ????, ?? ?????? ?????? ????????? ???? ????.
+			for host: Rect2 in hosts:
+				cost += footprint.intersection(host).get_area()
+			for obstacle: Rect2 in obstacles:
+				cost += 4.0 * footprint.intersection(obstacle).get_area()
+				if pointer_text.text != "":
+					cost += label_box.intersection(obstacle).get_area()
+			if cost < best:
+				best = cost
+				side = candidate
+		_pointer_blocked = 0.0
+
+	var limit := screen.end - pointer.size
+	var goal := _guidance_arrow_at(rect, side).clamp(screen.position, limit)
+	var bob := sin(Time.get_ticks_msec() / 650.0) * POINTER_BOB
+	var at := (goal + side * bob).clamp(screen.position, limit)
+	var retarget := new_target or side != _pointer_side or _pointer_goal.distance_to(goal) > 40.0
+	retarget = retarget or not _pointer_draw_gliding and pointer.position.distance_to(at) > 40.0
+	if retarget and _pointer_id != 0:
+		if _pointer_glide != null:
+			_pointer_glide.kill()
+		_pointer_from = pointer.position
+		_pointer_progress = 0.0
+		_pointer_glide = create_tween()
+		_pointer_glide.tween_property(self, "_pointer_progress", 1.0, POINTER_GLIDE_TIME).set_trans(Tween.TRANS_SINE)
+	_pointer_id = target.get_instance_id()
+	_pointer_side = side
+	_pointer_goal = goal
+	pointer.rotation = Vector2.UP.angle_to(side)
+	_pointer_draw_gliding = _pointer_progress < 1.0
+	pointer.position = _pointer_from.lerp(at, _pointer_progress).clamp(screen.position, limit)
+	pointer_text.position = _guidance_label_at(pointer.position, side, screen)
+
+
+func _guidance_arrow_at(rect: Rect2, side: Vector2) -> Vector2:
+	var half := pointer.size * 0.5
+	return rect.get_center() + side * ((half + rect.size * 0.5).dot(side.abs()) + POINTER_MARGIN) - half
+
+
+func _guidance_label_at(at: Vector2, side: Vector2, screen: Rect2) -> Vector2:
+	var label_at := at + Vector2((pointer.size.x - pointer_text.size.x) * 0.5, -pointer_text.size.y - 4.0)
+	if side == Vector2.DOWN:
+		label_at.y = at.y + pointer.size.y + 4.0
+	elif side == Vector2.LEFT:
+		label_at = at + Vector2(-pointer_text.size.x - 4.0, (pointer.size.y - pointer_text.size.y) * 0.5)
+	elif side == Vector2.RIGHT:
+		label_at = at + Vector2(pointer.size.x + 4.0, (pointer.size.y - pointer_text.size.y) * 0.5)
+	return label_at.clamp(screen.position, screen.end - pointer_text.size)
 
 
 # ---------- панель инструмента (справа над кнопками) ----------
