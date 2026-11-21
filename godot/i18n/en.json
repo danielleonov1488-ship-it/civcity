@@ -5896,5 +5896,8 @@
 	"Отменить · вернуть %s": "Cancel · refund %s",
 	"Принять · %s": "Adopt · %s",
 	"Штаб %s": "HQ %s",
-	"Еда Легиону": "Food for the Legion"
+	"Еда Легиону": "Food for the Legion",
+	"Вы": "You",
+	"Соперник": "Opponent",
+	"Время вышло": "Time is up"
 }

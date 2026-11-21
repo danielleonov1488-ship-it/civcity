@@ -1,4 +1,6 @@
 extends Node
+
+const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Звуки боя. События приходят из представления; время и случайность свои.
 
 signal played(event: String, file: String, pan: float)
@@ -143,6 +145,12 @@ func reset(biome: String) -> void:
 
 
 func advance(dt: float, speed: float, running: bool) -> void:
+	var started := Perf13.begin()
+	advance_profiled(dt, speed, running)
+	Perf13.end(Perf13.SOUND, started)
+
+
+func advance_profiled(dt: float, speed: float, running: bool) -> void:
 	_speed = speed
 	if running:
 		_clock += dt
@@ -273,6 +281,12 @@ func finish(win: bool) -> void:
 
 
 func update_field(sim: LegionSim, dt: float, fighting: bool, view: LegionBattleView) -> void:
+	var started := Perf13.begin()
+	update_field_profiled(sim, dt, fighting, view)
+	Perf13.end(Perf13.FIELD, started)
+
+
+func update_field_profiled(sim: LegionSim, dt: float, fighting: bool, view: LegionBattleView) -> void:
 	if _finished:
 		return
 	if not fighting:

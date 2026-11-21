@@ -1017,6 +1017,8 @@ func _anim_remove(n: Node) -> void:
 
 
 func _anims(dt: float) -> void:
+	if game.legion_city_hidden():
+		return
 	var q: String = str(game.settings.get("quality", "high"))
 	var low := is_low(q)
 	var viewport := get_viewport()

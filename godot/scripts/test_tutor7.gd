@@ -17,6 +17,8 @@ func launcher_run(prefix: String, folder: String, profiles := "D:/CivCity/.work/
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
 		if arg.begins_with("lang="):
 			lang = arg.trim_prefix("lang=")
+		if arg.begins_with("profiles="):
+			profiles = arg.trim_prefix("profiles=")
 	get_window().size = Vector2i(1440, 900)
 	var profile := "%s/%s_%d_%d" % [profiles, tag.to_lower(), int(Time.get_unix_time_from_system()), Time.get_ticks_usec()]
 	if not check(DirAccess.make_dir_recursive_absolute(profile) == OK and DirAccess.make_dir_recursive_absolute(out) == OK, "isolated directories"):

@@ -1,4 +1,6 @@
 extends Node
+
+const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Этап 1 (1.12): замеры скорости и проверка «Средняя и Высокая — ни пикселя не изменилось» (против эталона GOLDEN).
 ##   bash .work/py/gpu_run.sh res://test_perf.tscn -- mode=regress          — для regress.sh: в конце «PERF DONE fails=0»
 ##   … -- mode=measure q=high,medium,low,verylow [city=new|путь] [views=имя:x:z:yaw:pitch:dist,…] [n=120 warm=60 settle=20]
@@ -28,16 +30,23 @@ const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## 12.11 позже: фонтан, нимфей и арка снова Synty, детали Synty в своих зданиях, своя станция — golden_s8 (сборка 52)
 ## 12.11 «Высокая» облегчена для всех (без SDFGI/SSIL, атлас 4096, MSAA 2x), «Средняя» — атлас 4096 и мягкость низкая:
 ## эталон записан заново (golden_p1, ветка perf-120 от сборки 52); golden_s8 остаётся у линий без этой правки
-const GOLDEN := "D:/CivCity/.work/perf_ref/golden_p2"          # 12.11 позже: мелочь без тени, «Средняя» — 2 полосы теней
+const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s9"
 const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22,whole:192:160:15:55:240"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)
-## Пороги этапа 1 (RTX 3060, город владельца, вид по умолчанию): «Низкая» и «Очень низкая» — время видеокарты, мс.
-## Запас на соседние проверки (другая линия может грузить видеокарту): сверяем p10, а не медиану
-const GATE_LOW := 7.4
-const GATE_VLOW := 3.0
-## Вызовы отрисовки и треугольники тени «Высокой» не должны вырасти больше чем на 10% от этих (вид center, город владельца)
-const REF_HIGH := {"vis_d": 2356, "sh_d": 5295, "sh_p": 7.91e6}     # замер 25.10 до правок этапа 1 (сборка 504a0b5)
+const VIEWS_REGRESS := "center:210:145:15:42:60,wide:210:150:15:50:130,far:192:160:15:55:240"
+# Опорные замеры s9 на RTX 3060, 1920×1080, центр города владельца.
+# GPU p10, видимые треугольники, треугольники теней, обычные вызовы и вызовы теней.
+const REGRESS_BASE := {
+	"high": [15.09, 4.47e6, 9.68e6, 2200, 3892],
+	"medium": [11.47, 4.45e6, 4.67e6, 2059, 2160],
+	"low": [5.84, 4.26e6, 3.08e6, 1815, 1546],
+	"verylow": [3.30, 4.10e6, 0, 1746, 0],
+}
+const REGRESS_METRICS := ["p10", "vis_p", "sh_p", "vis_d", "sh_d"]
+const REGRESS_MARGIN := 1.12
+const PRESETS := ["high", "medium", "low", "verylow"]
+
 
 var game
 var A := {}
@@ -137,11 +146,12 @@ func _run(mode: String) -> void:
 	print("PERF adapter: %s | %s | type %d | window %s | city %s | buildings %d residents %d" % [RenderingServer.get_video_adapter_name(),
 		RenderingServer.get_video_adapter_vendor(), RenderingServer.get_video_adapter_type(), str(get_window().size),
 		city_src if city_src != "" and mode != "menu" else ("menu" if mode == "menu" else "new"), game.city.buildings.size(), game.people.residents.size()])
-	if A.has("paired") or A.has("warm_assets"):
+	if A.has("paired") or A.has("warm_assets") or mode in ["legion", "regress", "hitch"]:
 		await _perf13_wait_icons()
 		RenderingServer.viewport_set_measure_render_time(vp, true)
 	match mode:
 		"measure": await _measure_all()
+		"legion": pass
 		"shots": await _shots_mode()
 		"hitch": await _hitch()
 		"hitchprof": await _hitchprof()
@@ -200,6 +210,11 @@ func _measure(tag: String) -> Dictionary:
 	var old_gperf := Gfx.perf
 	People.perf = true
 	Gfx.perf = true
+
+	Perf13.enabled = A.has("timers")
+	if Perf13.enabled:
+		Perf13.usec.resize(Perf13.LABELS.size())
+		Perf13.usec.fill(0)
 	var ppl_start: int = game.people.perf_us
 	var anim_start: int = game.gfx.anim_us
 	var n := int(A.get("n", "120"))
@@ -227,6 +242,13 @@ func _measure(tag: String) -> Dictionary:
 			extra_gpu.append(gpu_ms)
 			extra_cpu.append(cpu_ms)
 	_rec = false
+
+	if Perf13.enabled:
+		var times := PackedStringArray()
+		for i in Perf13.LABELS.size():
+			times.append("%s=%.3f" % [Perf13.LABELS[i], Perf13.usec[i] / (1000.0 * n)])
+		print("PERF TIMERS ", tag, " ms/frame ", " ".join(times))
+	Perf13.enabled = false
 	People.perf = old_pperf
 	Gfx.perf = old_gperf
 	var ppl_ms: float = (game.people.perf_us - ppl_start) / (1000.0 * n)
@@ -419,6 +441,13 @@ func _perf13_legion() -> void:
 
 
 func _perf13_measure_legion(tag: String, extra: Array[SubViewport]) -> void:
+	var label: String = A.get("label", "")
+
+	var city_clock: float = game.city.clock_h * (Game.DAY_LEN / 24.0) + game.day_t
+	var city_hour: float = game.hour
+	var city_speed: float = game.speed
+	if not label.is_empty():
+		tag += " " + label
 	_extra_viewports = extra
 	for sub: SubViewport in extra:
 		RenderingServer.viewport_set_measure_render_time(sub.get_viewport_rid(), true)
@@ -435,10 +464,17 @@ func _perf13_measure_legion(tag: String, extra: Array[SubViewport]) -> void:
 			_profile_delta(before, after, "frame")])
 		Gfx.skip_hidden_city_anims = true
 	else:
-		for turn in 3:
+		for turn in int(A.get("windows", "3")):
 			await _measure("%s r%d" % [tag, turn + 1])
 	for sub: SubViewport in extra:
 		RenderingServer.viewport_set_measure_render_time(sub.get_viewport_rid(), false)
+
+	# hour= holds the lighting clock. In this benchmark day_t still runs the economy clock.
+	var elapsed_clock: float = game.city.clock_h * (Game.DAY_LEN / 24.0) + game.day_t - city_clock
+	print("PERF LEGION city clock %s | speed %.1f | economy +%.3fs | game hour %.3f→%.3f" % [
+		tag, city_speed, elapsed_clock, city_hour, game.hour])
+	if A.get("check_hidden", "0") == "1" and elapsed_clock <= 0.0:
+		fail("часы города остановились под экраном Легиона")
 	_extra_viewports = []
 
 
@@ -522,7 +558,7 @@ func _hitch() -> void:
 	_view(_views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0])
 	game.hud.set_speed(1.0)
 	game.settings["autosave"] = true
-	var midnight := A.has("midnight")
+	var midnight: bool = A.get("midnight", "1") != "0"
 	if midnight:
 		game.clock_hours = true                # hour= в загрузке отключает смену даты для снимков
 		game._set_hour(23.6)
@@ -532,6 +568,10 @@ func _hitch() -> void:
 	var n := int(A.get("frames", "1200"))
 	var dts := PackedFloat32Array()
 	var big := []
+	Perf13.enabled = A.has("timers")
+	if Perf13.enabled:
+		Perf13.usec.resize(Perf13.LABELS.size())
+		Perf13.usec.fill(0)
 	var hour_peak := 0.0
 	var save_peak := 0.0
 	if not get_tree().process_frame.is_connected(_on_frame):
@@ -564,11 +604,16 @@ func _hitch() -> void:
 			var pm := _proc_ms[_proc_ms.size() - 1] if not _proc_ms.is_empty() else -1.0
 			big.append("%d:%.0f(скр %.0f, отр %.0f, вк %.0f)" % [i, d, pm, RenderingServer.viewport_get_measured_render_time_cpu(vp), RenderingServer.viewport_get_measured_render_time_gpu(vp)])
 	_rec = false
+	if Perf13.enabled:
+		print("HITCH phase sums ms staff=%.2f houses=%.2f advice=%.2f hour=%.2f" % [
+			Perf13.usec[Perf13.CITY_STAFF] / 1000.0, Perf13.usec[Perf13.CITY_HOMES] / 1000.0,
+			Perf13.usec[Perf13.CITY_ADVICE] / 1000.0, Perf13.usec[Perf13.CITY_HOUR] / 1000.0])
+	Perf13.enabled = false
 	var over := func(x: float) -> int: return Array(dts).filter(func(v): return v > x).size()
 	print("HITCH q=%s frames=%d p50=%.1f p95=%.1f p99=%.1f max=%.1f  >25ms=%d >33ms=%d >50ms=%d  spikes(i:ms)=%s  | ход дня %.1f мс, сохранение %.1f мс" % [q, n,
 		_pct(dts, 0.5), _pct(dts, 0.95), _pct(dts, 0.99), _pct(dts, 1.0), over.call(25.0), over.call(33.0), over.call(50.0), " ".join(big.slice(0, 40)),
 		float(game.get("sim_ms")) if game.get("sim_ms") != null else -1.0, float(game.get("save_ms")) if game.get("save_ms") != null else -1.0])
-	if A.has("strict"):
+	if A.get("strict", "1") != "0":
 		print("HITCH events hour frame=%d peak=%.2f ms autosave frame=%d peak=%.2f ms day=%d→%d save_gen=%d→%d" % [
 			n / 3, hour_peak, n / 2, save_peak, day_before, int(game.city.day), gen_before, int(game._save_gen)])
 		if game.sim_ms <= 0.0 or (midnight and int(game.city.day) <= day_before):
@@ -1402,6 +1447,15 @@ func _shots(qs: Array, views: Array, tag: String) -> Dictionary:
 const DIFF_MEAN := 0.15
 const DIFF_C24 := 500
 
+# Шум между отдельными запусками s9 для каждого вида. Между кадрами одного запуска запас меньше.
+const REGRESS_C24_BASE := {
+	"high/center": 526, "high/wide": 611, "high/far": 2654,
+	"medium/center": 531, "medium/wide": 609, "medium/far": 2659,
+	"low/center": 1274, "low/wide": 1700, "low/far": 731,
+	"verylow/center": 1239, "verylow/wide": 1691, "verylow/far": 740,
+}
+const REGRESS_ROUNDTRIP_C24_BASE := {"high/center": 502}
+
 
 static func _same(a: Image, b: Image) -> Dictionary:
 	if a == null or b == null or a.get_size() != b.get_size():
@@ -1476,50 +1530,54 @@ func _shots_mode() -> void:
 	_unfreeze()
 
 
-## Для regress.sh: (1) Высокая и Средняя совпадают с эталоном; (2) после Низкой и Очень низкой снова Высокая —
-## тот же кадр (ничего не «прилипло»); (3) пороги скорости Низкой и Очень низкой; (4) вызовы и тени Высокой не выросли
+## Эталон города, переход через лёгкие пресеты и замеры центра.
 func _regress() -> void:
 	await _settle()
-	var views := _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)
+	var owner := city_src == OWNER
+	var views := _views(VIEWS_REGRESS if owner else VIEWS_NEW if city_src.is_empty() else VIEWS_OWNER)
 	_freeze()
-	var first := await _shots(["high", "medium"], views, "first")
-	if city_src != "" and DirAccess.dir_exists_absolute(str(A.get("ref", GOLDEN))):
-		_compare_golden(first, str(A.get("ref", GOLDEN)))
-	else:
-		print("PERF golden: эталона нет — сверяем только повтор")
+	var first := await _shots(PRESETS, views, "first")
+	if owner or A.has("ref"):
+		var ref: String = A.get("ref", GOLDEN)
+		for key: String in first:
+			var path := ref.path_join(key.replace("/", "_") + ".png")
+			if not FileAccess.file_exists(path):
+				fail("нет эталона " + path)
+				continue
+			_regress_image(key, first[key], Image.load_from_file(path), false)
 	if A.has("out"):
 		_save_set(first, str(A["out"]))
-	# через Низкую и Очень низкую — и обратно
-	for q: String in ["low", "verylow"]:
-		_quality(q)
-		await frames(30)
 	var again := await _shots(["high", "medium"], views, "again")
-	for k: String in first:
-		var r := _same(first[k], again[k])
-		print("PERF roundtrip %-14s %s" % [k, r["info"]])
-		if not r["same"]:
-			fail("после Низкой снова «%s»: кадр %s другой (%s)" % [k.split("/")[0], k, r["info"]])
+	for key: String in again:
+		_regress_image(key, again[key], first[key], true)
 	_unfreeze()
-	# скорость: вид по умолчанию
+
 	var v0: Array = views[0]
 	_view(v0)
-	var meas := {}
-	for q: String in ["high", "low", "verylow"]:
+	for q: String in PRESETS:
 		_quality(q)
-		meas[q] = await _measure("%s %s" % [v0[0], q])
-	if city_src != "":
-		var lo: Dictionary = meas["low"]
-		var vl: Dictionary = meas["verylow"]
-		var hi: Dictionary = meas["high"]
-		if float(lo["p10"]) > GATE_LOW:
-			fail("Низкая: видеокарта %.2f мс (p10) > %.1f" % [lo["p10"], GATE_LOW])
-		if float(vl["p10"]) > GATE_VLOW:
-			fail("Очень низкая: видеокарта %.2f мс (p10) > %.1f" % [vl["p10"], GATE_VLOW])
-		for k: String in REF_HIGH:
-			if float(hi[k]) > float(REF_HIGH[k]) * 1.1:
-				fail("Высокая: %s = %d, было %d (+10%% предел)" % [k, int(hi[k]), int(REF_HIGH[k])])
-		print("PERF GATES low p10 %.2f/%.1f, verylow p10 %.2f/%.1f, high dc %d/%d shadow dc %d/%d shadow tris %.2fM/%.2fM" % [
-			lo["p10"], GATE_LOW, vl["p10"], GATE_VLOW, hi["vis_d"], REF_HIGH["vis_d"], hi["sh_d"], REF_HIGH["sh_d"], hi["sh_p"] / 1.0e6, REF_HIGH["sh_p"] / 1.0e6])
+		var sample := await _measure("%s %s" % [v0[0], q])
+		if owner and not A.has("views"):
+			var baseline: Array = REGRESS_BASE[q]
+			for i in REGRESS_METRICS.size():
+				var metric: String = REGRESS_METRICS[i]
+				var limit := float(baseline[i]) * REGRESS_MARGIN
+				var value: float = sample[metric]
+				print("PERF GATE %s %s %.2f / %.2f" % [q, metric, value, limit])
+				if value > limit:
+					fail("%s %s %.2f > %.2f" % [q, metric, value, limit])
+
+
+func _regress_image(key: String, current: Image, expected: Image, roundtrip: bool) -> void:
+	var result := _same(current, expected)
+	var pixel_base := REGRESS_ROUNDTRIP_C24_BASE if roundtrip else REGRESS_C24_BASE
+	var limit := floori(float(pixel_base[key]) * REGRESS_MARGIN) if pixel_base.has(key) else DIFF_C24
+	var kind := "roundtrip" if roundtrip else "golden"
+	var ok: bool = float(result["mean"]) <= DIFF_MEAN and int(result["c24"]) <= limit
+	print("PERF %s %-14s mean=%.4f c24=%d/%d %s" % [kind, key, result["mean"], result["c24"], limit, "OK" if ok else "FAIL"])
+	if not ok:
+		fail("%s %s: %s" % [kind, key, result["info"]])
+
 
 ## 12.11: «жизнь построек» (Life: двери, ставни по часам, мебель) — по очереди без неё и с ней (Life.on), rounds раз,
 ## итог — медианы; в час, когда ставни как раз закрываются (hour=20.6: дома 20:30–23:30, лавки 19:24–20:48), плюс

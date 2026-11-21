@@ -741,7 +741,7 @@ func _process(dt: float) -> void:
 
 func _process_body(dt: float) -> void:
 	moves = 0
-	if not on or game == null or game.city == null:
+	if not on or game == null or game.city == null or game.legion_city_hidden():
 		return
 	var sdt := minf(dt, 0.1) * float(game.speed)
 	if not _doors.is_empty():

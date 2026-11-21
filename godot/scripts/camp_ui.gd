@@ -1833,6 +1833,7 @@ func _start_diorama() -> void:
 	if not _city_render_owned:
 		_previous_disable_3d = get_viewport().disable_3d
 		_city_render_owned = true
+		hud.game.legion_cover(self, true)
 		get_viewport().disable_3d = true
 	if not USE_3D or not lg.v3() or is_instance_valid(diorama):
 		return
@@ -1889,6 +1890,8 @@ func _stop_diorama() -> void:
 		diorama = null
 	if _city_render_owned:
 		get_viewport().disable_3d = _previous_disable_3d
+		if is_instance_valid(hud.game):
+			hud.game.legion_cover(self, false)
 		_city_render_owned = false
 	if is_instance_valid(background):
 		background.show()

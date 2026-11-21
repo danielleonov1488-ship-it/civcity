@@ -1,5 +1,7 @@
 class_name LegionBattle
 extends Node
+
+const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Рисованный бой Легиона: ход боя считает LegionSim фиксированным шагом.
 ## Город на паузе, его 3D-кадр скрыт. Поле, бойцы и эффекты рисуются в CanvasLayer.
 ##
@@ -89,7 +91,19 @@ var boss_panel: Control
 var boss_name: Label
 var boss_bar: ProgressBar
 var boss_pic: TextureRect
+var top_block: Panel
+var speed_controls: HBoxContainer
+var ally_health: TeamHealth
+var enemy_health: TeamHealth
+var ally_name: Label
+var enemy_name: Label
+var enemy_medal: TextureRect
+var battle_clock: Label
+var wave_chip: Panel
 var wave_lbl: Label
+var time_left := LegionSim.TIME_LIMIT
+var _score_step := -1
+var _clock_second := -1
 var perk_bar: Control
 var perk_btns := {}
 var banner: PanelContainer
@@ -163,7 +177,7 @@ func _ready() -> void:
 	_start(setup)
 
 
-## Город уходит в тень: интерфейс спрятан, время стоит, камера города не слушает клавиш, 3D города не рисуется
+## Город уходит в тень: интерфейс спрятан, камера города не слушает клавиш, 3D города не рисуется
 func _enter() -> void:
 	var vp := get_viewport()
 	_saved = {"disable_3d": vp.disable_3d}
@@ -173,10 +187,10 @@ func _enter() -> void:
 			_city_sound.duck_for_battle(get_instance_id(), true)
 		_saved["speed"] = game.speed
 		_saved["hud"] = game.hud.visible
+		game.legion_cover(self, true)
 		_saved["cine"] = game.rig.cine if game.rig else false
 		if game.tool != "":
 			game.set_tool("")
-		game.hud.set_speed(0.0)
 		game.hud.visible = false
 		if game.rig:
 			game.rig.cine = true
@@ -190,6 +204,7 @@ func _leave() -> void:
 	get_viewport().disable_3d = bool(_saved.get("disable_3d", false))
 	if game != null and is_instance_valid(game):
 		game.hud.visible = bool(_saved.get("hud", true))
+		game.legion_cover(self, false)
 		if game.rig:
 			game.rig.cine = bool(_saved.get("cine", false))
 		game.hud.set_speed(float(_saved.get("speed", 1.0)))
@@ -197,6 +212,8 @@ func _leave() -> void:
 
 func _exit_tree() -> void:
 	_release_music()
+	if is_instance_valid(game):
+		game.legion_cover(self, false)
 
 
 func _release_music() -> void:
@@ -403,7 +420,7 @@ func _button(text: String, icon: String, cb: Callable, w := 0.0) -> Button:
 	return b
 
 
-## Табличка волн, быстрые команды и пауза.
+## Общий счёт боя, быстрые команды и пауза.
 func _top_bar() -> void:
 	retreat_btn = Kit.round_button(_icon_tex("eagle"))
 	retreat_btn.name = "LegionBattleRetreat"
@@ -413,29 +430,19 @@ func _top_bar() -> void:
 	ui.add_child(retreat_btn)
 	_pin(retreat_btn, Control.PRESET_TOP_LEFT, Vector2(18, 12), Vector2(94, 94))
 
-	var plate := Kit.image(Kit.ROOT + "panels/ribbon_title.png", Vector2.ZERO)
-	ui.add_child(plate)
-	_pin(plate, Control.PRESET_CENTER_TOP, Vector2(-268, 12), Vector2(536, 108))
-	wave_lbl = _label("", 52, false, Color("681b0c"), font_title)
-	wave_lbl.name = "LegionBattleWave"
-	wave_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	wave_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	plate.add_child(wave_lbl)
-	wave_lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
 	var right := HBoxContainer.new()
+	right.name = "LegionBattleSpeed"
 	right.add_theme_constant_override("separation", 5)
-	right.alignment = BoxContainer.ALIGNMENT_END
 	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	speed_controls = right
 	ui.add_child(right)
-	_pin(right, Control.PRESET_TOP_RIGHT, Vector2(-407, 28), Vector2(290, 40))
 	for s: int in [1, 2, 3]:
-		var b := _button("×%d" % s, "", func(): _set_speed(float(s)), 50)
+		var b := _button("×%d" % s, "", func(): _set_speed(float(s)), 46)
 		b.toggle_mode = true
 		b.tooltip_text = "Скорость боя ×%d" % s
 		right.add_child(b)
 		speed_btns[s] = b
-	auto_btn = _button("Авто", "", _toggle_auto, 80)
+	auto_btn = _button("Авто", "", _toggle_auto, 72)
 	auto_btn.toggle_mode = true
 	auto_btn.tooltip_text = "Умения отряд жмёт сам — вовремя и с умом"
 	right.add_child(auto_btn)
@@ -445,51 +452,153 @@ func _top_bar() -> void:
 	pause_btn.focus_mode = Control.FOCUS_NONE
 	pause_btn.pressed.connect(_toggle_pause)
 	ui.add_child(pause_btn)
-	_pin(pause_btn, Control.PRESET_TOP_RIGHT, Vector2(-104, 12), Vector2(88, 88))
+	pause_btn.custom_minimum_size = Vector2(72, 72)
+	_pin(pause_btn, Control.PRESET_TOP_RIGHT, Vector2(-88, 12), Vector2(72, 72))
+	_score_box()
+	ui.resized.connect(_layout_top)
+	right.minimum_size_changed.connect(_layout_top)
+	_layout_top()
 	_refresh_speed()
 
 
-## Полоса здоровья босса под табличкой: портрет, имя, полоса
+func _layout_top() -> void:
+	var buttons_width := speed_controls.get_combined_minimum_size().x
+	_pin(speed_controls, Control.PRESET_TOP_RIGHT, Vector2(-98.0 - buttons_width, 28), Vector2(buttons_width, 40))
+	var width := minf(ui.size.x * 0.49, ui.size.x - 2.0 * (110.0 + buttons_width))
+	width = maxf(310.0, width)
+	var top := 8.0 if width * 0.5 + 110.0 + buttons_width <= ui.size.x * 0.5 else 112.0
+	_pin(top_block, Control.PRESET_CENTER_TOP, Vector2(-width * 0.5, top), Vector2(width, 106))
+	if _banner_t > 0.0:
+		_place_banner()
+
+
+func _score_box() -> void:
+	top_block = Panel.new()
+	top_block.name = "LegionBattleScore"
+	top_block.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top_block.add_theme_stylebox_override("panel", Kit.box("panels/card_frame", 67, 0, 112))
+	ui.add_child(top_block)
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", 7)
+	top_block.add_child(row)
+	row.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	row.offset_left = 15.0
+	row.offset_right = -15.0
+	row.offset_top = 9.0
+	row.offset_bottom = 68.0
+	_score_medal(row, _icon_tex("eagle"), 52)
+	ally_health = TeamHealth.new()
+	ally_health.name = "AllyTeamHealth"
+	ally_name = _score_side(row, ally_health)
+	_score_medal(row, _icon_tex("swords"), 58)
+	enemy_health = TeamHealth.new()
+	enemy_health.name = "EnemyTeamHealth"
+	enemy_health.enemy = true
+	enemy_name = _score_side(row, enemy_health)
+	enemy_medal = _score_medal(row, null, 52)
+
+	battle_clock = _label("", 26, true)
+	battle_clock.name = "LegionBattleTimer"
+	battle_clock.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	battle_clock.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	top_block.add_child(battle_clock)
+	_pin(battle_clock, Control.PRESET_CENTER_TOP, Vector2(-42, 70), Vector2(84, 31))
+
+	wave_chip = Panel.new()
+	wave_chip.name = "LegionBattleWaveChip"
+	wave_chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wave_chip.add_theme_stylebox_override("panel", Kit.box("panels/panel_inset", 30, 0, 26))
+	wave_chip.hide()
+	top_block.add_child(wave_chip)
+	_pin(wave_chip, Control.PRESET_CENTER_TOP, Vector2(44, 73), Vector2(105, 25))
+	wave_lbl = _label("", 16, true)
+	wave_lbl.name = "LegionBattleWave"
+	wave_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	wave_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	wave_chip.add_child(wave_lbl)
+	wave_lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+
+func _score_medal(row: HBoxContainer, icon: Texture2D, side: float) -> TextureRect:
+	var rim := Kit.image(Kit.ROOT + "panels/slot_round.png", Vector2.ONE * side)
+	rim.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(rim)
+	var pic := Kit.image(icon, Vector2.ZERO)
+	rim.add_child(pic)
+	_pin(pic, Control.PRESET_CENTER, Vector2.ONE * -side * 0.35, Vector2.ONE * side * 0.70)
+	return pic
+
+
+func _score_side(row: HBoxContainer, health: TeamHealth) -> Label:
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.alignment = BoxContainer.ALIGNMENT_CENTER
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_theme_constant_override("separation", 1)
+	row.add_child(column)
+	health.custom_minimum_size = Vector2(0, 30)
+	health.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(health)
+	health.caption = _label("", 18, true, C_CREAM)
+	health.caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	health.caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	health.caption.clip_text = true
+	health.caption.add_theme_color_override("font_outline_color", Color("361b0d"))
+	health.caption.add_theme_constant_override("outline_size", 4)
+	health.add_child(health.caption)
+	health.caption.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var side_name := _label("", 18, true)
+	side_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	side_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	column.add_child(side_name)
+	return side_name
+
+
+## Компактная полоса босса под общим счётом.
 func _boss_box() -> void:
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", _box("g_panel_xs", [23, 23, 22, 24], [14, 10, 16, 12], true))
-	p.custom_minimum_size = Vector2(460, 0)
+	p.name = "LegionBattleBoss"
+	p.add_theme_stylebox_override("panel", Kit.box("panels/panel_inset", 32, 6, 42))
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 10)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_theme_constant_override("separation", 7)
 	p.add_child(h)
-	boss_pic = TextureRect.new()
-	boss_pic.custom_minimum_size = Vector2(54, 54)
-	boss_pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	boss_pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	boss_pic = Kit.image(null, Vector2(30, 30))
 	h.add_child(boss_pic)
 	var v := VBoxContainer.new()
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", 0)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_child(v)
-	boss_name = _label("", 19, false, C_INK, font_title)
+	boss_name = _label("", 16, false, C_INK, font_title)
+	boss_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	v.add_child(boss_name)
 	boss_bar = ProgressBar.new()
 	boss_bar.show_percentage = false
-	boss_bar.custom_minimum_size = Vector2(0, 16)
+	boss_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	boss_bar.custom_minimum_size = Vector2(0, 9)
 	var bg := StyleBoxFlat.new()
 	bg.bg_color = Color(0.25, 0.14, 0.08, 0.85)
-	bg.set_corner_radius_all(6)
+	bg.set_corner_radius_all(4)
 	bg.border_color = Color("a8740f")
 	bg.set_border_width_all(2)
 	var fg := StyleBoxFlat.new()
 	fg.bg_color = Color("c0392b")
-	fg.set_corner_radius_all(5)
+	fg.set_corner_radius_all(4)
 	fg.border_color = Color(1, 0.6, 0.5, 0.35)
 	fg.border_width_top = 2
 	boss_bar.add_theme_stylebox_override("background", bg)
 	boss_bar.add_theme_stylebox_override("fill", fg)
 	boss_bar.max_value = 1.0
+	boss_bar.step = 0.0
 	v.add_child(boss_bar)
 	boss_panel = p
 	p.visible = false
-	ui.add_child(p)
-	_pin(p, Control.PRESET_CENTER_TOP, Vector2(-230, 116), Vector2(460, 80))
+	top_block.add_child(p)
+	_pin(p, Control.PRESET_CENTER_BOTTOM, Vector2(-132, 5), Vector2(264, 42))
 
 
 ## Умения внизу: медальоны и кольца перезарядки.
@@ -555,10 +664,16 @@ func _banner_box() -> void:
 
 func say(text: String, dur := 1.6) -> void:
 	banner_lbl.text = text
-	var sz := banner.get_combined_minimum_size()
-	_pin(banner, Control.PRESET_CENTER, Vector2(-sz.x * 0.5, -232), sz)
+	_place_banner()
 	_banner_t = dur
 	_banner_dur = dur
+
+
+func _place_banner() -> void:
+	var sz := banner.get_combined_minimum_size()
+	# Оставляем место под босса, даже если он ещё не вышел.
+	var y := maxf(-232.0, boss_panel.get_global_rect().end.y + 12.0 - ui.size.y * 0.5)
+	_pin(banner, Control.PRESET_CENTER, Vector2(-sz.x * 0.5, y), sz)
 
 
 # =====================================================================
@@ -606,6 +721,12 @@ func _start(s: Dictionary) -> void:
 	battle_view.prewarm(s.get("waves", []))
 	for u in sim.units:
 		_view(u)
+	_score_names()
+	ally_health.initialized = false
+	enemy_health.initialized = false
+	_clock_second = -1
+	_score_step = -1
+	battle_clock.visible = tut == "" and not bool(s.get("fort_guide_first", false))
 	_waves_ui()
 	_fill_perks()
 	_refresh_speed()
@@ -630,6 +751,7 @@ func _start(s: Dictionary) -> void:
 	pause_lbl.visible = false
 	retreat_btn.disabled = false
 	_refresh_speed()
+	_update_ui(0.0)
 	if bool(stage.get("boss", false)):
 		say("Босс: " + String(stage.get("name", "")), 2.6)
 	var tw := create_tween()
@@ -672,8 +794,6 @@ func _clear_world() -> void:
 
 
 func _view(u: LegionSim.Unit) -> BattleView.Fighter:
-	if u.boss:
-		_boss_unit = u
 	var fresh := not views.has(u.id)
 	var fighter := battle_view.add_unit(u)
 	if fresh and u.alive and BattleSound.is_horse(u):
@@ -681,9 +801,76 @@ func _view(u: LegionSim.Unit) -> BattleView.Fighter:
 	return fighter
 
 
+func _score_names() -> void:
+	var city_name := String(game.city.name).strip_edges() if game != null else ""
+	ally_name.text = I18n.t("Вы") if city_name.is_empty() else city_name
+	var title := ""
+	if pvp:
+		var rival: Dictionary = setup.get("opponent", {})
+		title = String(rival.get("name", "")).strip_edges()
+	elif setup.has("event"):
+		title = String((setup["event"] as Dictionary).get("title", ""))
+	else:
+		title = String(stage.get("theme", ""))
+		if title.is_empty():
+			title = String(stage.get("name", ""))
+		title = I18n.t(title)
+	enemy_name.text = I18n.t("Соперник") if title.is_empty() else title
+
+
 func _waves_ui() -> void:
 	var total := 1 if bool(setup.get("enemy_formation", false)) else maxi(1, sim.waves.size())
+	wave_chip.visible = total > 1
 	wave_lbl.text = I18n.t("Волна %d/%d") % [clampi(sim.wave_idx + 1, 1, total), total]
+	var lead: LegionSim.Unit
+	_boss_unit = null
+	for u in sim.units:
+		if u.side == "enemy" and u.wave == sim.wave_idx:
+			if lead == null or u.boss:
+				lead = u
+			if u.boss:
+				_boss_unit = u
+				break
+	enemy_medal.texture = BattleView.portrait(lead) if lead != null else _icon_tex("helmet")
+	enemy_health.initialized = false
+
+
+func _update_score(dt: float) -> void:
+	var started := Perf13.begin()
+	_update_score_profiled(dt)
+	Perf13.end(Perf13.SCORE, started)
+
+
+func _update_score_profiled(dt: float) -> void:
+	if _score_step != sim.steps or dt == 0.0:
+		_score_step = sim.steps
+		var ally_hp := 0.0
+		var ally_max := 0.0
+		var enemy_hp := 0.0
+		var enemy_max := 0.0
+		for u in sim.units:
+			if u.side == "ally":
+				ally_hp += u.hp
+				ally_max += u.max_hp
+			elif u.wave == sim.wave_idx:
+				enemy_hp += u.hp
+				enemy_max += u.max_hp
+		ally_health.update_health(ally_hp, ally_max, dt)
+		enemy_health.update_health(enemy_hp, enemy_max, dt)
+	else:
+		ally_health.update_health(ally_health.hp, ally_health.max_hp, dt)
+		enemy_health.update_health(enemy_health.hp, enemy_health.max_hp, dt)
+
+	time_left = maxf(0.0, LegionSim.TIME_LIMIT - sim.t)
+	var seconds := ceili(time_left - 0.00001)
+	if seconds != _clock_second:
+		_clock_second = seconds
+		battle_clock.text = "%02d:%02d" % [seconds / 60, seconds % 60]
+		battle_clock.add_theme_color_override("font_color", Color("a1261c") if seconds <= 30 else C_INK)
+
+
+func _score_floor() -> float:
+	return (boss_panel if boss_panel.visible else top_block).get_global_rect().end.y
 
 
 # =====================================================================
@@ -692,6 +879,12 @@ func _waves_ui() -> void:
 
 
 func _process(dt: float) -> void:
+	var started := Perf13.begin()
+	_process_profiled(dt)
+	Perf13.end(Perf13.BATTLE, started)
+
+
+func _process_profiled(dt: float) -> void:
 	if sim == null:
 		return
 	dt = minf(dt, 0.1)
@@ -712,6 +905,7 @@ func _process(dt: float) -> void:
 		hint_lbl.modulate.a = maxf(0.0, hint_lbl.modulate.a - dt * 1.5)
 		if hint_lbl.modulate.a <= 0.0:
 			hint_lbl.visible = false
+	var step_started := Perf13.begin()
 	if run and phase != "result":
 		acc += gdt
 		var n := 0
@@ -721,6 +915,7 @@ func _process(dt: float) -> void:
 			n += 1
 			_handle(sim.take_events())
 			_tut_check()
+	Perf13.end(Perf13.SIM, step_started)
 	_tut_arrow(dt)
 	if not sim.result.is_empty() and (phase == "fight" or phase == "intro"):
 		_begin_end()
@@ -733,9 +928,11 @@ func _process(dt: float) -> void:
 	var fighting := phase == "intro" or phase == "fight"
 	battle_sound.update_field(sim, dt, run and fighting, battle_view)
 	battle_view.tick(sim, gdt, dt, acc, fighting)
-	_update_ui()
+	_update_ui(dt)
+	var had_floats := not bars.floats.is_empty()
 	bars.age_floats(dt)
-	bars.queue_redraw()
+	if had_floats or gdt > 0.0 or phase == "result":
+		bars.queue_redraw()
 
 
 func _fps(dt: float) -> void:
@@ -748,6 +945,8 @@ func _fps(dt: float) -> void:
 
 
 func _handle(evs: Array) -> void:
+	if not evs.is_empty():
+		_score_step = -1
 	for e: Dictionary in evs:
 		match String(e["type"]):
 			"wave":
@@ -987,11 +1186,12 @@ func _begin_end() -> void:
 	else:
 		out = legion.apply_result(setup, res)
 	out["retreat"] = bool(res.get("retreat", false))
+	out["timeout"] = bool(res.get("timeout", false))
 	var win := bool(out.get("win", false))
 	battle_sound.finish(win)
 	finished.emit(out)
 	if not bool(out["retreat"]):
-		say("Победа!" if win else "Отряд отступает…", 2.0)
+		say(I18n.t("Время вышло") if out["timeout"] else ("Победа!" if win else "Отряд отступает…"), 2.0)
 
 
 ## Круг идёт за толпой до её выхода на поле и ещё 2,5 с.
@@ -1029,20 +1229,33 @@ func _update_crowds(gdt: float) -> void:
 # =====================================================================
 
 
-func _update_ui() -> void:
+func _update_ui(dt: float) -> void:
+	_update_score(dt)
 	for id in perk_btns:
 		var pb: PerkButton = perk_btns[id]
-		pb.charge = sim.perk_charge(id)
-		pb.left = sim.perk_ready(id)
-		pb.active = phase == "fight" or phase == "intro"
-		pb.disabled = not pb.active or (tut_freeze and id != "oil")
-		pb.queue_redraw()
+		var charge := sim.perk_charge(id)
+		var left := sim.perk_ready(id)
+		var active := phase == "fight" or phase == "intro"
+		var disabled: bool = not active or (tut_freeze and id != "oil")
+		if pb.charge != charge or pb.left != left or pb.active != active or pb.disabled != disabled:
+			pb.charge = charge
+			pb.left = left
+			pb.active = active
+			pb.disabled = disabled
+			pb.queue_redraw()
 	var boss := _boss_unit
-	if boss != null and boss.alive:
+	if boss != null and not boss.alive:
+		boss = null
+		for u in sim.units:
+			if u.side == "enemy" and u.wave == sim.wave_idx and u.boss and u.alive:
+				boss = u
+				break
+		_boss_unit = boss
+	if boss != null:
 		boss_panel.visible = true
-		boss_name.text = boss.name
 		boss_bar.value = boss.hp_frac()
 		if boss_pic.get_meta("unit_id", -1) != boss.id or boss_pic.texture == null:
+			boss_name.text = boss.name
 			boss_pic.texture = BattleView.portrait(boss)
 			boss_pic.set_meta("unit_id", boss.id)
 	else:
@@ -1258,7 +1471,11 @@ func _show_result() -> void:
 	badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(badge)
-	var head := _label("Победа!" if win else ("Отступили" if bool(out.get("retreat", false)) else "Поражение"), 44, false, Color("6b4a12") if win else C_BAD, font_title)
+	var title := "Победа!" if win else ("Отступили" if bool(out.get("retreat", false)) else "Поражение")
+	if bool(out.get("timeout", false)):
+		title = I18n.t("Время вышло")
+	var head := _label(title, 44, false, Color("6b4a12") if win else C_BAD, font_title)
+	head.name = "LegionBattleResultTitle"
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(head)
 	var where := ""
@@ -1551,10 +1768,84 @@ func abort() -> void:
 # =====================================================================
 
 ## Полоски здоровья над бойцами и всплывающие числа — всё одним слоем
+class TeamHealth extends Control:
+	var caption: Label
+	var enemy := false
+	var initialized := false
+	var hp := 0.0
+	var max_hp := 0.0
+	var displayed := 0.0
+	var trail := 0.0
+	var _hold := 0.0
+	var _shown_hp := -1
+	var _shown_max := -1
+	var _frame: StyleBoxTexture
+	var _fill: StyleBoxTexture
+
+	func _ready() -> void:
+		_frame = Kit.box("panels/bar_frame", 42, 0, 30)
+		_fill = Kit.box("panels/bar_fill_gold" if enemy else "panels/bar_fill_green", 22, 0, 20)
+		_fill.modulate_color = Color("ed6a78") if enemy else Color("93ce74")
+		resized.connect(queue_redraw)
+
+	func update_health(current: float, maximum: float, dt: float) -> void:
+		var target := current / maximum if maximum > 0.0 else 0.0
+		var old_fill := displayed
+		var old_trail := trail
+		if not initialized:
+			displayed = target
+			trail = target
+			_hold = 0.0
+			initialized = true
+		elif current < hp and target < displayed:
+			# Белый след задерживается на месте удара.
+			_hold = 0.14
+			trail = maxf(trail, displayed)
+		displayed = move_toward(displayed, target, dt * 6.0)
+		_hold = maxf(0.0, _hold - dt)
+		if _hold <= 0.0:
+			trail = move_toward(trail, displayed, dt * 3.2)
+		trail = maxf(displayed, trail)
+		hp = current
+		max_hp = maximum
+		var shown_hp := roundi(hp)
+		var shown_max := roundi(max_hp)
+		if shown_hp != _shown_hp or shown_max != _shown_max or caption.text.is_empty():
+			_shown_hp = shown_hp
+			_shown_max = shown_max
+			caption.text = "%d/%d" % [shown_hp, shown_max]
+		if old_fill != displayed or old_trail != trail:
+			queue_redraw()
+
+
+	func _draw() -> void:
+		var started := Perf13.begin()
+		_draw_profiled()
+		Perf13.end(Perf13.TEAM_DRAW, started)
+
+
+	func _draw_profiled() -> void:
+		draw_style_box(_frame, Rect2(Vector2.ZERO, size))
+		var width := maxf(0.0, size.x - 12.0)
+		var x := 6.0 if enemy else size.x - 6.0
+		if (trail - displayed) * width >= 1.0:
+			var left := x + width * displayed if enemy else x - width * trail
+			draw_rect(Rect2(left, 7, width * (trail - displayed), size.y - 14.0), Color("fff7ea"))
+		if displayed * width >= 1.0:
+			var left := x if enemy else x - width * displayed
+			draw_style_box(_fill, Rect2(left, 5, width * displayed, size.y - 10.0))
+
+
 class BarsLayer extends Control:
 	const MERGE_WINDOW := 0.15
 	const MAX_PER_TARGET := 3
 	const OUTLINE := 5
+	const BAR_EDGE := Color("593413")
+	const BAR_TRIM := Color("e1a841")
+	const BAR_EMPTY := Color("512412")
+	const BAR_TRAIL := Color("cd8f52")
+	const BAR_ALLY := Color("78da25")
+	const BAR_ENEMY := Color("ea3a2c")
 
 	class FloatText:
 		var id: int
@@ -1569,9 +1860,15 @@ class BarsLayer extends Control:
 		var box := Rect2()
 		var baseline := Vector2()
 		var font_size := 22
+		var extent := Vector2.ZERO
+		var ascent := 0.0
+		var needs_measure := true
 
 	var battle: LegionBattle
 	var floats: Array[FloatText] = []
+	var _rows := {}
+	var _occupied: Array[Rect2] = []
+	var _overlapping: Array[Rect2] = []
 
 	func float_value(target: BattleView.Fighter, amount: int, kind: String, now: float) -> void:
 		for i in range(floats.size() - 1, -1, -1):
@@ -1593,6 +1890,7 @@ class BarsLayer extends Control:
 
 	func _format_value(fl: FloatText) -> void:
 		fl.caption = ("+" if fl.kind == "heal" else "") + str(fl.amount) + ("!" if fl.kind == "crit" else "")
+		fl.needs_measure = true
 
 	func float_text(target: BattleView.Fighter, caption: String, kind: String) -> void:
 		_add_float(target, kind).caption = caption
@@ -1620,90 +1918,114 @@ class BarsLayer extends Control:
 			if fl.age >= 1.0:
 				floats.remove_at(i)
 
-	func layout_floats() -> void:
-		var rows := {}
-		var occupied: Array[Rect2] = []
+	func layout_floats(reuse_heads := false) -> void:
+		var started := Perf13.begin()
+		layout_floats_profiled(reuse_heads)
+		Perf13.end(Perf13.BARS, started)
+
+
+	func layout_floats_profiled(reuse_heads: bool) -> void:
+		_rows.clear()
+		_occupied.clear()
 		var fnt := battle.font_bold
 		for i in range(floats.size() - 1, -1, -1):
 			var fl := floats[i]
 			var target: BattleView.Fighter = battle.views.get(fl.id)
 			if target != null:
-				fl.anchor = battle.battle_view.screen(target.head())
-			var row: int = rows.get(fl.id, 0)
-			rows[fl.id] = row + 1
-			fl.font_size = 28 if fl.kind == "crit" else 22
-			var width := fnt.get_string_size(fl.caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fl.font_size).x
-			var ascent := fnt.get_ascent(fl.font_size)
-			var height := ascent + fnt.get_descent(fl.font_size)
-			var extent := Vector2(width, height) + Vector2.ONE * OUTLINE
+				fl.anchor = target.hud_anchor if reuse_heads and target.unit.alive else battle.battle_view.screen(target.head())
+			var row: int = _rows.get(fl.id, 0)
+			_rows[fl.id] = row + 1
+			if fl.needs_measure:
+				fl.font_size = 28 if fl.kind == "crit" else 22
+				fl.ascent = fnt.get_ascent(fl.font_size)
+				fl.extent = Vector2(fnt.get_string_size(fl.caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fl.font_size).x,
+					fl.ascent + fnt.get_descent(fl.font_size)) + Vector2.ONE * OUTLINE
+				fl.needs_measure = false
+			var extent := fl.extent
 			# Свежая цифра ближе к полоске здоровья.
 			var y := maxf(44.0, fl.anchor.y - 13.0 - row * 37.0 - 12.0 * fl.age - extent.y)
 			var x := clampf(fl.anchor.x - extent.x * 0.5, 6.0, maxf(6.0, size.x - extent.x - 6.0))
 			var box := Rect2(Vector2(x, y), extent)
 			if size.x > extent.x + 12.0:
-				box = _free_number_box(box, occupied)
-			occupied.append(box)
+				box = _free_number_box(box)
+			_occupied.append(box)
 			fl.box = box
-			fl.baseline = box.position + Vector2(OUTLINE * 0.5, OUTLINE * 0.5 + ascent)
+			fl.baseline = box.position + Vector2(OUTLINE * 0.5, OUTLINE * 0.5 + fl.ascent)
 
-	func _free_number_box(box: Rect2, occupied: Array[Rect2]) -> Rect2:
-		# Проверяем ближайшие края занятых мест слева и справа.
+	func _free_number_box(box: Rect2) -> Rect2:
 		while true:
-			var candidates: Array[float] = [box.position.x]
-			for other in occupied:
+			_overlapping.clear()
+			var blocked := false
+			for other in _occupied:
 				if other.end.y > box.position.y and other.position.y < box.end.y:
-					candidates.append(other.position.x - box.size.x - 3.0)
-					candidates.append(other.end.x + 3.0)
-			var best := INF
+					_overlapping.append(other)
+					if box.intersects(other):
+						blocked = true
+			if not blocked:
+				return box
+			var nearest := INF
 			var x := box.position.x
-			for candidate in candidates:
-				if candidate < 6.0 or candidate + box.size.x > size.x - 6.0:
-					continue
-				var distance := absf(candidate - box.position.x)
-				if distance >= best:
-					continue
-				var proposed := Rect2(Vector2(candidate, box.position.y), box.size)
-				var free := true
-				for other in occupied:
-					if proposed.intersects(other):
-						free = false
-						break
-				if free:
-					best = distance
-					x = candidate
-			if best < INF:
+			for other in _overlapping:
+				var left := other.position.x - box.size.x - 3.0
+				var right := other.end.x + 3.0
+				if absf(box.position.x - left) < nearest and _number_fits(box, left):
+					nearest = absf(box.position.x - left)
+					x = left
+				if absf(right - box.position.x) < nearest and _number_fits(box, right):
+					nearest = absf(right - box.position.x)
+					x = right
+			if nearest < INF:
 				box.position.x = x
 				return box
 			box.position.y -= box.size.y + 3.0
 		return box
 
+	func _number_fits(box: Rect2, x: float) -> bool:
+		if x < 6.0 or x + box.size.x > size.x - 6.0:
+			return false
+		box.position.x = x
+		for other in _overlapping:
+			if box.intersects(other):
+				return false
+		return true
+
 	func _draw() -> void:
+		var started := Perf13.begin()
+		_draw_profiled()
+		Perf13.end(Perf13.DRAW_BARS, started)
+
+
+	func _draw_profiled() -> void:
 		if battle == null or battle.sim == null or battle.phase == "result":
 			return
 		var fnt: Font = battle.font_bold
 		var scale_ui: float = battle.battle_view.world.scale.x
+		var score_floor := battle._score_floor()
 		for id in battle.views:
 			var f: BattleView.Fighter = battle.views[id]
 			var u := f.unit
 			if not u.alive:
 				continue
 			var p := battle.battle_view.screen(f.head())
+			f.hud_anchor = p
 			var w := 74.0 * scale_ui
 			var h := 5.5 * scale_ui
 			if not battle.battle_view.legacy_layout:
 				w = clampf(f.body_height() * 0.29, 39.0, 88.0) * scale_ui
 				h *= 0.78
+			p.y = maxf(p.y, score_floor + (h + 7.0) * 0.5 + 4.0)
 			var left := p - Vector2(w * 0.5, 0)
 			var right := left + Vector2(w, 0)
-			draw_line(left, right, Color("593413"), h + 7.0, true)
-			draw_line(left, right, Color("e1a841"), h + 4.0, true)
-			draw_line(left, right, Color("512412"), h + 1.8, true)
+			draw_line(left, right, BAR_EDGE, h + 7.0, true)
+			draw_line(left, right, BAR_TRIM, h + 4.0, true)
+			draw_line(left, right, BAR_EMPTY, h + 1.8, true)
 			var hp := u.hp_frac()
-			var col := Color("78da25") if u.side == "ally" else Color("ea3a2c")
-			draw_line(left, left.lerp(right, f.health), Color("cd8f52"), h, true)
+			var col := BAR_ALLY if u.side == "ally" else BAR_ENEMY
+			draw_line(left, left.lerp(right, f.health), BAR_TRAIL, h, true)
 			draw_line(left, left.lerp(right, hp), col, h, true)
 			draw_line(left - Vector2(0, 1), left.lerp(right, hp) - Vector2(0, 1), Color(col.lightened(0.4), 0.9), 1.5, true)
-		layout_floats()
+		if not floats.is_empty():
+			layout_floats(true)
 		for fl in floats:
 			var col := Color("fff1d2")
 			if fl.kind == "crit":

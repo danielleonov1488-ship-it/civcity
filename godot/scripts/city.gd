@@ -1,5 +1,7 @@
 class_name City
 extends RefCounted
+
+const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Жизнь города — как в Town to City: три класса жителей, лавки по видам потребностей обслуживают
 ## ближайшие дома в своей дальности (сколько потянут рабочие), памятники и украшения радуют всех вокруг,
 ## теснота огорчает. Этаж полному счастливому дому покупает игрок (buy_floor); новые семьи едут, пока
@@ -1144,17 +1146,127 @@ static var cache_road_connectivity := true
 var _road_cache := {}
 var _road_cache_place := -1
 var _road_cache_land := -1
+var _home_geometry := {}
+var _home_geometry_version := Vector3i(-1, -1, -1)
+var _shop_target_cache := {}
+var _housed := PackedByteArray()
+
+var _compute_revision := 0
+var compute_wait_us := 0
+
+
+class ComputeFrame:
+	const BUILDING := ["road", "fill", "staff", "active", "over"]
+	const SHOP := ["served", "serves", "cap", "why", "near_n"]
+	const HOUSE := ["road", "score", "needs", "need_coverage", "need_states", "need_sources",
+		"deco", "deco_bonus", "set_bonus", "street", "monuments", "mon_types", "density", "missing",
+		"happy_parts", "happy_target", "happy", "unhappy_h", "down"]
+	const SUMMARY := ["happy_parts", "dim_any", "pop", "residents", "workers", "jobs", "free",
+		"ratio", "filled", "happy", "needs", "class_happy", "happy_tips"]
+
+	var live_buildings: Dictionary
+	var live_stats: Dictionary
+	var live_goods: Dictionary
+	var working_buildings := {}
+	var working_stats: Dictionary
+	var working_goods: Dictionary
+
+	func _init(city: City) -> void:
+		live_buildings = city.buildings
+		live_stats = city.stats
+		live_goods = city.goods
+		for id in live_buildings:
+			working_buildings[id] = (live_buildings[id] as Dictionary).duplicate()
+		working_stats = live_stats.duplicate()
+		working_goods = live_goods
+
+	func resume(city: City) -> void:
+		city.buildings = working_buildings
+		city.stats = working_stats
+		city.goods = working_goods
+
+	func suspend(city: City) -> void:
+		working_goods = city.goods
+		city.buildings = live_buildings
+		city.stats = live_stats
+		city.goods = live_goods
+
+	func publish(city: City) -> void:
+		suspend(city)
+		for id in working_buildings:
+			var result: Dictionary = working_buildings[id]
+			var live: Dictionary = live_buildings[id]
+			match String(Defs.B[result["type"]]["kind"]):
+				"house":
+					_copy_fields(live, result, HOUSE)
+				"decor":
+					continue
+				"shop":
+					_copy_fields(live, result, SHOP)
+					_copy_fields(live, result, BUILDING)
+				_:
+					_copy_fields(live, result, BUILDING)
+		_copy_fields(live_stats, working_stats, SUMMARY)
+		city.goods = working_goods
+
+	func _copy_fields(target: Dictionary, source: Dictionary, keys: Array) -> void:
+		for key: String in keys:
+			if source.has(key):
+				target[key] = source[key]
+
+
+# Соседи и украшения меняются только при правке застройки. Храним геометрию, а не счастье.
+func _geometry_for(h: Dictionary, houses: Array, decor: Array, hgrid: Dictionary, dgrid: Dictionary) -> Dictionary:
+	var id: int = h["id"]
+	if _home_geometry.has(id):
+		return _home_geometry[id]
+	var pos: Vector2 = h["pos"]
+	var near := []
+	var sets := {}
+	for index: int in _grid_near(dgrid, pos, Defs.DECOR_RADIUS):
+		var o: Dictionary = decor[index]
+		if pos.distance_to(o["pos"]) > Defs.DECOR_RADIUS:
+			continue
+		var base := Defs.base_of(o["type"])
+		near.append([base, float(def(o).get("deco", 1))])
+		if econ >= 1:
+			var sk := Defs.set_of(o["type"])
+			if sk != "":
+				if not sets.has(sk):
+					sets[sk] = {}
+				sets[sk][base] = true
+	var crowd := 0
+	for index: int in _grid_near(hgrid, pos, Defs.DENSITY_RADIUS):
+		var other: Dictionary = houses[index]
+		if other != h and pos.distance_to(other["pos"]) <= Defs.DENSITY_RADIUS:
+			crowd += 1
+	var result := {"near": near, "sets": sets, "deco": deco_points(near, econ), "crowd": crowd}
+	_home_geometry[id] = result
+	return result
 
 
 ## same_place — постройки и земля те же: проверки места перестройки — из запаса.
 ## instant_homes — этаж или перестройка: этим домам сразу показываем новый результат.
-func compute(same_place := false, instant_homes: Array = []) -> void:
+func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = null) -> void:
+	var started := Perf13.begin()
+	_compute_revision += 1
+	var revision := _compute_revision
+	var terrain := land.gen
+	# Ручной найм пишет назначения прямо в записи членов семьи.
+	var staged: ComputeFrame = ComputeFrame.new(self) if tree != null and not manual_hiring() else null
+	if staged != null:
+		staged.resume(self)
 	if not same_place:
 		place_gen += 1
 	if cache_road_connectivity and (_road_cache_place != place_gen or _road_cache_land != land.gen):
 		_road_cache.clear()
 		_road_cache_place = place_gen
 		_road_cache_land = land.gen
+	var geometry_version := Vector3i(place_gen, land.gen, econ)
+	if geometry_version != _home_geometry_version:
+		_home_geometry_version = geometry_version
+		_home_geometry.clear()
+		_shop_target_cache.clear()
 	var roster: Array = _staff_roster() if manual_hiring() else []
 	var houses := []
 	var residents := {}
@@ -1253,17 +1365,32 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 		HouseNeeds.reset(h)
 		h["monuments"] = 0.0
 	var hgrid := _grid(houses)
+	var housed := PackedByteArray()
+	housed.resize(houses.size())
+	for i in houses.size():
+		var house: Dictionary = houses[i]
+		housed[i] = int(int(house["pop"]) + int(house.get("coming", 0)) > 0)
+	if housed != _housed:
+		_housed = housed
+		_shop_target_cache.clear()
 	var dgrid := _grid(decor)
-	var want_buildings: Array = buildings.values()
+	var want_buildings: Array = buildings.values() if wants_v >= 1 else []
 	var want_grid := _grid(want_buildings) if wants_v >= 1 else {}
 	for s in shops:
 		var d := def(s)
 		var r := shop_range(d)
 		var cap := _shop_capacity(d, s["staff"])
-		var near := _shop_targets(houses, _grid_near(hgrid, s["pos"], r), s["pos"], r)
+		var nearby: Dictionary = _shop_target_cache.get(s["id"], {})
+		if nearby.get("range", -1.0) != r:
+			var targets: Array[int] = []
+			for target: Array in _shop_targets(houses, _grid_near(hgrid, s["pos"], r), s["pos"], r):
+				targets.append(int(target[1]["id"]))
+			nearby = {"range": r, "houses": targets}
+			_shop_target_cache[s["id"]] = nearby
+		var near: Array = nearby["houses"]
 		var serves := []
 		for i in mini(cap, near.size()):
-			var h: Dictionary = near[i][1]
+			var h: Dictionary = buildings[near[i]]
 			serves.append(h["id"])
 			var sc: Dictionary = h["score"]
 			if int(sc.get(s["type"], 0)) < int(d["bonus"]):
@@ -1274,8 +1401,34 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 		s["serves"] = serves           # какие дома обслуживает (для подсветки охвата)
 		s["cap"] = cap                 # сколько домов может обслужить сейчас (с нынешними работниками)
 		s["near_n"] = near.size()      # сколько домов в её дальности
+	Perf13.end(Perf13.CITY_STAFF, started)
+	if staged != null:
+		staged.suspend(self)
+		var waiting := Time.get_ticks_usec()
+		await tree.process_frame
+		compute_wait_us += Time.get_ticks_usec() - waiting
+		if revision != _compute_revision or terrain != land.gen:
+			compute(true, instant_homes)
+			return
+		staged.resume(self)
+	started = Perf13.begin()
 	# Счастье дома: основа, нужные классу лавки, украшения и памятники минус нехватка и теснота.
 	# Старые города сохраняют прежние бонусы; карточка показывает те же happy_parts.
+	# Дальность и вес эффекта зависят от эдиктов и текущего штата.
+	var monument_ranges := {}
+	var monument_values := {}
+	for m: Dictionary in monuments:
+		var md := def(m)
+		monument_ranges[m["id"]] = need_range(md)
+		monument_values[m["id"]] = roundi(float(md["bonus"]) * (float(m.get("staff", 1.0)) if manual_hiring() else 1.0))
+	for m: Dictionary in prem:
+		monument_ranges[m["id"]] = need_range(def(m))
+	for m: Dictionary in shrines:
+		if not monument_ranges.has(m["id"]):
+			monument_ranges[m["id"]] = need_range(def(m))
+	var penalties := {}
+	for need: String in Defs.NEED_ORDER:
+		penalties[need] = need_penalty(need)
 	var happy_sum := 0.0
 	var pop := 0
 	var dim_any := false                       # где-то повтор лавки или украшения дал меньше (совет «Разнообразие» — один раз)
@@ -1305,39 +1458,28 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 			shop_sum += int(e2[1])
 			dim_any = dim_any or bool(e2[2])
 		# украшения рядом: [вид, очки]; новая игра — одинаковые 100% / 60% / 30% (deco_points)
-		var near := []
-		var sets := {}                  # набор этапа 5 → его виды рядом (новая игра: три разных — бонус набора)
-		for on: int in _grid_near(dgrid, h["pos"], Defs.DECOR_RADIUS):
-			var o: Dictionary = decor[on]
-			if (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DECOR_RADIUS:
-				near.append([Defs.base_of(o["type"]), float(def(o).get("deco", 1))])
-				if econ >= 1:
-					var sk := Defs.set_of(o["type"])        # набор — по облику (как в новой игре), чем бы он ни открылся
-					if sk != "":
-						if not sets.has(sk):
-							sets[sk] = {}
-						sets[sk][Defs.base_of(o["type"])] = true
-		var dp := deco_points(near, econ)
+		var geography := _geometry_for(h, houses, decor, hgrid, dgrid)
+		var near: Array = geography["near"]
+		var sets: Dictionary = geography["sets"]
+		var dp: Array = geography["deco"]
 		var deco: float = dp[0]
 		dim_any = dim_any or bool(dp[1])
 		var deco_b := mini(int(cd.get("deco_max", 12)), int(floor(deco * Defs.DECO_RATE)))
 		parts.append(["Украшения", deco_b])
 		var set_b := set_bonus(sets, parts)
 		var mon := {}                   # вид памятника → бонус (одинаковые не складываются)
-		for m in monuments:
-			var md := def(m)
-			if (h["pos"] as Vector2).distance_to(m["pos"]) <= need_range(md):
-				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), roundi(float(md["bonus"]) * (float(m.get("staff", 1.0)) if manual_hiring() else 1.0)))
-				HouseNeeds.add(h, m, md, roundi(float(md["bonus"]) * (float(m.get("staff", 1.0)) if manual_hiring() else 1.0)))
-		for m in prem:                  # «главные» украшения — каждый вид один раз, сверх предела украшений
-			var pd := def(m)
-			if (h["pos"] as Vector2).distance_to(m["pos"]) <= need_range(pd):
-				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), int(pd["mon"]))
-		# Малые алтари закрывают веру, сохраняя очки украшения.
+		var pos: Vector2 = h["pos"]
+		for m: Dictionary in monuments:
+			if pos.distance_to(m["pos"]) <= float(monument_ranges[m["id"]]):
+				var bonus: int = monument_values[m["id"]]
+				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), bonus)
+				HouseNeeds.add(h, m, def(m), bonus)
+		for m: Dictionary in prem:     # каждый вид один раз, сверх предела украшений
+			if pos.distance_to(m["pos"]) <= float(monument_ranges[m["id"]]):
+				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), int(def(m)["mon"]))
 		for o: Dictionary in shrines:
-			var od := def(o)
-			if HouseNeeds.category(od) == "faith" and (h["pos"] as Vector2).distance_to(o["pos"]) <= need_range(od):
-				HouseNeeds.add(h, o, od, 0)
+			if pos.distance_to(o["pos"]) <= float(monument_ranges[o["id"]]):
+				HouseNeeds.add(h, o, def(o), 0)
 		HouseNeeds.finish(h, econ)
 		var mon_sum := 0
 		for t in mon:
@@ -1369,11 +1511,7 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 		var unp := -Defs.UNPAID_HAPPY if unpaid_h > 0 else 0   # казна пуста — жалованье не плачено: обида всем домам
 		if unp != 0:
 			parts.append(["Жалованье не плачено", unp])
-		var crowd := 0
-		for on: int in _grid_near(hgrid, h["pos"], Defs.DENSITY_RADIUS):
-			var o: Dictionary = houses[on]
-			if o != h and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DENSITY_RADIUS:
-				crowd += 1
+		var crowd: int = geography["crowd"]
 		var dens := -mini(Defs.DENSITY_MAX, maxi(0, crowd - Defs.DENSITY_FREE) * Defs.DENSITY_STEP)
 		if dens < 0:
 			parts.append(["Теснота", dens])
@@ -1388,11 +1526,16 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 			parts.append(e)
 			tr_sum += int(e[1])
 		var missing := []
+		var missing_cost := 0
 		for n in Defs.needs_for(cls, level):
 			if not h["needs"].has(n):
 				missing.append(n)
-				parts.append([("Нет рядом: вера" if n == "faith" else "Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower()), -need_penalty(String(n))])
-		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + vis_sum + tr_sum + ren + tx + edict_happy + unp + dens + size_p - Magis.missing_cost(self, missing)
+				var penalty: int = penalties.get(n, -1)
+				if penalty == -1:
+					penalty = need_penalty(String(n))
+				missing_cost += penalty
+				parts.append([("Нет рядом: вера" if n == "faith" else "Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower()), -penalty])
+		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + vis_sum + tr_sum + ren + tx + edict_happy + unp + dens + size_p - missing_cost
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["set_bonus"] = set_b
@@ -1431,7 +1574,7 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 		sums["unpaid"] = float(sums.get("unpaid", 0.0)) + unp * w
 		sums["crowd"] += dens * w
 		sums["size"] = float(sums.get("size", 0.0)) + size_p * w
-		sums["miss"] += -Magis.missing_cost(self, missing) * w
+		sums["miss"] += -missing_cost * w
 		sums["clip"] = float(sums.get("clip", 0.0)) + (clampf(float(h["happy"]), 0.0, 100.0) - hp - adjustment) * w   # счастье дома — от 0 до 100%
 	# счастье города — среднее по жителям, округлённое; его слагаемые округляем так, чтобы в сумме вышло
 	# ровно оно (заголовок подсказки «Счастье города: N%» и строки под ним всегда сходятся)
@@ -1493,7 +1636,21 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 		per_class[c] = roundi(hs / n) if n > 0 else (roundi(hs0 / n0) if n0 > 0 else 0)
 	stats["needs"] = HouseNeeds.averages(houses, level)
 	stats["class_happy"] = per_class
-	stats["happy_tips"] = _happy_tips(houses, stores)
+	Perf13.end(Perf13.CITY_HOMES, started)
+	if staged != null:
+		staged.suspend(self)
+		var waiting := Time.get_ticks_usec()
+		await tree.process_frame
+		compute_wait_us += Time.get_ticks_usec() - waiting
+		if revision != _compute_revision or terrain != land.gen:
+			compute(true, instant_homes)
+			return
+		staged.resume(self)
+	started = Perf13.begin()
+	stats["happy_tips"] = _happy_tips(houses, stores, hgrid)
+	Perf13.end(Perf13.CITY_ADVICE, started)
+	if staged != null:
+		staged.publish(self)
 	stats["arrive_block"] = arrivals_blocked()
 	if families_came() == 0 and has_connected_house():
 		_tick_arrivals()
@@ -1658,7 +1815,7 @@ static func plural(n: int, one: String, few: String, many: String) -> String:
 
 ## 1–3 короткие подсказки, что сильнее всего поднимет счастье города (для советника и окна счастья).
 ## Польза каждой — сколько процентов прибавит в среднем на жителя; берём самые полезные.
-func _happy_tips(houses: Array, stores: Array) -> Array:
+func _happy_tips(houses: Array, stores: Array, hgrid: Dictionary) -> Array:
 	if houses.is_empty():
 		return []
 	var ws := {}
@@ -1694,7 +1851,7 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 		var g_need := missing_penalty() * w / tot + 4.0
 		# лавка этого вида уже стоит рядом, но не работает или не успевает ко всем — сказать почему
 		# (а не «поставьте ещё одну»: при нехватке работников новая лавка сделает только хуже)
-		var iss := _need_shop_issue(n, houses, ws)
+		var iss := _need_shop_issue(n, houses, ws, hgrid)
 		if not iss.is_empty():
 			var sb: Dictionary = iss["b"]
 			var sn: String = def(sb)["name"]
@@ -1813,7 +1970,8 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 				continue                        # и с нынешними работниками успевает ко всем
 			var r := shop_range(d)
 			var near := []
-			for h in houses:
+			for index: int in _grid_near(hgrid, s["pos"], r):
+				var h: Dictionary = houses[index]
 				var dd := (h["pos"] as Vector2).distance_to(s["pos"])
 				if shop_needed(h, d) and dd <= r and float(ws[h["id"]]) > 0.0 and int((h["score"] as Dictionary).get(s["type"], 0)) < int(d["bonus"]):
 					near.append([dd, h])
@@ -2023,7 +2181,7 @@ func _workers_short(d: Dictionary) -> bool:
 
 ## Лавка вида n стоит рядом с домами, где этой нужды нет: не работает или уже обслуживает всех, кого может.
 ## {b, cnt (сколько таких домов в её дальности), idle} или {} — тогда лавки рядом просто нет
-func _need_shop_issue(n: String, houses: Array, ws: Dictionary) -> Dictionary:
+func _need_shop_issue(n: String, houses: Array, ws: Dictionary, hgrid: Dictionary) -> Dictionary:
 	var best := {}
 	var best_key := -1
 	for id in buildings:
@@ -2036,7 +2194,8 @@ func _need_shop_issue(n: String, houses: Array, ws: Dictionary) -> Dictionary:
 			continue                    # работает и силы ещё есть — эти дома просто вне её дальности
 		var r := shop_range(d)
 		var cnt := 0
-		for h in houses:
+		for index: int in _grid_near(hgrid, s["pos"], r):
+			var h: Dictionary = houses[index]
 			if n in h["missing"] and float(ws.get(h["id"], 0.0)) > 0.0 and (h["pos"] as Vector2).distance_to(s["pos"]) <= r:
 				cnt += 1
 		if cnt == 0:
@@ -2285,12 +2444,19 @@ func hist_series(key: String, n := 48) -> Array:
 
 
 ## Раз в игровой час: налоги, очки исследований, рост домов, переселенцы, уровень города
-func sim_day() -> void:
+func sim_day(tree: SceneTree = null) -> void:
+	compute_wait_us = 0
 	Magis.hour(self)
-	compute(true)
+	if tree != null:
+		await compute(true, [], tree)
+	else:
+		compute(true)
 	_happiness_hour()
 	if wants_v >= 1:
-		compute(true)
+		if tree != null:
+			await compute(true, [], tree)
+		else:
+			compute(true)
 	var income := 0.0
 	var upkeep := 0.0
 	var wages := 0.0
