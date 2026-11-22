@@ -314,6 +314,8 @@ func _ready() -> void:
 	parts = Parts.new()
 	parts.tint_split = Parts.split_on           # одинаковые детали разных цветов — один MultiMesh (12.11, скорость)
 	add_child(parts)
+	if Parts.blocks_on and mode in ["play", "new", "demo"] and DisplayServer.get_name() != "headless":
+		parts.enable_blocks()
 	cover = Cover.new()
 	add_child(cover)
 	cover.setup(self)
@@ -512,6 +514,8 @@ func _ready() -> void:
 	hud.refresh()
 	_sync_all_actors()
 	ready_done = true
+	if parts.blocks != null:
+		parts.blocks.suspended = false
 	_loading_hide()
 	if args.has("noui"):
 		hud.visible = false
@@ -2108,9 +2112,19 @@ func _show(b: Dictionary) -> void:
 	if Gfx.is_low(str(settings.get("quality", "high"))):
 		for rk in ["#room", "#room_lit"]:                 # комнаты за окнами на «Низкой» — по одному четырёхугольнику на грань
 			subst[rk] = String(subst.get(rk, rk)).replace("#room", "#room1")
-	var vis := {"h": parts.place(bp, xf, subst), "lights": [], "smoke": [], "actors": []}
+	var block := {}
+	var moving_parts := {}
+	if parts.blocks != null:
+		block = parts.blocks.for_building(int(b["id"]), xf.origin)
+		if life:
+			var info := life.info(bp, String(b["type"]))
+			for leaf: Array in info["shut"]:
+				moving_parts[leaf[0]] = true
+		for leaf: Array in bp.kit_mov:
+			moving_parts[leaf[0]] = true
+	var vis := {"h": parts.place(bp, xf, subst, block, moving_parts), "lights": [], "smoke": [], "actors": []}
 	if city.apron_of(b) == 2:                  # домус, храм: каменный бордюр вокруг (у домов и лавок — глина, Land.wear)
-		(vis["h"] as Array).append_array(parts.place(Kerb.blueprint(bp), xf))
+		(vis["h"] as Array).append_array(parts.place(Kerb.blueprint(bp), xf, {}, block))
 	var ivs := Ivy.stage(city, b)                # плющ на старом доме (новая игра)
 	vis["ivy"] = ivs
 	if ivs > 0:
@@ -2149,6 +2163,8 @@ func _hide(b: Dictionary) -> void:
 	if life:
 		life.hidden(b)                         # до того, как места деталей освободятся
 	parts.remove(vis["h"])
+	if parts.blocks != null:
+		parts.blocks.forget(int(b["id"]))
 	for l in vis["lights"]:
 		night_lights.erase(l)
 		(l as Node).queue_free()
@@ -2644,6 +2660,8 @@ func _city_visuals(hidden: bool) -> void:
 	if hidden == _city_was_hidden:
 		return
 	_city_was_hidden = hidden
+	if parts.blocks != null:
+		parts.blocks.suspended = hidden
 	if hidden:
 		# Слой Легиона живёт в отдельных SubViewport. Здесь только 3D города.
 		for root: Node in [people, actors_root]:
@@ -4923,6 +4941,8 @@ func _move_nature_ghost() -> void:
 	ghost.transform = Transform3D(basis.rotated(Vector3.UP, tool_yaw), Vector3(hover.x, land.height_at(hover.x, hover.y), hover.y))
 
 
+var _held_hover := -1
+
 func _hover_building(b: Dictionary) -> void:
 	var key := "" if b.is_empty() else "%d:%s" % [b["id"], tool]
 	if key == highlight_key:
@@ -4936,6 +4956,8 @@ func _hover_building(b: Dictionary) -> void:
 	var col := Color(1.0, 0.18, 0.12, 0.5) if tool == "bulldoze" else Color(1.0, 0.85, 0.4, 0.35)
 	if tool == "":
 		col = Color(1, 1, 1, 0.12)
+	_held_hover = int(b["id"])
+	parts.hold_building(_held_hover, Parts.HOLD_HOVER, true)
 	highlight = Parts.ghost(city.blueprint(b), "shell", col)
 	highlight.transform = city.xf(b)
 	add_child(highlight)
@@ -4950,6 +4972,9 @@ func _work_hover(_b: Dictionary) -> void:
 
 
 func _clear_highlight() -> void:
+	if _held_hover >= 0:
+		parts.hold_building(_held_hover, Parts.HOLD_HOVER, false)
+		_held_hover = -1
 	if hud:
 		hud.clear_badge("work_partial")
 	if highlight:
@@ -5333,6 +5358,12 @@ func select_building(b: Dictionary) -> void:
 	if select_outline:
 		select_outline.queue_free()
 		select_outline = null
+	if parts != null:
+		var was := int(selected.get("id", -1))
+		var now := int(b.get("id", -1))
+		if was != now:
+			parts.hold_building(was, Parts.HOLD_SELECTION, false)
+			parts.hold_building(now, Parts.HOLD_SELECTION, true)
 	selected = b
 	if people:
 		people.set_focus(0)                   # выбор жителя или кошки снят (карточка — у постройки или закрыта)
