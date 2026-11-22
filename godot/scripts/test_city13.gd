@@ -17,10 +17,13 @@ func _ready() -> void:
 	bridge_only = OS.get_cmdline_user_args().has("bridge_only")
 	if bridge_only:
 		out = BRIDGE_OUTPUT + "shots/"
+	var profiles := (BRIDGE_OUTPUT if bridge_only else OUTPUT).path_join("profiles")
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			out = arg.substr(4).trim_suffix("/") + "/"
-	var profile := (BRIDGE_OUTPUT if bridge_only else OUTPUT).path_join("profiles/city13_%d" % Time.get_ticks_usec())
+		elif arg.begins_with("profiles="):
+			profiles = arg.substr(9)
+	var profile := profiles.path_join("city13_%d" % Time.get_ticks_usec())
 	check(DirAccess.make_dir_recursive_absolute(profile) == OK, "profile")
 	check(DirAccess.make_dir_recursive_absolute(out) == OK, "shots")
 	OS.set_environment("CIVCITY_SAVEDIR", profile)

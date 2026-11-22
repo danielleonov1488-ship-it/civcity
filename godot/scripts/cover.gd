@@ -47,6 +47,8 @@ class Pool extends Parts:
 			return super._group(name, remap, tile)
 		var g := {"subs": [], "free": [], "used": 0, "cap": 0, "key": key}
 		for sub in s["subs"]:
+			if (sub["mmi"] as MultiMeshInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY:
+				continue
 			g["subs"].append(_sub((sub["mm"] as MultiMesh).mesh, sub["local"]))
 		groups[key] = g
 		return g
@@ -927,7 +929,6 @@ func _apply(w: Dictionary, near: Vector2) -> void:
 	want = w
 	todo.clear()
 	if w.is_empty():
-		_release_lit()
 		lit.clear()                          # гасим всё разом: места с нуля (пул уйдёт из сцены в _process)
 		pool.reset_all()
 		return
@@ -937,7 +938,6 @@ func _apply(w: Dictionary, near: Vector2) -> void:
 	if hi > 1024 and w.size() <= PER_FRAME and lit.size() > w.size() * 4:
 		# из многих домов (после «Обзора» на весь город) светиться останется мало — весь пул заново: эти дома
 		# зажгутся сразу, а прежний пик пустых мест MultiMesh рисовать не будут (и не гасим сотни домов по одному)
-		_release_lit()
 		lit.clear()
 		pool.reset_all()
 	else:
@@ -946,7 +946,6 @@ func _apply(w: Dictionary, near: Vector2) -> void:
 			var b: Dictionary = c.buildings.get(id, {})
 			if not w.has(id) or b.is_empty() or not _same_look(e, b):
 				pool.remove(e["h"])
-				game.parts.hold_building(id, Parts.HOLD_COVER, false)
 				lit.erase(id)
 		# виды деталей, где никого не осталось, — с нуля
 		for k in pool.groups:
@@ -966,11 +965,6 @@ func _apply(w: Dictionary, near: Vector2) -> void:
 	if todo.size() > PER_FRAME and near.is_finite():
 		todo.sort_custom(func(a, b): return (c.buildings[a]["pos"] as Vector2).distance_squared_to(near) > (c.buildings[b]["pos"] as Vector2).distance_squared_to(near))
 	_light_some(t0)
-
-
-func _release_lit() -> void:
-	for id: int in lit:
-		game.parts.hold_building(id, Parts.HOLD_COVER, false)
 
 
 ## Мест в пуле не хватит (новые виды деталей или домов больше, чем светилось раньше): эти виды растут разом,
@@ -996,7 +990,6 @@ func _reserve(c: City) -> void:
 			if not sh.has((hd[0] as Dictionary)["key"]):
 				keep.append(hd)
 		pool.remove(keep)
-		game.parts.hold_building(id, Parts.HOLD_COVER, false)
 		lit.erase(id)
 		todo.append(id)
 		bps.append(c.blueprint(c.buildings[id]))
@@ -1031,7 +1024,6 @@ func _light_some(t0 := -1) -> void:
 			continue
 		var b: Dictionary = c.buildings[id]
 		var h := pool.place_tinted(c.blueprint(b), c.xf(b), _gpu(want[id]))
-		game.parts.hold_building(id, Parts.HOLD_COVER, true)
 		lit[id] = {"h": h, "col": want[id], "type": String(b["type"]), "tier": int(b["tier"]), "variant": int(b.get("variant", 0)),
 			"color": int(b.get("color", 0)), "pos": b["pos"], "yaw": float(b["yaw"])}
 		n += 1

@@ -15,14 +15,15 @@ const WHEAT_BATCH := 24.0
 ## в городе владельца ~в 3,5 раза меньше (1955 → 531) — во столько же меньше вызовов отрисовки. Только у главного
 ## пула (у подсветки cover.gd — нет)
 var tint_split := false
-const HOLD_HOVER := 1
-const HOLD_SELECTION := 2
-const HOLD_COVER := 4
-static var blocks_on := false
-static var block_size := 48.0
-static var block_lods := true
-const Blocks = preload("res://scripts/parts_blocks.gd")
-var blocks: Blocks
+const Detail = preload("res://scripts/parts_detail.gd")
+static var detail_config: Detail
+var detail: Detail
+static var profile_place := false
+var place_usec := 0
+var max_place_usec := 0
+var max_place_frame_usec := 0
+var _place_frame := -1
+var _place_frame_usec := 0
 
 static var split_on := true                # для сравнений «было/стало» (test_perf split=0)
 var _col := Color.WHITE                     # цвет экземпляра для последней группы из _group
@@ -86,7 +87,7 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 	else:
 		var src := Synty.make(name, remap)
 		for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-			var mesh := mi.mesh.duplicate() as Mesh
+			var mesh: Mesh = detail.copy_mesh(mi.mesh, tile) if detail != null else mi.mesh.duplicate() as Mesh
 			for s in mesh.get_surface_count():
 				var m := mi.get_surface_override_material(s)
 				if m:
@@ -94,6 +95,8 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 			var sub := _sub(mesh, Citizen._rel(mi, src))
 			_small(name, sub, tile)
 			g["subs"].append(sub)
+			if detail != null and tile.x < 0:
+				detail.add_shadow(self, g, sub, name, mi.mesh)
 		src.free()
 	groups[key] = g
 	return g
@@ -109,7 +112,7 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 	var subs := []
 	var ok := true
 	for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-		var mesh := mi.mesh.duplicate() as Mesh
+		var mesh: Mesh = detail.copy_mesh(mi.mesh, tile) if detail != null else mi.mesh.duplicate() as Mesh
 		for s in mesh.get_surface_count():
 			var m := mi.get_surface_override_material(s)
 			if m == null:
@@ -125,7 +128,7 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 			mesh.surface_set_material(s, m)
 		if not ok:
 			break
-		subs.append([mesh, Citizen._rel(mi, src)])
+		subs.append([mesh, Citizen._rel(mi, src), mi.mesh])
 	src.free()
 	if not ok:
 		return {}
@@ -134,6 +137,8 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 		var sub := _sub(e[0], e[1], true)
 		_small(name, sub, tile)
 		g["subs"].append(sub)
+		if detail != null and tile.x < 0:
+			detail.add_shadow(self, g, sub, name, e[2])
 	groups[tkey] = g
 	return g
 
@@ -512,66 +517,53 @@ func _alloc(g: Dictionary) -> int:
 	return i
 
 
-func enable_blocks() -> void:
-	blocks = Blocks.new()
-	blocks.size = block_size
-	blocks.use_lod = block_lods
-	blocks.suspended = true
-	add_child(blocks)
-
-
-func hold_building(id: int, reason: int, on: bool) -> void:
-	if blocks != null and id >= 0:
-		blocks.hold(id, reason, on)
-
-
 ## Поставить чертёж; xf — где стоит постройка. Возвращает ручку [[группа, место], …]
-func place(bp: Bp, xf: Transform3D, subst := {}, block := {}, moving := {}) -> Array:
+func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 	var handles := []
-	var touched := false
-	for i in bp.parts.size():
-		var p: Array = bp.parts[i]
+	var started := Time.get_ticks_usec() if profile_place else 0
+	for p in bp.parts:
 		var name: String = subst.get(p[0], p[0])
 		var t: Transform3D = xf * (p[1] as Transform3D)
 		var tile := Vector2i(-1, -1)
 		if name == CatCivic.WHEAT or name == CatCivic.WHEAT_DENSE:
 			tile = Vector2i(Vector2(t.origin.x, t.origin.z) / WHEAT_BATCH)
-		var g := _group(name, p[2], tile)
-		var col := _col
-		if not block.is_empty() and tile.x < 0 and not moving.has(i) and _block_part(name, t):
-			g = blocks.group(block, g)
-		if g.has("rows"):
-			handles.append([g, blocks.place_row(g, t, col)])
-			touched = true
-			continue
-		var slot := _alloc(g)
-		var tinted := g.has("tint")
-		for sub in g["subs"]:
-			(sub["mm"] as MultiMesh).set_instance_transform(slot, t * (sub["local"] as Transform3D))
-			if tinted:
-				(sub["mm"] as MultiMesh).set_instance_color(slot, col)
-		handles.append([g, slot])
-	if touched:
-		blocks.changed(block)
+		handles.append(_place_part(name, t, p[2], tile))
+	if started > 0:
+		var usec := Time.get_ticks_usec() - started
+		place_usec += usec
+		max_place_usec = maxi(max_place_usec, usec)
+		var frame := Engine.get_process_frames()
+		if frame != _place_frame:
+			_place_frame = frame
+			_place_frame_usec = 0
+		_place_frame_usec += usec
+		max_place_frame_usec = maxi(max_place_frame_usec, _place_frame_usec)
 	return handles
 
 
-static func _block_part(name: String, xf: Transform3D) -> bool:
-	return not name.begins_with("M:") and not name.begins_with("K:common/") and not name.begins_with("SM_Env_") \
-		and not name.begins_with("SM_Bld_Door_") and not name.contains("Lyre") and not name.contains("Wheel") \
-		and not name.contains("Flag") and not name.contains("Banner") and xf.basis.determinant() > 1e-9
+func _place_part(name: String, xf: Transform3D, remap: Dictionary, tile: Vector2i) -> Array:
+	var g := _group(name, remap, tile)
+	if detail != null and tile.x < 0 and detail.uses_area(name, g["key"]):
+		g = detail.area_group(self, groups, g, xf.origin)
+	var slot := _alloc(g)
+	var tinted := g.has("tint")
+	var area := g.has("area")
+	var use_range := area and detail.tiny and Detail.prop(name)
+	for sub: Dictionary in g["subs"]:
+		var mm: MultiMesh = sub["mm"]
+		var pose := xf * (sub["local"] as Transform3D)
+		mm.set_instance_transform(slot, pose)
+		if tinted and mm.use_colors:
+			mm.set_instance_color(slot, _col)
+		if area or sub.has("casts"):
+			detail.bounds(sub, pose, area, use_range)
+	return [g, slot]
 
 
 ## Одна деталь; tiled — природа: кусками по 48 м, чтобы невидимые куски не рисовались
 func place_one(name: String, xf: Transform3D, remap := {}, tiled := false) -> Array:
-	var g := _group(name, remap, Vector2i(int(xf.origin.x / 48.0), int(xf.origin.z / 48.0)) if tiled else Vector2i(-1, -1))
-	var col := _col
-	var slot := _alloc(g)
-	for sub in g["subs"]:
-		(sub["mm"] as MultiMesh).set_instance_transform(slot, xf * (sub["local"] as Transform3D))
-		if g.has("tint"):
-			(sub["mm"] as MultiMesh).set_instance_color(slot, col)
-	return [[g, slot]]
+	var tile := Vector2i(int(xf.origin.x / 48.0), int(xf.origin.z / 48.0)) if tiled else Vector2i(-1, -1)
+	return [_place_part(name, xf, remap, tile)]
 
 
 ## Спрятать детали на время (ролик: дерево заслонило героя): возвращает [[MultiMesh, место, преобразование], …] для restore
@@ -581,11 +573,6 @@ func hide_handles(handles: Array) -> Array:
 	for h in handles:
 		var g: Dictionary = h[0]
 		var slot: int = h[1]
-		if g.has("rows"):
-			if g["rows"].has(slot) and not g["hidden"].has(slot):
-				saved.append([g, slot, g["rows"][slot]])
-				blocks.hide_row(g, slot, true)
-			continue
 		for sub in g["subs"]:
 			var mm: MultiMesh = sub["mm"]
 			if slot < mm.instance_count:
@@ -596,45 +583,36 @@ func hide_handles(handles: Array) -> Array:
 
 ## Деталь ручки h ([группа, место]) сейчас спрятана (нулевой масштаб)
 func is_hidden(h: Array) -> bool:
-	var g: Dictionary = h[0]
-	var slot: int = h[1]
-	if g.has("rows"):
-		return not g["rows"].has(slot) or g["hidden"].has(slot)
-	var sub: Dictionary = g["subs"][0]
+	var sub: Dictionary = (h[0] as Dictionary)["subs"][0]
 	var mm: MultiMesh = sub["mm"]
-	return slot >= mm.instance_count or mm.get_instance_transform(slot).basis.get_scale().length() < 1e-6
+	return int(h[1]) >= mm.instance_count or mm.get_instance_transform(int(h[1])).basis.get_scale().length() < 1e-6
 
 
 ## Вернуть спрятанное hide_handles (место, которое за это время заняли другим, не трогаем)
 func restore(saved: Array) -> void:
 	for e: Array in saved:
-		var slot: int = e[1]
-		if e[0] is Dictionary:
-			var g: Dictionary = e[0]
-			if g["hidden"].has(slot) and is_same(g["rows"].get(slot), e[2]):
-				blocks.hide_row(g, slot, false)
-			continue
 		var mm: MultiMesh = e[0]
+		var slot: int = e[1]
 		if slot < mm.instance_count and mm.get_instance_transform(slot).basis.get_scale().length() < 1e-6:
 			mm.set_instance_transform(slot, e[2])
 
 
 func remove(handles: Array) -> void:
-	var changed := {}
 	var zero := Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3(0, -100, 0))
 	for h in handles:
 		var g: Dictionary = h[0]
 		var slot: int = h[1]
-		if g.has("rows"):
-			blocks.remove_row(g, slot)
-			var block: Dictionary = g["block"]
-			changed[block["key"]] = block
-			continue
 		for sub in g["subs"]:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, zero)
-		(g["free"] as Array).append(slot)
-	for block: Dictionary in changed.values():
-		blocks.changed(block)
+		var free: Array = g["free"]
+		free.append(slot)
+		if g.has("area") and free.size() == int(g["used"]):
+			free.clear()
+			g["used"] = 0
+			for sub: Dictionary in g["subs"]:
+				(sub["mm"] as MultiMesh).visible_instance_count = 0
+				(sub["mmi"] as MultiMeshInstance3D).custom_aabb = AABB()
+				sub.erase("diameter")
 
 
 ## Спрятать (нулевой масштаб) или вернуть детали ручки на место xf — деревья под призраком постройки (game.gd, 3.7)
@@ -643,9 +621,6 @@ func set_hidden(handles: Array, hidden: bool, xf := Transform3D.IDENTITY) -> voi
 	for h in handles:
 		var g: Dictionary = h[0]
 		var slot: int = h[1]
-		if g.has("rows"):
-			blocks.hide_row(g, slot, hidden)
-			continue
 		for sub in g["subs"]:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, zero if hidden else xf * (sub["local"] as Transform3D))
 
@@ -654,10 +629,6 @@ func count() -> int:
 	var n := 0
 	for k in groups:
 		n += int(groups[k]["used"]) - (groups[k]["free"] as Array).size()
-	if blocks != null:
-		for block: Dictionary in blocks.blocks.values():
-			for g: Dictionary in (block["groups"] as Dictionary).values():
-				n += g["rows"].size()
 	return n
 
 
