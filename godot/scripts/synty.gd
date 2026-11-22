@@ -1,5 +1,7 @@
 class_name Synty
 extends RefCounted
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Модели Synty POLYGON Ancient Empire (куплено владельцем; лежат только локально, в git не попадают).
 ## В файлах моделей пути к текстурам — с чужих компьютеров, поэтому материалы назначаем сами:
 ## по списку MaterialList (слот материала → картинка) из набора.
@@ -197,7 +199,9 @@ static func make(name: String, remap := {}) -> Node3D:
 		push_warning("Synty: нет модели " + name)
 		return Node3D.new()
 	if not _scenes.has(name):
+		var loading := Perf14.begin()
 		_scenes[name] = load(_paths[name])
+		Perf14.loaded(_paths[name], loading)
 	var n := (_scenes[name] as PackedScene).instantiate() as Node3D
 	var open_bridge := bool(remap.get("open_bridge", false))
 	if open_bridge:

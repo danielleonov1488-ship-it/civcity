@@ -229,7 +229,8 @@ func run() -> void:
 	get_window().content_scale_size = Vector2i.ZERO
 	get_window().size = ViewSize
 	await frames(5)
-	strip_folder = Task + "strip_frames/%d" % int(Time.get_unix_time_from_system())
+	var strip_root := Task if out == Task + "shots/" else out.get_base_dir()
+	strip_folder = strip_root.path_join("strip_frames/%d" % int(Time.get_unix_time_from_system()))
 	if not check(DirAccess.make_dir_recursive_absolute(strip_folder) == OK, "strip directory"):
 		return
 	print("TUTOR13 STRIP FRAMES ", strip_folder)

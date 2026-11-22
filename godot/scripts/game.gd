@@ -1,6 +1,9 @@
 class_name Game
 extends Node3D
 
+const Perf14 = preload("res://scripts/perf14_timers.gd")
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+
 const Perf13 = preload("res://scripts/perf13_timers.gd")
 
 const DecorFacing = preload("res://scripts/decor_facing.gd")
@@ -92,6 +95,8 @@ var _hour_hud_part := 0
 var _clock_busy := false
 var _clock_commit_frame := -1
 var _actors_due := false
+var _place_refresh_frame := -1
+var _autosave_task := -1
 var _save_gen := 0                    # номер сохранения: автосохранение по кадрам не пишет поверх более нового
 var settings := {"fullscreen": false, "quality": "high", "ui_scale": 1.0, "autosave": true, "music": 0.55, "sfx": 0.7}
 var sound: Sound
@@ -306,6 +311,9 @@ func _ready() -> void:
 	_environment()
 	_grading()
 	_loading_show()
+	if mode in ["menu", "new", "play"] and DisplayServer.get_name() != "headless":
+		await get_tree().process_frame
+		await CityWarmup.prepare(get_tree())
 	await _step("Земля и холмы", 0.05)
 	land = Land.new()
 	MeadowNature.prepare(land)                # ложбины ручьёв считаются в фоне, пока грузится город
@@ -478,12 +486,12 @@ func _ready() -> void:
 			hud.bell(String(e.get("text", "")), String(e.get("icon", "info")))
 	city.unread = 0
 	city.changed.connect(func():
-		if _hud_later:
+		if _hud_later or _place_refresh_frame == Engine.get_process_frames():
 			_hud_due = true                   # ход дня: окно — в следующем кадре (рывок кадра меньше)
 		else:
 			hud.refresh())
 	city.changed.connect(func():
-		if _hud_later:
+		if _hud_later or _place_refresh_frame == Engine.get_process_frames():
 			_actors_due = true                # ход дня: люди у построек — тоже в следующем кадре
 		else:
 			_sync_all_actors())
@@ -511,6 +519,10 @@ func _ready() -> void:
 	_set_hour(hour)
 	hud.refresh()
 	_sync_all_actors()
+	if mode in ["new", "play"] and DisplayServer.get_name() != "headless":
+		while hud.icons_loading:
+			await get_tree().process_frame
+		await CityWarmup.render_effects(self)
 	ready_done = true
 	_loading_hide()
 	if args.has("noui"):
@@ -1628,15 +1640,19 @@ func _deco_tiles() -> void:
 func _rebuild_land(limit := 6, busy := false) -> void:
 	var stroke_on := painting and is_road_tool(tool)
 	if surf_img and surf_tex and land.update_surface_rect(surf_img):
+		var upload := Perf14.begin()
 		surf_img.generate_mipmaps()
 		surf_tex.update(surf_img)
+		Perf14.end(Perf14.UPLOAD, upload)
 	if deco_imgs.is_empty():
 		if land.deco_hi.x >= 0 and surf_img:
 			_deco_masks()                     # первый узор в городе — маски заводятся сейчас
 	elif land.update_deco_masks(deco_imgs[0], deco_imgs[1]):
+		var upload := Perf14.begin()
 		for i in 2:
 			(deco_imgs[i] as Image).generate_mipmaps()
 			(deco_texs[i] as ImageTexture).update(deco_imgs[i])
+		Perf14.end(Perf14.UPLOAD, upload)
 		land_mat.set_shader_parameter("deco_on", land.up_n + land.ground_n + land.road_style_n > 0)
 	if not stroke_on and not land.dirty_soft.is_empty():
 		for ch in land.dirty_soft:
@@ -1651,7 +1667,9 @@ func _rebuild_land(limit := 6, busy := false) -> void:
 			if n >= (1 if stroke_on else limit) or (n > 0 and Time.get_ticks_usec() - t0 > 8000):
 				break
 			land.dirty.erase(ch)
+			var mesh_started := Perf14.begin()
 			_build_chunk(ch)
+			Perf14.end(Perf14.LAND_MESH, mesh_started)
 			n += 1
 	if people and people.land and not stroke_on and not land.dirty_walk.is_empty():
 		var walk := []
@@ -1669,6 +1687,8 @@ var build_anim := false               # постройка поставлена 
 
 func _on_added(b: Dictionary) -> void:
 	if hud and ready_done and mode in ["new", "play"] and not city.bulk:
+		if build_anim:
+			_place_refresh_frame = Engine.get_process_frames()
 		hud.on_workplace_built(b)
 	if build_anim and city.def(b)["kind"] != "decor":
 		_grow_anim(b)
@@ -1699,6 +1719,8 @@ var _grow_live := {}                  # id стройки → [tween, призр
 func _grow_anim(b: Dictionary) -> void:
 	var bp := city.blueprint(b)
 	var g := Parts.ghost(bp, "place", GROW_TINT)
+	if spectacle:
+		spectacle.prepare_layout(b, g)
 	var xf := city.xf(b)
 	g.transform = xf
 	add_child(g)
@@ -2379,7 +2401,7 @@ func _sync_all_actors() -> void:
 
 
 ## Дым из отдушины — мягкие клубы
-func _smoke(at: Vector3) -> GPUParticles3D:
+func _smoke(at: Vector3, parent: Node = null) -> GPUParticles3D:
 	var p := GPUParticles3D.new()
 	p.amount = 7
 	p.lifetime = 4.0
@@ -2408,7 +2430,8 @@ func _smoke(at: Vector3) -> GPUParticles3D:
 	p.process_material = pm
 	p.draw_pass_1 = _puff_quad()
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(p)
+	var holder := self if parent == null else parent
+	holder.add_child(p)
 	return p
 
 
@@ -2735,7 +2758,7 @@ func _process_profiled(dt: float) -> void:
 		rig._yaw_t += dt * 0.03
 		if _autogo != "" and frame == 60:
 			hud._menu_go(_autogo)
-	if autosave_t > 90.0 and not _clock_busy and can_save and settings.get("autosave", true) and moving.is_empty() and moving_nature.is_empty():
+	if autosave_t > 90.0 and not _clock_busy and can_save and settings.get("autosave", true) and moving.is_empty() and moving_nature.is_empty() and _autosave_task < 0:
 		autosave_t = 0.0
 		_autosave()
 	if shot_path != "" and frame == shot_frame:
@@ -6599,10 +6622,10 @@ func save() -> void:
 		hud.saving()                          # перо у часов
 
 
-func _save_data() -> Dictionary:
+func _save_data(raw_cells := false) -> Dictionary:
 	if people:
 		people.sync_members()                 # кто где работает — в записи членов семей (этап 6.1)
-	var data := city.save_data()
+	var data := city.save_data(raw_cells)
 	data["land"] = land.save_changes()
 	data["hour"] = hour
 	data["version"] = 2
@@ -6618,35 +6641,62 @@ func _write_save(data: Dictionary) -> void:
 	Account.me().after_save(s)                # и в облако (не чаще раза в минуту, при выходе — сразу)
 
 
-## Автосохранение в три кадра: снимок города и земли (её отличия посчитаны заранее, land.save_warm) — весь в одном кадре,
-## чтобы покупка участка или дорога между кадрами не попала в файл без своей цены; строка; файл и облако.
-## Сохранили иначе между кадрами — не пишем (save_ms — самый долгий)
+## Снимок в одном кадре, чтобы земля и её цена попали в одну версию.
+## Рабочий поток пишет временный файл, главный публикует его по номеру сохранения.
 func _autosave() -> void:
+	if _autosave_task >= 0 or not can_save:
+		return
 	_save_gen += 1
 	if hud:
-		hud.saving()                          # перо у часов
+		hud.saving()
 	var gen := _save_gen
 	var t0 := Time.get_ticks_usec()
-	var data := _save_data()
-	for k: String in ["goals", "tips", "events", "legion"]:
-		data[k] = data[k].duplicate(true)     # эти отдаются ссылкой: перемены в следующем кадре не должны попасть в снимок
-	var ms := (Time.get_ticks_usec() - t0) / 1000.0
-	await get_tree().process_frame
+	var data := _save_data(true).duplicate(true)
+	Perf14.end(Perf14.SAVE_SNAPSHOT, t0 if Perf14.enabled else 0)
+	save_ms = (Time.get_ticks_usec() - t0) / 1000.0
+	var path := save_path()
+	var temp := path + ".autosave.tmp"
+	var result := {}
+	var task := WorkerThreadPool.add_task(_prepare_autosave.bind(data, temp, result))
+	_autosave_task = task
+	while _autosave_task == task and not WorkerThreadPool.is_task_completed(task):
+		await get_tree().process_frame
+	if _autosave_task != task:
+		return
+	var err := WorkerThreadPool.wait_for_task_completion(task)
+	_autosave_task = -1
 	if gen != _save_gen or not can_save or not is_inside_tree():
 		return
-	t0 = Time.get_ticks_usec()
-	var s := JSON.stringify(data)
-	ms = maxf(ms, (Time.get_ticks_usec() - t0) / 1000.0)
-	await get_tree().process_frame
-	if gen != _save_gen or not can_save or not is_inside_tree():
+	if err != OK or not result.has("text"):
+		push_warning("Не удалось подготовить автосохранение")
 		return
 	t0 = Time.get_ticks_usec()
-	var f := FileAccess.open(save_path(), FileAccess.WRITE)
-	if f:
-		f.store_string(s)
-		f.close()
-	Account.me().after_save(s)
-	save_ms = maxf(ms, (Time.get_ticks_usec() - t0) / 1000.0)
+	if DirAccess.rename_absolute(temp, path) == OK:
+		Account.me().after_save(result["text"])
+	else:
+		push_warning("Не удалось обновить файл автосохранения")
+	Perf14.end(Perf14.SAVE_WRITE, t0 if Perf14.enabled else 0)
+	save_ms = maxf(save_ms, (Time.get_ticks_usec() - t0) / 1000.0)
+
+
+static func _prepare_autosave(data: Dictionary, path: String, result: Dictionary) -> void:
+	for building: Dictionary in data["buildings"]:
+		building["cells"] = City._cells64(building["cells"])
+	var text := JSON.stringify(data)
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(text)
+	var err := f.get_error()
+	f.close()
+	if err == OK:
+		result["text"] = text
+
+
+func _exit_tree() -> void:
+	if _autosave_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_autosave_task)
+		_autosave_task = -1
 
 
 ## Ход дня из кадра игры (окно города обновится в следующем кадре)

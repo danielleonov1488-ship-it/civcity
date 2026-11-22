@@ -1,5 +1,7 @@
 class_name KitLib
 extends RefCounted
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Свой набор деталей CivCity (Blender: deploy/kit/kit_houses.py) — дома и общие створки (ставни, двери).
 ## В чертежах детали зовутся "K:<файл>/<узел>": "K:pleb_0_2/House", "K:pleb_0_2/Walls", "K:common/sh_green_33_72_L".
 ## Synty.make / Synty.has / Bp.model_aabb отдают такие имена сюда. Материалы из .glb подменяются общими (по имени):
@@ -145,7 +147,9 @@ static func _mesh(name: String) -> Mesh:
 	var node := body.substr(cut + 1)
 	if not _scenes.has(file):
 		var path := DIR + file + ".glb"
+		var loading := Perf14.begin()
 		_scenes[file] = load(path) if ResourceLoader.exists(path) else null
+		Perf14.loaded(path, loading)
 	var ps: PackedScene = _scenes[file]
 	if ps == null:
 		_meshes[name] = null

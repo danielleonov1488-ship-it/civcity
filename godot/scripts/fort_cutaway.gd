@@ -1,6 +1,8 @@
 class_name FortCutaway
 extends Camp3D
 
+const Perf14 = preload("res://scripts/perf14_timers.gd")
+
 const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Рисованный разрез форта в отдельном 2D-слое.
 
@@ -159,7 +161,9 @@ func setup(legion: Legion, game: Node) -> bool:
 
 func _texture(path: String) -> Texture2D:
 	if not _textures.has(path):
+		var loading := Perf14.begin()
 		_textures[path] = load(path)
+		Perf14.loaded(path, loading)
 	return _textures[path] as Texture2D
 
 

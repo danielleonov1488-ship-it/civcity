@@ -548,57 +548,88 @@ func _road_near(p: Vector2, r: float, own_cells: PackedInt32Array) -> bool:
 
 var _home_net_ver := -1
 var _home_net_center := -1
-var _home_net := {}
+var _home_net_seed := Vector2i(-1, -1)
+var _home_net := PackedByteArray()
 
 
-## Дороги от площади станции. Пересчитываем только после правок земли.
+## От почты связаны целые полосы мощения. Обходим полосы вместо отдельных клеток.
 func _home_network() -> void:
 	var ctr := center()
 	var cid := int(ctr.get("id", -1))
-	if _home_net_ver == land.walk_ver and _home_net_center == cid:
+	var start := land.cell(door_point(ctr)) if cid >= 0 else Vector2i(-1, -1)
+	if _home_net_ver == land.walk_ver and _home_net_center == cid and _home_net_seed == start:
 		return
 	_home_net_ver = land.walk_ver
 	_home_net_center = cid
-	_home_net.clear()
+	_home_net_seed = start
+	_home_net.resize(Land.N * Land.N)
+	_home_net.fill(0)
 	if ctr.is_empty():
 		return
-	var start := land.cell(door_point(ctr))
+	var kinds := land.kind
+	var occ := land.occ
+	var walkable := PackedByteArray()
+	walkable.resize(256)
+	for kd in 256:
+		walkable[kd] = int(Land.walk_kind(kd))
 	var queue := PackedInt32Array()
-	for z in range(start.y - 7, start.y + 8):
-		for x in range(start.x - 7, start.x + 8):
-			if not land.inside(x, z):
-				continue
-			var k := land.idx(x, z)
-			if Land.walk_kind(land.kind[k]) and (land.occ[k] == 0 or land.occ[k] == cid):
-				_home_net[k] = true
+	for z in range(maxi(0, start.y - 7), mini(Land.N, start.y + 8)):
+		for x in range(maxi(0, start.x - 7), mini(Land.N, start.x + 8)):
+			var k := z * Land.N + x
+			if walkable[kinds[k]] and (occ[k] == 0 or occ[k] == cid):
+				_home_net[k] = 1
 				queue.append(k)
 	var head := 0
 	while head < queue.size():
-		var k := queue[head]
+		var seed := queue[head]
 		head += 1
-		for off: Vector2i in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
-			var at := Vector2i(k % Land.N, k / Land.N) + off
-			if not land.inside(at.x, at.y):
+		if _home_net[seed] == 2:
+			continue
+		var y := seed / Land.N
+		var left := seed
+		var right := seed
+		while left > y * Land.N:
+			var k := left - 1
+			if _home_net[k] == 2 or not walkable[kinds[k]] or (occ[k] != 0 and occ[k] != cid):
+				break
+			left = k
+		while right < (y + 1) * Land.N - 1:
+			var k := right + 1
+			if _home_net[k] == 2 or not walkable[kinds[k]] or (occ[k] != 0 and occ[k] != cid):
+				break
+			right = k
+		for k in range(left, right + 1):
+			_home_net[k] = 2
+		for dy: int in [-1, 1]:
+			if y + dy < 0 or y + dy >= Land.N:
 				continue
-			var next := land.idx(at.x, at.y)
-			if _home_net.has(next) or not Land.walk_kind(land.kind[next]) or (land.occ[next] != 0 and land.occ[next] != cid):
-				continue
-			_home_net[next] = true
-			queue.append(next)
+			var connected := false
+			var delta := dy * Land.N
+			for k in range(left + delta, right + delta + 1):
+				if _home_net[k] == 2 or not walkable[kinds[k]] or (occ[k] != 0 and occ[k] != cid):
+					connected = false
+					continue
+				if not connected and _home_net[k] == 0:
+					_home_net[k] = 1
+					queue.append(k)
+				connected = true
 
 
 ## У входа есть мостовая, связанная с площадью, а не отдельный мазок.
 func house_connected(b: Dictionary) -> bool:
-	if not is_house(b) or not _road_near(door_point(b), 1.7, b["cells"]):
+	if not is_house(b):
+		return false
+	var door := door_point(b)
+	if not _road_near(door, 1.7, b["cells"]):
 		return false
 	_home_network()
-	var at := land.cell(door_point(b))
+	var at := land.cell(door)
 	var own: PackedInt32Array = b["cells"]
 	for z in range(at.y - 7, at.y + 8):
 		for x in range(at.x - 7, at.x + 8):
 			if land.inside(x, z):
 				var k := land.idx(x, z)
-				if _home_net.has(k) and not own.has(k):
+				if _home_net[k] != 0 and not own.has(k):
 					return true
 	return false
 
@@ -687,10 +718,12 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		land.flatten_cells(cells, b["y"], Land.Kind.FIELD if d["kind"] == "farm" else -1)
 		if d["kind"] != "decor":
 			land.blend_ring(cells, b["y"], 8)
+	var changes_walk := false
 	for k in cells:
 		if land.occ[k] >= 0:                   # арку у въезда (занятость < 0) не затираем даже готовым городом
+			changes_walk = changes_walk or Land.walk_kind(land.kind[k])
 			land.occ[k] = b["id"]
-	land.walk_ver += 1
+	land.walk_ver += int(changes_walk)
 	_under_add(b)
 	buildings[b["id"]] = b
 	_apron_add(b)
@@ -756,10 +789,12 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 	if refund:
 		money += refund_price(b)
 		flow("build", refund_price(b))
+	var changes_walk := false
 	for k in (b["cells"] as PackedInt32Array):
 		if land.occ[k] == int(b["id"]):        # чужое (арку у въезда, соседа) не освобождаем
+			changes_walk = changes_walk or Land.walk_kind(land.kind[k])
 			land.occ[k] = 0
-	land.walk_ver += 1
+	land.walk_ver += int(changes_walk)
 	for k in (b.get("under", PackedInt32Array()) as PackedInt32Array):
 		if int(land.under.get(k, 0)) == int(b["id"]):
 			land.under.erase(k)
@@ -1478,7 +1513,20 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	for b: Dictionary in stories["bonus"]:
 		if b.has("at"):                        # «памятник» скверика: пока скверик стоит (разобрали — бонуса нет)
 			b["_live"] = Stories.square_live_pct(self, b)
+	var slice_start := Time.get_ticks_usec()
 	for h in houses:
+		if staged != null and Time.get_ticks_usec() - slice_start >= 4500:
+			Perf13.end(Perf13.CITY_HOMES, started)
+			staged.suspend(self)
+			var waiting := Time.get_ticks_usec()
+			await tree.process_frame
+			compute_wait_us += Time.get_ticks_usec() - waiting
+			if revision != _compute_revision or terrain != land.gen:
+				compute(true, instant_homes)
+				return
+			staged.resume(self)
+			started = Perf13.begin()
+			slice_start = Time.get_ticks_usec()
 		var cls: String = def(h)["cls"]
 		var cd: Dictionary = Defs.CLASSES[cls]
 		var parts := []
@@ -3172,8 +3220,10 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 	flow("build", -float(price))
 	_apron_remove(h)
 	var old: PackedInt32Array = h["cells"]
+	var changes_walk := false
 	for k in old:
 		if land.occ[k] == int(h["id"]):
+			changes_walk = changes_walk or Land.walk_kind(land.kind[k])
 			land.occ[k] = 0
 	h["type"] = nt
 	h["variant"] = nv
@@ -3186,7 +3236,9 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 	land.blend_ring(cells, h["y"], 8)
 	for k in cells:
 		if land.occ[k] >= 0:
+			changes_walk = changes_walk or Land.walk_kind(land.kind[k])
 			land.occ[k] = h["id"]
+	land.walk_ver += int(changes_walk)
 	_apron_add(h)
 	if apron_of(h) == 2:
 		land.wear_block[int(h["id"])] = true
@@ -4832,7 +4884,7 @@ static func waiting_save(f: Dictionary) -> Dictionary:
 	return out
 
 
-func save_data() -> Dictionary:
+func save_data(raw_cells := false) -> Dictionary:
 	if manual_hiring():
 		_staff_roster()  # штат — по сохранённым назначениям жителей
 	var bl := []
@@ -4840,7 +4892,7 @@ func save_data() -> Dictionary:
 		var b: Dictionary = buildings[id]
 		var e := {"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
 			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": hired_of(b) if manual_hiring() else b.get("hire", -1),
-			"born": int(b.get("born", id)), "cells": _cells64(b["cells"])}
+			"born": int(b.get("born", id)), "cells": b["cells"] if raw_cells else _cells64(b["cells"])}
 		if wants_v >= 1 and is_house(b):
 			e["happy"] = b["happy"]
 			e["unhappy_h"] = int(b.get("unhappy_h", 0))

@@ -421,6 +421,7 @@ static func _river_life(g, id: int, rng: RandomNumberGenerator) -> void:
 ## Течение: полоса над водой каждого ручья (светлые струйки бегут вниз по течению). Одна сетка на все ручьи, без теней;
 ## на «Низкой» и «Очень низкой» спрятана (quality)
 static var flow_node: MeshInstance3D = null
+static var _flow_frozen := false
 static func _flow(g) -> void:
 	var land: Land = g.land
 	var sts := [SurfaceTool.new(), SurfaceTool.new()]           # 0 — ручьи, 1 — река (шире и быстрее)
@@ -485,7 +486,7 @@ static func _flow(g) -> void:
 	for si in mats.size():
 		mi.set_surface_override_material(si, mats[si])
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.visible = not low
+	mi.visible = not low and not _flow_frozen
 	g.add_child(mi)
 	flow_node = mi
 
@@ -900,7 +901,7 @@ static func quality(g, is_low: bool) -> void:
 	if g.land_mat:
 		g.land_mat.set_shader_parameter("rich", not is_low)
 	if is_instance_valid(flow_node):
-		flow_node.visible = not is_low
+		flow_node.visible = not is_low and not _flow_frozen
 
 
 ## Группа пула (одна модель на кусок 48 м) — по нынешнему уровню
@@ -981,6 +982,7 @@ static func _standin_mesh(base: String, sub: Dictionary) -> Mesh:
 
 ## Снимки для сверки (test_perf: время стоит): качание листвы, крылья мельниц и течение ручьёв — замерли
 static func freeze(on_: bool) -> void:
+	_flow_frozen = on_
 	for k in Meadow._mats:
 		var m = Meadow._mats[k]
 		if m is ShaderMaterial:

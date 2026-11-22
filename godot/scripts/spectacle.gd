@@ -1,5 +1,7 @@
 class_name Spectacle
 extends Node3D
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Зрелища: большие постройки живут. К представлению горожане идут в амфитеатр, цирк и театр, рассаживаются
 ## по трибунам — лицом к арене, ровно на ступенях (таз на сиденье, ступни на ступени ниже), под навесами
 ## и на парапете не садятся; на арене бьются гладиаторы, в цирке скачут колесницы, в театре — спектакль.
@@ -71,6 +73,7 @@ const SND := {"cheer": ["arena/crowd_cheer.ogg", -6.0], "roar": ["arena/crowd_ro
 	"hit": [["battle/metalPot2.ogg", "battle/knifeSlice.ogg"], -4.0], "gate": ["battle/creak1.ogg", -10.0]}
 static var _streams := {}
 var _shots := 0
+var _tris_jobs := {}
 
 
 func setup(g, args := {}) -> void:
@@ -145,15 +148,46 @@ func venue_hide(b: Dictionary) -> void:
 	venues.erase(int(b["id"]))
 
 
+## Треугольники готовятся, пока идёт анимация стройки. Потоку отдаём только копии сетки.
+func prepare_layout(b: Dictionary, ghost: Node3D) -> void:
+	if not is_venue(String(b["type"])):
+		return
+	var key := _layout_key(b)
+	if _layouts.has(key) or _tris_jobs.has(key):
+		return
+	var faces := Tris.capture(ghost)
+	var tris := Tris.new()
+	var task := WorkerThreadPool.add_task(tris.build_faces.bind(faces))
+	_tris_jobs[key] = [task, tris]
+
+
+func _exit_tree() -> void:
+	for job: Array in _tris_jobs.values():
+		WorkerThreadPool.wait_for_task_completion(job[0])
+	_tris_jobs.clear()
+
+
+static func _layout_key(b: Dictionary) -> String:
+	return "%s|%d|%d" % [b["type"], int(b.get("variant", 0)), int(b.get("color", 0))]
+
+
 ## Места постройки (по её чертежу; один раз на тип и вариант)
 func layout(b: Dictionary) -> Dictionary:
-	var key := "%s|%d|%d" % [b["type"], int(b.get("variant", 0)), int(b.get("color", 0))]
+	var key := _layout_key(b)
 	if _layouts.has(key):
 		return _layouts[key]
+	var started := Perf14.begin()
 	var t0 := Time.get_ticks_msec()
 	var bp := city.blueprint(b)
-	var tris := Tris.new()
-	tris.build(bp)
+	var tris: Tris
+	if _tris_jobs.has(key):
+		var job: Array = _tris_jobs[key]
+		WorkerThreadPool.wait_for_task_completion(job[0])
+		tris = job[1]
+		_tris_jobs.erase(key)
+	else:
+		tris = Tris.new()
+		tris.build(bp)
 	var lay := {"seats": [], "groups": {}, "tris": tris}
 	# уменьшенная трибуна (Catalog.SHRINK): ступени ниже — зритель сидит на своём месте, ступни чуть ниже кромки ступени
 	_amphi_drop = Crowd.SEAT_DROP * float(Catalog.SHRINK.get(String(b["type"]), 1.0))
@@ -179,6 +213,7 @@ func layout(b: Dictionary) -> Dictionary:
 	lay["ms"] = Time.get_ticks_msec() - t0
 	print("SPECTACLE layout %s: %d seats (dropped %d), %d tris, %d ms" % [key, (lay["seats"] as Array).size(), int(lay.get("dropped", 0)), tris.count, lay["ms"]])
 	_layouts[key] = lay
+	Perf14.end(Perf14.SPECTACLE, started)
 	return lay
 
 
@@ -1356,13 +1391,23 @@ class Tris:
 	## Все треугольники чертежа (в осях постройки), кроме отвесных: им вертикальный луч не нужен
 	func build(bp: Bp) -> void:
 		var gh := Parts.ghost(bp, "place")
+		var faces := capture(gh)
+		gh.free()
+		build_faces(faces)
+
+	static func capture(ghost: Node3D) -> Array:
+		var faces := []
+		for mi: MeshInstance3D in ghost.find_children("*", "MeshInstance3D", true, false):
+			if mi.mesh != null:
+				faces.append([Citizen._rel(mi, ghost), mi.mesh.get_faces()])
+		return faces
+
+	func build_faces(faces: Array) -> void:
 		var lo := Vector2(INF, INF)
 		var hi := Vector2(-INF, -INF)
-		for mi: MeshInstance3D in gh.find_children("*", "MeshInstance3D", true, false):
-			if mi.mesh == null:
-				continue
-			var xf := Citizen._rel(mi, gh)
-			var f := mi.mesh.get_faces()
+		for item: Array in faces:
+			var xf: Transform3D = item[0]
+			var f: PackedVector3Array = item[1]
 			for i in range(0, f.size(), 3):
 				var a := xf * f[i]
 				var b := xf * f[i + 1]
@@ -1377,7 +1422,8 @@ class Tris:
 				lo.y = minf(lo.y, minf(a.z, minf(b.z, c.z)))
 				hi.x = maxf(hi.x, maxf(a.x, maxf(b.x, c.x)))
 				hi.y = maxf(hi.y, maxf(a.z, maxf(b.z, c.z)))
-		gh.free()
+		if v.is_empty():
+			return
 		lo_xz = lo
 		hi_xz = hi
 		count = v.size() / 3

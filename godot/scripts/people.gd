@@ -1,5 +1,7 @@
 class_name People
 extends Node3D
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Жители — настоящие люди, как в Town to City: каждого жителя города видно, когда он на улице.
 ## Семьи приезжают на повозке по большой дороге из-за горизонта, сходят на площадь у станции, потом идут в свой дом.
 ## Утром работники выходят из дома и идут на работу (встают за прилавок, к печи, в поле), вечером
@@ -126,17 +128,20 @@ func _walk_g(gi: int, gj: int) -> bool:
 
 
 func refresh(chunks: Array) -> void:
+	var started := Perf14.begin()
 	var s := Land.CH / G
 	for ch: Vector2i in chunks:
 		for j in range(ch.y * s, ch.y * s + s):
 			for i in range(ch.x * s, ch.x * s + s):
 				grid.set_point_solid(Vector2i(i, j), not _walk_g(i, j))
+	Perf14.end(Perf14.NAV, started)
 
 
 ## Сетка ходьбы под клетками постройки (и кольцом вокруг) — сразу, как постройку поставили или убрали.
 ## На ровной мостовой земля под домом не меняется, чанк к перестройке не помечается, и без этого жители
 ## ходили бы сквозь новый дом на площади, а на месте снесённого оставалась бы невидимая стена
 func refresh_cells(cells: PackedInt32Array) -> void:
+	var started := Perf14.begin()
 	var seen := {}
 	for k in cells:
 		var gi := (k % Land.N) / G
@@ -148,13 +153,19 @@ func refresh_cells(cells: PackedInt32Array) -> void:
 					continue
 				seen[g] = true
 				grid.set_point_solid(g, not _walk_g(g.x, g.y))
+	Perf14.end(Perf14.NAV, started)
 
 
 ## Путь (от p по точкам path с номера i) проходит по клеткам постройки id?
-func _path_hits(p: Vector2, path: PackedVector2Array, i: int, id: int) -> bool:
+func _path_hits(p: Vector2, path: PackedVector2Array, i: int, id: int, box := Rect2i(0, 0, Land.N, Land.N)) -> bool:
 	var a := p
 	for j in range(i, path.size()):
 		var b: Vector2 = path[j]
+		var ca := land.cell(a)
+		var cb := land.cell(b)
+		if not box.intersects(Rect2i(ca.min(cb), (ca - cb).abs() + Vector2i.ONE)):
+			a = b
+			continue
 		var n := maxi(1, int(a.distance_to(b) / 0.25))
 		for s in n + 1:
 			if land.occ_at(a.lerp(b, float(s) / n)) == id:
@@ -185,6 +196,13 @@ func _near_free(p: Vector2, rmax := 14, open := false) -> Vector2:
 
 
 func _path(a: Vector2, b: Vector2) -> PackedVector2Array:
+	var started := Perf14.begin()
+	var path := _find_path(a, b)
+	Perf14.end(Perf14.NAV, started)
+	return path
+
+
+func _find_path(a: Vector2, b: Vector2) -> PackedVector2Array:
 	var fa := _near_free(a)
 	var fb := _near_free(b)
 	if fa == Vector2.INF or fb == Vector2.INF:
@@ -3765,26 +3783,35 @@ func _on_building_added(b: Dictionary) -> void:
 	refresh_cells(cells)
 	if city.bulk or cells.is_empty():
 		return
+	var started := Perf14.begin()
 	var id := int(b["id"])
+	var lo := Vector2i(Land.N, Land.N)
+	var hi := Vector2i.ZERO
+	for k in cells:
+		var pt := Vector2i(k % Land.N, k / Land.N)
+		lo = lo.min(pt)
+		hi = hi.max(pt)
+	var box := Rect2i(lo, hi - lo + Vector2i.ONE)
 	for r in residents:
-		_bump_out(r, id)
+		_bump_out(r, id, box)
 	if not hero_r.is_empty():
 		var keep := rng
 		rng = hero_rng                  # _go → _arrive → _begin берут случайности: у героя свои, горожане ходят как раньше
-		_bump_out(hero_r, id)
+		_bump_out(hero_r, id, box)
 		rng = keep
 	for c in cats:
 		if land.occ_at(c["p"]) == id:
 			var q := _near_free(c["p"], 80, true)
 			if q != Vector2.INF:
 				c["p"] = q
-		if c["state"] == "walk" and _path_hits(c["p"], c["path"], int(c["i"]), id):
+		if c["state"] == "walk" and _path_hits(c["p"], c["path"], int(c["i"]), id, box):
 			c["state"] = "sit"           # через миг пойдёт снова — уже в обход
 			c["t"] = 0.5
+	Perf14.end(Perf14.NAV, started)
 
 
 ## Стоит на месте новой постройки — отходит на свободную мостовую; шёл сквозь неё — обходит
-func _bump_out(r: Dictionary, id: int) -> void:
+func _bump_out(r: Dictionary, id: int, box: Rect2i) -> void:
 	if r["state"] in ["home", "work", "door"] or r["act"] == "inside":
 		return                          # дома, на работе, в дверях — их не видно на улице
 	if land.occ_at(r["p"]) == id:
@@ -3794,7 +3821,7 @@ func _bump_out(r: Dictionary, id: int) -> void:
 			_place(r)
 	if r["state"] == "walk":
 		var path: PackedVector2Array = r["path"]
-		if path.size() >= 2 and _path_hits(r["p"], path, int(r["i"]), id):
+		if path.size() >= 2 and _path_hits(r["p"], path, int(r["i"]), id, box):
 			var to: Vector2 = path[path.size() - 1]
 			if land.occ_at(to) == id:            # шёл как раз туда, где теперь стоит постройка, — к ближнему свободному месту
 				to = _near_free(to, 80, true)

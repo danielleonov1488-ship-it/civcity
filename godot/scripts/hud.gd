@@ -1,5 +1,7 @@
 class_name Hud
 extends CanvasLayer
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Интерфейс в римском духе — рисованный набор владельца (assets/ui/ai): резные рамки с меандром, свитки
 ## с валиками, бронзовые медальоны с цветными иконками, табличка с орлом и лентой названия города. Устроен как в Town to City:
 ## сверху слева — город, жители, счастье, время; рядом — три класса жителей; под ними — задания со стрелкой-подсказкой.
@@ -5140,6 +5142,12 @@ func _row(icon: String, text: String, val: String, col := C_INK) -> HBoxContaine
 ## Карточку пересобирают при каждом обновлении города (раз в игровой час) — и каждый раз она должна
 ## сжаться ровно по содержимому: прикрепляем заново сразу и ещё раз через кадр (после переноса строк)
 func _fill_info() -> void:
+	var started := Perf14.begin()
+	_fill_info_profiled()
+	Perf14.end(Perf14.UI, started)
+
+
+func _fill_info_profiled() -> void:
 	_fill_info_body()
 	if info_p.is_empty() and not info_b.is_empty():
 		_compact_info_style()
@@ -7674,6 +7682,12 @@ func plot_cap_note() -> String:
 # ---------- обновление ----------
 
 func refresh(hour_part := 0) -> void:
+	var started := Perf14.begin()
+	refresh_profiled(hour_part)
+	Perf14.end(Perf14.UI, started)
+
+
+func refresh_profiled(hour_part := 0) -> void:
 	if game == null or game.city == null:
 		return
 	if hour_part == 0 or hour_part == 1:
@@ -9010,7 +9024,11 @@ func _menu_go(m: String) -> void:
 
 # ---------- картинки построек для карточек ----------
 
+var icons_loading := false
+
+
 func _make_icons() -> void:
+	icons_loading = true
 	var vp := SubViewport.new()
 	vp.size = Vector2i(200, 168)
 	vp.own_world_3d = true
@@ -9043,7 +9061,7 @@ func _make_icons() -> void:
 
 
 ## Папка готовых картинок построек (user://icons/…): своя у каждой сборки — поменялись файлы игры (код, модели), и
-## картинки рисуются заново; старые папки удаляются. В редакторе ключ — сами скрипты построек
+## картинки рисуются заново. В редакторе ключ — сами скрипты построек
 const ICON_V := 1                         # поменяли свет, камеру или размер картинок — увеличить
 const ICON_SRC := ["catalog.gd", "cat_houses.gd", "cat_shops.gd", "cat_civic.gd", "cat_monuments.gd", "cat_decor.gd", "cat_military.gd",
 	"parts.gd", "synty.gd", "kit.gd", "bp.gd", "artisau.gd", "entrance.gd", "hud.gd", "cat_decor2.gd", "cat_extra.gd", "cat_grand.gd", "cat_nature.gd", "cat_meadow.gd", "meadow.gd"]
@@ -9063,12 +9081,6 @@ func _icon_dir() -> String:
 	var root := "user://icons"
 	var name := key.md5_text().substr(0, 12)
 	DirAccess.make_dir_recursive_absolute(root.path_join(name))
-	for old in DirAccess.get_directories_at(root):
-		if old != name:
-			var od := root.path_join(old)
-			for f in DirAccess.get_files_at(od):
-				DirAccess.remove_absolute(od.path_join(f))
-			DirAccess.remove_absolute(od)
 	return root.path_join(name)
 
 
@@ -9131,6 +9143,7 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		if not _icons_alive(vp):
 			return
 	vp.queue_free()
+	icons_loading = false
 	if drawn > 0:
 		print("Картинки построек: нарисовано %d, остальные — из %s" % [drawn, idir])
 	if tray.visible:

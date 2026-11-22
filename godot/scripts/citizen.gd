@@ -1,5 +1,7 @@
 class_name Citizen
 extends Node3D
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Житель — персонаж Synty Ancient Empire (рабочие, фермеры, патриции, политик) с движениями из бесплатной
 ## библиотеки Quaternius. Оба скелета при импорте приведены к общему стандарту (BoneMap → гуманоид),
 ## поэтому движения подходят без переделки. Текстура — общая палитра Synty; вариант палитры (A/B/C)
@@ -68,7 +70,9 @@ const PAL := {
 
 static func _scene(path: String) -> PackedScene:
 	if not _cache.has(path):
+		var loading := Perf14.begin()
 		_cache[path] = load(path)
+		Perf14.loaded(path, loading)
 	return _cache[path]
 
 

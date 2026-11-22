@@ -1,5 +1,7 @@
 class_name Parts
 extends Node3D
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Пул деталей: все одинаковые детали Synty (одной раскраски) по всему городу рисуются одним MultiMesh.
 ## place(чертёж, где) возвращает ручку; remove(ручка) убирает детали этой постройки.
 ## Свободные места переиспользуются, буфер растёт удвоением.
@@ -477,6 +479,7 @@ static func _bird_mesh(swan: bool) -> Mesh:
 
 
 func _grow(g: Dictionary) -> void:
+	var started := Perf14.begin()
 	var cap: int = maxi(16, int(g["cap"]) * 2)
 	for sub in g["subs"]:
 		var mm: MultiMesh = sub["mm"]
@@ -488,6 +491,7 @@ func _grow(g: Dictionary) -> void:
 			buffer.resize(cap * stride)
 			mm.buffer = buffer
 	g["cap"] = cap
+	Perf14.end(Perf14.BUFFER, started)
 
 
 func _alloc(g: Dictionary) -> int:
@@ -512,7 +516,9 @@ func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 		var tile := Vector2i(-1, -1)
 		if name == CatCivic.WHEAT or name == CatCivic.WHEAT_DENSE:
 			tile = Vector2i(Vector2(t.origin.x, t.origin.z) / WHEAT_BATCH)
+		var started := Perf14.begin()
 		var g := _group(name, p[2], tile)
+		Perf14.end(Perf14.PARTS, started)
 		var col := _col
 		var slot := _alloc(g)
 		var tinted := g.has("tint")

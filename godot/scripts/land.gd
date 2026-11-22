@@ -377,7 +377,7 @@ func far_height(x: float, z: float) -> float:
 
 ## Клетка поменялась. mesh — поменялся видимый уступ (12,5 см): сетку куска перестроить; mask — поменялось
 ## покрытие: маска для шейдера (и стенки уступов — сетка «потом», dirty_soft). Ни то ни другое — только для сохранения
-func _mark(i: int, j: int, mesh := true, mask := true) -> void:
+func _mark(i: int, j: int, mesh := true, mask := true, changes_walk := true) -> void:
 	gen += 1
 	var ci := clampi(i / CH, 0, CHN - 1)
 	var cj := clampi(j / CH, 0, CHN - 1)
@@ -386,7 +386,7 @@ func _mark(i: int, j: int, mesh := true, mask := true) -> void:
 	_save_dirty[ch] = true
 	dirty_walk[ch] = true
 	if mask:
-		walk_ver += 1
+		walk_ver += int(changes_walk)
 		var mi := i / SM
 		var mj := j / SM
 		if mi < mask_lo.x:
@@ -991,12 +991,13 @@ func flatten_cells(cells: PackedInt32Array, y: float, kd := -1) -> void:
 		if hq(k) != y or (kd >= 0 and kind[k] != kd):
 			var step := hq(k) != y
 			var kch := kd >= 0 and kind[k] != kd
+			var changes_walk := kch and walk_kind(kind[k]) != walk_kind(kd)
 			h[k] = y
 			if kd >= 0:
 				if kind[k] != kd and (deco[k] & ROAD_STYLE) != 0:
 					set_deco(k, deco[k] & ~ROAD_STYLE)
 				kind[k] = kd
-			_mark(k % N, k / N, step, kch)
+			_mark(k % N, k / N, step, kch, changes_walk)
 
 
 ## Земля вокруг постройки плавно подходит к её полу — без ям и ступенек (rc клеток вокруг)
