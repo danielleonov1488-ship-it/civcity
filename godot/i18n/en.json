@@ -5921,5 +5921,9 @@
 	"Жители…": "Residents…",
 	"Откройте дом семьи.": "Open the family’s house.",
 	"Открыть дом": "Open house",
-	"Семья въезжает…": "A family is moving in…"
+	"Семья въезжает…": "A family is moving in…",
+	"Плавность": "Smooth performance",
+	"Меняет чёткость города, чтобы держать FPS.": "Adjusts city detail to keep frames smooth.",
+	"Игра идёт на встроенной видеокарте (%s). ": "The game is running on integrated graphics (%s). ",
+	"Подключите зарядку — без неё Mac сам замедляет видеокарту.": "Plug in the charger. The Mac slows graphics down on battery."
 }
