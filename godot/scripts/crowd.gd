@@ -1,5 +1,7 @@
 class_name Crowd
 extends Node3D
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Толпа: сотни сидящих (и идущих) людей без потери кадров. Обычный житель (Citizen) — свой скелет и проигрыватель
 ## движений: сотня таких уже заметна, а на трибунах их многие сотни. Здесь у каждой модели Synty позы костей всех
 ## нужных движений один раз «запекаются» в картинку (shaders/crowd.gdshader), а люди рисуются пачками MultiMesh:
@@ -40,6 +42,7 @@ const DERIVED_LEN := {"clap": 3.333, "cheer": 3.333, "cheer_l": 3.333, "lean": 3
 static var _clip_idx := {}       # имя клипа → номер
 static var _clip_tab := []       # [первая строка, кадров, петля, fps] по номерам
 static var _rows := 0
+static var _pose_work := {}
 static var _rigs := {}           # модель → {tex, binds, head, body: ArrayMesh, mask: [main, second, trim]}
 static var _hairs := {}          # причёска|модель → ArrayMesh
 static var _mats := {}
@@ -85,10 +88,64 @@ static func _tables() -> void:
 
 # ---------- запекание поз ----------
 
-## Модель: скелет, кости скина, тело с номерами и весами костей в CUSTOM0/1, картинка поз всех клипов
+## Позы для трибун готовятся на копии скелета. Текстура появляется только у первой толпы.
+static func prepare(mdl: String) -> void:
+	if _rigs.has(mdl) or _pose_work.has(mdl):
+		return
+	var rig_data := _rig_data(mdl)
+	var result := {}
+	var task := WorkerThreadPool.add_task(_bake_into.bind(rig_data, result), false, "Crowd: " + mdl)
+	_pose_work[mdl] = [task, rig_data, result]
+
+
+static func _bake_into(data: Dictionary, result: Dictionary) -> void:
+	var started := Time.get_ticks_msec()
+	result["image"] = _bake(data)
+	result["ms"] = Time.get_ticks_msec() - started
+
+
+static func pending(mdl: String) -> bool:
+	var job: Array = _pose_work.get(mdl, [])
+	return not job.is_empty() and int(job[0]) >= 0 and not WorkerThreadPool.is_task_completed(job[0])
+
+
+static func collect(mdl: String) -> void:
+	var job: Array = _pose_work.get(mdl, [])
+	if not job.is_empty() and int(job[0]) >= 0 and WorkerThreadPool.is_task_completed(job[0]):
+		WorkerThreadPool.wait_for_task_completion(job[0])
+		job[0] = -1
+
+
+## Модель: скелет, кости скина, тело и картинка поз всех клипов.
 static func rig(mdl: String) -> Dictionary:
 	if _rigs.has(mdl):
 		return _rigs[mdl]
+	var data: Dictionary
+	var result := {}
+	if _pose_work.has(mdl):
+		var job: Array = _pose_work[mdl]
+		if int(job[0]) >= 0:
+			WorkerThreadPool.wait_for_task_completion(job[0])
+		data = job[1]
+		result = job[2]
+		_pose_work.erase(mdl)
+	else:
+		data = _rig_data(mdl)
+		var bake_started := Perf14.begin()
+		_bake_into(data, result)
+		Perf14.end(Perf14.CROWD_BAKE, bake_started)
+	var started := Perf14.begin()
+	data["body"] = _skin_mesh(data["source"], data["binds"])
+	data.erase("source")
+	data["tex"] = ImageTexture.create_from_image(result["image"])
+	data["bake_ms"] = result["ms"]
+	_rigs[mdl] = data
+	Perf14.end(Perf14.CROWD_UPLOAD, started)
+	return data
+
+
+static func _rig_data(mdl: String) -> Dictionary:
+	var started := Perf14.begin()
 	_tables()
 	Synty._index()
 	var body := Citizen._scene(Citizen.DIR + mdl + ".fbx").instantiate() as Node3D
@@ -121,16 +178,12 @@ static func rig(mdl: String) -> Dictionary:
 			head = i
 	var R := {"mdl": mdl, "parent": parent, "rest": rest, "names": names, "binds": binds, "bind_bone": bind_bone,
 		"bind_pose": bind_pose, "head": head}
-	R["body"] = _skin_mesh(mi.mesh, binds)
+	R["source"] = mi.mesh
 	var map: Dictionary = Citizen.CLOTH.get(mdl, {})
 	R["mask"] = [Citizen._bits(map.get("main", [])), Citizen._bits(map.get("second", [])), Citizen._bits(map.get("trim", []))]
 	R["k"] = float(map.get("k", 1.0))
 	body.free()
-	var t0 := Time.get_ticks_msec()
-	var img := _bake(R)
-	R["tex"] = ImageTexture.create_from_image(img)
-	R["bake_ms"] = Time.get_ticks_msec() - t0
-	_rigs[mdl] = R
+	Perf14.end(Perf14.CROWD_CAPTURE, started)
 	return R
 
 

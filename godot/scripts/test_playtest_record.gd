@@ -1,7 +1,14 @@
 extends RefCounted
 ## Замеры кадра и артефакты одного прогона.
 
+const Perf14 = preload("res://scripts/perf14_timers.gd")
+const Perf13 = preload("res://scripts/perf13_timers.gd")
+
 var folder: String
+var slow_frames := PackedStringArray()
+var window_counts := {}
+var last_window := ""
+var draw_compiles := 0
 var metrics := {}
 var issues: Array[String] = []
 var evidence := {}
@@ -58,6 +65,13 @@ func begin(number: int) -> void:
 	next_frame = now
 	next_scan = now
 	last_frame = 0
+	last_window = ""
+	Perf14.reset_frame()
+	Perf13.usec.resize(Perf13.LABELS.size())
+	Perf13.usec.fill(0)
+	Perf14.enabled = true
+	Perf13.enabled = true
+	draw_compiles = int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW))
 	captured_frame = false
 	progress("начало")
 
@@ -68,9 +82,10 @@ func progress(description: String) -> void:
 	dead_end = false
 
 
-func clock(dt: float, speed: float) -> void:
+func clock(dt: float, speed: float, window: String) -> void:
 	var now := Time.get_ticks_usec()
 	var row: Dictionary = phases[phase]
+	var pipes := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW))
 	if last_frame > 0:
 		var ms := float(now - last_frame) / 1000.0
 		# Снимок после отрисовки входит в интервал до следующего вызова clock.
@@ -83,6 +98,24 @@ func clock(dt: float, speed: float) -> void:
 			row["max_ms"] = maxf(row["max_ms"], ms)
 			row["slow"] += int(ms > 50.0)
 			row["hitches"] += int(ms > 100.0)
+			if phase == 4:
+				var counts: Array = window_counts.get(last_window, [0, 0, 0, 0.0])
+				counts[0] += 1
+				counts[1] += int(ms > 50.0)
+				counts[2] += int(ms > 100.0)
+				counts[3] += ms
+				window_counts[last_window] = counts
+			if phase >= 3 and ms > 33.0:
+				var sections := Perf14.sections()
+				for id in Perf13.LABELS.size():
+					if Perf13.usec[id] > 0:
+						sections[Perf13.LABELS[id]] = Perf13.usec[id] / 1000.0
+				slow_frames.append(JSON.stringify({"phase": phase, "window": last_window, "step": latest_state,
+					"ms": ms, "draw_compiles": pipes - draw_compiles, "sections_ms": sections, "loads_us": Perf14.load_paths}))
+	draw_compiles = pipes
+	Perf14.reset_frame()
+	Perf13.usec.fill(0)
+	last_window = window
 	last_frame = now
 	captured_frame = false
 	row["game_s"] += dt * speed
@@ -303,6 +336,16 @@ func finish() -> void:
 	for job: int in png_jobs.keys():
 		_finish_png(job)
 	frame_titles.close()
+	Perf14.enabled = false
+	Perf13.enabled = false
+	var output := FileAccess.open(folder.path_join("slow_frames.jsonl"), FileAccess.WRITE)
+	if output:
+		output.store_string("\n".join(slow_frames))
+	for key: String in window_counts:
+		var row: Array = window_counts[key]
+		metric("p4.%s.fps" % key, snappedf(row[0] * 1000.0 / maxf(1.0, row[3]), 0.01))
+		metric("p4.%s.frames_over_50" % key, row[1])
+		metric("p4.%s.frames_over_100" % key, row[2])
 	var over_ten := 0
 	var unexpected_over_ten := 0
 	var city_over_six := 0

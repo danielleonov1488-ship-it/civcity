@@ -70,14 +70,20 @@ func setup(l: Land, c: City, g) -> void:
 	city.worker_position = _worker_position
 	game = g
 	rng.seed = 21
-	grid.region = Rect2i(0, 0, GN, GN)
-	grid.cell_size = Vector2(Land.CELL * G, Land.CELL * G)
-	grid.offset = Vector2(Land.CELL * G, Land.CELL * G) * 0.5
-	grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
-	grid.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
-	grid.update()
-	grid.fill_solid_region(grid.region, true)
-	refresh(land.road_chunks.keys())
+	set_process(false)
+	var result: Array[AStarGrid2D] = []
+	var task := WorkerThreadPool.add_task(_create_grid.bind(result), false, "Сетка ходьбы")
+	var tree := get_tree()
+	while not WorkerThreadPool.is_task_completed(task):
+		await tree.process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	grid = result[0]
+	var deadline := Time.get_ticks_usec() + 4000
+	for ch: Vector2i in land.road_chunks:
+		refresh([ch])
+		if Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			deadline = Time.get_ticks_usec() + 4000
 	_make_cart()
 	city.building_removed.connect(_on_building_removed)
 	city.building_added.connect(_on_building_added)
@@ -113,6 +119,19 @@ func setup(l: Land, c: City, g) -> void:
 	_start_of_day(true)
 	_cats_load()
 	hero_spawn()                             # свой герой (Д11): ходит по городу, в счёт жителей не входит
+	set_process(true)
+
+
+static func _create_grid(result: Array[AStarGrid2D]) -> void:
+	var grid := AStarGrid2D.new()
+	grid.region = Rect2i(0, 0, GN, GN)
+	grid.cell_size = Vector2(Land.CELL * G, Land.CELL * G)
+	grid.offset = Vector2(Land.CELL * G, Land.CELL * G) * 0.5
+	grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	grid.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	grid.update()
+	grid.fill_solid_region(grid.region, true)
+	result.append(grid)
 
 
 # ---------- сетка ходьбы ----------
@@ -142,13 +161,16 @@ func refresh(chunks: Array) -> void:
 ## ходили бы сквозь новый дом на площади, а на месте снесённого оставалась бы невидимая стена
 func refresh_cells(cells: PackedInt32Array) -> void:
 	var started := Perf14.begin()
-	var seen := {}
+	var core := {}
 	for k in cells:
 		var gi := (k % Land.N) / G
 		var gj := (k / Land.N) / G
+		core[Vector2i(gi, gj)] = true
+	var seen := {}
+	for cell: Vector2i in core:
 		for dj in range(-1, 2):
 			for di in range(-1, 2):
-				var g := Vector2i(gi + di, gj + dj)
+				var g := cell + Vector2i(di, dj)
 				if g.x < 0 or g.y < 0 or g.x >= GN or g.y >= GN or seen.has(g):
 					continue
 				seen[g] = true
@@ -1524,8 +1546,11 @@ const SCHED_GO := 4
 var _sched_left := 0
 
 
+var _sched_deadline := 0
+
+
 func _sched_ok() -> bool:
-	if _sched_left <= 0:
+	if _sched_left <= 0 or Time.get_ticks_usec() >= _sched_deadline:
 		return false
 	_sched_left -= 1
 	return true
@@ -1535,6 +1560,7 @@ func _schedule(dh: float) -> void:
 	var h: float = game.hour
 	var night := h >= 21.5 or h < 5.0
 	_sched_left = SCHED_GO
+	_sched_deadline = Time.get_ticks_usec() + 3300
 	for r in residents.duplicate():
 		match r["state"]:
 			"home":
@@ -3230,7 +3256,10 @@ var perf_sec := {}                   # части People._process: микрос�
 
 func _pf(name: String, t: int) -> int:
 	var now := Time.get_ticks_usec()
-	perf_sec[name] = int(perf_sec.get(name, 0)) + now - t
+	if perf:
+		perf_sec[name] = int(perf_sec.get(name, 0)) + now - t
+	if Perf14.enabled:
+		Perf14.person_sections["people_" + name] = (now - t) / 1000.0
 	return now
 
 
@@ -3240,12 +3269,14 @@ var _hidden_time := 0.0
 
 
 func _process(dt: float) -> void:
+	var started := Perf14.begin()
 	if perf:
 		var t0 := Time.get_ticks_usec()
 		_process_body(dt)
 		perf_us += Time.get_ticks_usec() - t0
 	else:
 		_process_body(dt)
+	Perf14.end(Perf14.PEOPLE, started)
 
 
 func _process_body(dt: float) -> void:
@@ -3284,7 +3315,7 @@ func _process_body(dt: float) -> void:
 		_settle_tick_us = now
 	else:
 		_settle_tick_us = 0
-	var pf := perf
+	var pf := perf or Perf14.enabled
 	var tm := Time.get_ticks_usec() if pf else 0
 	_tick += dt
 	if _tick >= 0.25:
@@ -3587,8 +3618,10 @@ func _vis_tick() -> void:
 	want.sort_custom(func(a, b): return a[0] < b[0])
 	drop.sort_custom(func(a, b): return a[0] > b[0])
 	var made := 0
+	var deadline := Time.get_ticks_usec() + 3500
 	for w in want:
-		if made >= 24:
+		if made >= 24 or (made > 0 and Time.get_ticks_usec() >= deadline):
+			_vis_t = 0.0
 			break                        # не всех разом — без рывка кадра при повороте камеры
 		if visible_count >= max_vis:
 			if drop.is_empty():

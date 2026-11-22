@@ -115,6 +115,15 @@ static func portrait_path(person: Dictionary, room: String = "", newcomer := fal
 	return FortPerson.portrait_path(person, room, newcomer)
 
 
+static func opening_art(legion: Legion) -> Dictionary:
+	legion._fort_init()
+	var paths := {ART + "fort/shell_front.png": true, ART + "fort/background.jpg": true, ART + "fort/gate.png": true}
+	for room: Dictionary in legion.fort.get("plots", []):
+		var path := room_texture_path(String(room["b"]), int(room["lv"]), not legion.fort_plot_timer(int(room["id"])).is_empty())
+		paths[path] = true
+	return paths
+
+
 func setup(legion: Legion, game: Node) -> bool:
 	lg = legion
 	city_game = game
@@ -163,6 +172,7 @@ func _texture(path: String) -> Texture2D:
 	if not _textures.has(path):
 		var loading := Perf14.begin()
 		_textures[path] = load(path)
+		Perf14.end(Perf14.FORT_ART, loading)
 		Perf14.loaded(path, loading)
 	return _textures[path] as Texture2D
 

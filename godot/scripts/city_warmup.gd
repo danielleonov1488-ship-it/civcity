@@ -1,54 +1,68 @@
 extends RefCounted
 
-const DIRS := [
-	"res://assets/synty/FBX", "res://assets/synty_meadow/FBX", "res://assets/kit/houses",
-	"res://assets/artisau", "res://assets/people", "res://assets/animals", "res://assets/fauna",
-	"res://assets/cat", "res://assets/fort/v2", "res://assets/legion_chars", "res://assets/legion_enemies",
-]
-const ART := "res://assets/fort/cutaway/rooms"
 const EFFECTS := ["citizen_cloth", "foliage", "meadow_foliage", "wheat", "field_cover",
 	"water", "stream_flow", "pool_water", "land", "grass_carpet", "cat_fur", "crowd",
 	"cover", "outline", "outline_hull", "kit_reveal", "meadow_rock", "meadow_spin"]
-const BATCH := 8
-
-static var _assets: Dictionary = {}
-static var _prepared := false
 static var _rendered := {}
+static var _materials := {}
 
 
-## Оставляем ссылки: иначе кэш ResourceLoader отпустит ресурс до первой постройки.
-static func prepare(tree: SceneTree) -> void:
-	if _prepared:
-		return
-	var paths: Array[String] = []
-	for dir: String in DIRS:
-		_collect(dir, ["fbx", "glb"], paths)
-	_collect(ART, ["jpg", "png"], paths)
-	_collect("res://shaders", ["gdshader"], paths)
-	for start in range(0, paths.size(), BATCH):
-		var pending: Array[String] = []
-		for path: String in paths.slice(start, start + BATCH):
-			if ResourceLoader.load_threaded_request(path) == OK:
+## Ссылки принадлежат только тому, кто ждёт загрузку: городу, карточке или переходу.
+static func fetch(tree: SceneTree, paths: Dictionary) -> Dictionary:
+	var pending: Array[String] = []
+	var resources := {}
+	var files := paths.keys()
+	for start in range(0, files.size(), 8):
+		for path: String in files.slice(start, start + 8):
+			var cached := ResourceLoader.get_cached_ref(path)
+			if cached:
+				resources[path] = cached
+			elif ResourceLoader.exists(path) and ResourceLoader.load_threaded_request(path) == OK:
 				pending.append(path)
 		while not pending.is_empty():
 			await tree.process_frame
-			for i in range(pending.size() - 1, -1, -1):
-				var path := pending[i]
-				var status := ResourceLoader.load_threaded_get_status(path)
-				if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
-					continue
-				if status == ResourceLoader.THREAD_LOAD_LOADED:
-					_assets[path] = ResourceLoader.load_threaded_get(path)
-				pending.remove_at(i)
-	_prepared = true
+			_poll(pending, resources)
+	return resources
 
 
-static func _collect(dir: String, extensions: Array, paths: Array[String]) -> void:
-	for entry: String in ResourceLoader.list_directory(dir):
-		if entry.ends_with("/"):
-			_collect(dir.path_join(entry.trim_suffix("/")), extensions, paths)
-		elif entry.get_extension().to_lower() in extensions:
-			paths.append(dir.path_join(entry))
+static func _poll(pending: Array[String], resources: Dictionary) -> void:
+	for i in range(pending.size() - 1, -1, -1):
+		var path := pending[i]
+		var status := ResourceLoader.load_threaded_get_status(path)
+		if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			continue
+		var resource := ResourceLoader.load_threaded_get(path)
+		if resource:
+			resources[path] = resource
+		pending.remove_at(i)
+
+
+static func release_sources() -> void:
+	Synty._scenes.clear()
+	Meadow._scenes.clear()
+	KitLib.release_sources()
+
+
+static func models(bp: Bp, paths: Dictionary, textures := false) -> void:
+	for part: Array in bp.parts:
+		var name: String = part[0]
+		if name.begins_with("#"):
+			continue
+		var path := model_path(name)
+		if path != "":
+			paths[path] = true
+		if textures and not Gfx._tex_small and not (name.begins_with("M:") or name.begins_with("K:")):
+			Synty.texture_paths(name, part[2], paths)
+
+
+static func model_path(name: String) -> String:
+	if name.begins_with("K:"):
+		var file := name.substr(2).get_slice("/", 0)
+		return KitLib.DIR + file + ".glb"
+	if name.begins_with("M:"):
+		Meadow._index()
+		return Meadow._paths.get(Meadow._base(name), "")
+	return Synty._paths.get(name, "")
 
 
 ## У картинок построек свой SubViewport. Здесь запускаем проходы городских шейдеров
@@ -57,14 +71,20 @@ static func render_effects(game: Node3D) -> void:
 	var root := game.get_viewport()
 	var city_sun: DirectionalLight3D = game.get("sun")
 	var shadows := city_sun != null and city_sun.shadow_enabled
-	var key := Vector3i(root.msaa_3d, root.screen_space_aa, int(shadows))
-	if _rendered.has(key):
+	await _render(game, root.msaa_3d, root.screen_space_aa, shadows)
+	if root.msaa_3d != Viewport.MSAA_DISABLED or shadows:
+		await _render(game, Viewport.MSAA_DISABLED, root.screen_space_aa, false)
+
+
+static func _render(game: Node3D, msaa: Viewport.MSAA, aa: Viewport.ScreenSpaceAA, shadows: bool, repeat := false) -> void:
+	var key := Vector3i(msaa, aa, int(shadows))
+	if _rendered.has(key) and not repeat:
 		return
 	var viewport := SubViewport.new()
 	viewport.size = Vector2i(128, 128)
 	viewport.own_world_3d = true
-	viewport.msaa_3d = root.msaa_3d
-	viewport.screen_space_aa = root.screen_space_aa
+	viewport.msaa_3d = msaa
+	viewport.screen_space_aa = aa
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	game.add_child(viewport)
 	var camera := Camera3D.new()
@@ -77,11 +97,15 @@ static func render_effects(game: Node3D) -> void:
 	var quad := QuadMesh.new()
 	quad.size = Vector2(1.0, 1.0)
 	for i in EFFECTS.size():
-		var shader: Shader = _assets.get("res://shaders/" + EFFECTS[i] + ".gdshader")
-		if shader == null:
-			continue
-		var mat := ShaderMaterial.new()
-		mat.shader = shader
+		var effect: String = EFFECTS[i]
+		var mat: ShaderMaterial = _materials.get(effect)
+		if mat == null:
+			var shader := load("res://shaders/" + effect + ".gdshader") as Shader
+			if shader == null:
+				continue
+			mat = ShaderMaterial.new()
+			mat.shader = shader
+			_materials[effect] = mat
 		var instance := MeshInstance3D.new()
 		instance.mesh = quad
 		instance.material_override = mat
@@ -107,4 +131,5 @@ static func render_effects(game: Node3D) -> void:
 	for i in 3:
 		await RenderingServer.frame_post_draw
 	viewport.queue_free()
+	await game.get_tree().process_frame
 	_rendered[key] = true

@@ -1,6 +1,8 @@
 class_name LegionBattle
 extends Node
 
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Рисованный бой Легиона: ход боя считает LegionSim фиксированным шагом.
 ## Город на паузе, его 3D-кадр скрыт. Поле, бойцы и эффекты рисуются в CanvasLayer.
@@ -57,7 +59,7 @@ var shots := {}                            # снаряд симуляции →
 # ход боя
 var speed := 1.0
 var paused := false
-var phase := "intro"                       # intro | fight | ending | result
+var phase := "loading"                     # loading | intro | fight | ending | result
 var acc := 0.0
 var intro_t := 0.0
 var end_t := 0.0
@@ -165,11 +167,13 @@ func _ready() -> void:
 		legion.free_mode = true
 	speed = clampf(float(opts.get("speed", legion.flags.get("battle_speed", 1.0))), 1.0, 3.0)
 	zoom = clampf(float(opts.get("zoom", 1.0)), 0.75, 1.25)
+	var started := Perf14.begin()
 	_fonts()
 	battle_sound = BattleSound.new()
 	add_child(battle_sound)
 	_build_screen()
 	_loading(setup)
+	Perf14.end(Perf14.BATTLE_OPEN, started)
 	# сначала экран с картой провинции, потом (пока он виден) собирается поле — без «замёрзшего» города
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -681,6 +685,8 @@ func _place_banner() -> void:
 # =====================================================================
 
 func _start(s: Dictionary) -> void:
+	phase = "loading"
+	var started := Perf14.begin()
 	setup = s
 	out = {}
 	pvp = String(s.get("kind", "campaign")) == "pvp"
@@ -693,6 +699,13 @@ func _start(s: Dictionary) -> void:
 	else:
 		var r := int(stage.get("r", 0))
 		biome = String(Legion.regions()[clampi(r, 0, Legion.regions().size() - 1)]["biome"])
+	var tree := get_tree()
+	var paths := BattleView.opening_art(biome)
+	Perf14.end(Perf14.BATTLE_OPEN, started)
+	var art := await CityWarmup.fetch(tree, paths)
+	if phase == "closing" or is_queued_for_deletion():
+		return
+	started = Perf14.begin()
 	battle_view.set_field(biome)
 	battle_sound.reset(biome)
 	battle_view.pvp = pvp
@@ -718,9 +731,22 @@ func _start(s: Dictionary) -> void:
 	auto_btn.tooltip_text = "Умения отряд жмёт сам — вовремя и с умом" if auto_ok else "Авто — для пройденных боёв: в первый раз ведите бой сами"
 	var want := bool(opts.get("auto", legion.flags.get("battle_auto", false)))
 	sim.set_auto(want and auto_ok and tut == "")   # запоминается: бой с городом повторит сервер
-	battle_view.prewarm(s.get("waves", []))
+	Perf14.end(Perf14.BATTLE_OPEN, started)
+	await battle_view.prewarm(s.get("waves", []))
+	if phase == "closing" or is_queued_for_deletion():
+		return
+	started = Perf14.begin()
+	art.clear()
+	var deadline := Time.get_ticks_usec() + 5000
 	for u in sim.units:
 		_view(u)
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.BATTLE_OPEN, started)
+			await tree.process_frame
+			if phase == "closing" or is_queued_for_deletion():
+				return
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 5000
 	_score_names()
 	ally_health.initialized = false
 	enemy_health.initialized = false
@@ -885,7 +911,7 @@ func _process(dt: float) -> void:
 
 
 func _process_profiled(dt: float) -> void:
-	if sim == null:
+	if sim == null or phase in ["loading", "closing"]:
 		return
 	dt = minf(dt, 0.1)
 	_fps(dt)
@@ -1174,6 +1200,12 @@ func _perk_fx(e: Dictionary) -> void:
 
 
 func _begin_end() -> void:
+	var started := Perf14.begin()
+	_begin_end_timed()
+	Perf14.end(Perf14.BATTLE_RESULT, started)
+
+
+func _begin_end_timed() -> void:
 	phase = "ending"
 	end_t = 0.0
 	tut_freeze = false                       # отступили, пока бой стоял на масле
@@ -1455,6 +1487,12 @@ func _close_modal() -> void:
 
 ## Экран итога: победа или поражение, звёзды, добыча, рейтинг, что открылось; дальше — следующий бой, ещё раз, в лагерь
 func _show_result() -> void:
+	var started := Perf14.begin()
+	_show_result_timed()
+	Perf14.end(Perf14.BATTLE_RESULT, started)
+
+
+func _show_result_timed() -> void:
 	phase = "result"
 	var win := bool(out.get("win", false))
 	var first_lesson := bool(setup.get("fort_guide_first", false)) or bool(out.get("guide_finished", false))
@@ -1738,18 +1776,30 @@ func _close() -> void:
 	fade.modulate.a = 0.0
 	var tw := create_tween()
 	tw.tween_property(fade, "modulate:a", 1.0, 0.3)
-	tw.tween_callback(func():
-		_clear_world()
-		_leave()
-		if game != null and is_instance_valid(game) and game.can_save and not out.is_empty():
-			game.save()                          # добыча и прогресс похода — сразу в сохранение (и в облако)
-		var o := out
-		if current == self:
-			current = null
-		legion.battle_closed.emit(o)
-		if on_done.is_valid():
-			on_done.call(o)
-		queue_free())
+	tw.tween_callback(_finish_close)
+
+
+func _finish_close() -> void:
+	await battle_view.clear_visible()
+	var started := Perf14.begin()
+	_clear_world()
+	Perf14.end(Perf14.BATTLE_CLOSE, started)
+	await get_tree().process_frame
+	started = Perf14.begin()
+	_leave()
+	if game != null and is_instance_valid(game) and game.can_save and not out.is_empty():
+		game.save()                          # добыча и прогресс похода — сразу в сохранение (и в облако)
+	Perf14.end(Perf14.BATTLE_CLOSE, started)
+	await get_tree().process_frame
+	started = Perf14.begin()
+	var o := out
+	if current == self:
+		current = null
+	legion.battle_closed.emit(o)
+	if on_done.is_valid():
+		on_done.call(o)
+	Perf14.end(Perf14.BATTLE_CLOSE, started)
+	queue_free()
 
 
 ## Бросить бой без итога (проверки, выход из игры)

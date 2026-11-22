@@ -215,25 +215,42 @@ static func prepare(land: Land) -> void:
 static func streams(g) -> void:
 	gen_low = Gfx.is_low(str(g.settings.get("quality", "high")))
 	var t0 := Time.get_ticks_msec()
+	var tree: SceneTree = g.get_tree()
 	if _task >= 0:
+		while not WorkerThreadPool.is_task_completed(_task):
+			await tree.process_frame
 		WorkerThreadPool.wait_for_task_completion(_task)
-		_task = -1
-	var list := Streams.choose(g.land, g.land.streams_saved)
-	Streams.apply(g.land, list)
-	Streams.set_far(g.land.streams)           # река — за край карты, в долину пейзажа до горизонта (Game._horizon)
-	print("Streams: ", list, " за ", Time.get_ticks_msec() - t0, " мс")
+	var terrain: Land = g.land
+	_task = WorkerThreadPool.add_task(_apply_streams.bind(terrain), false, "Русла ручьёв")
+	while not WorkerThreadPool.is_task_completed(_task):
+		await tree.process_frame
+	WorkerThreadPool.wait_for_task_completion(_task)
+	_task = -1
+	Streams.set_far(terrain.streams)
+	print("Streams: ", terrain.streams, " за ", Time.get_ticks_msec() - t0, " мс")
+
+
+static func _apply_streams(terrain: Land) -> void:
+	var list := Streams.choose(terrain, terrain.streams_saved)
+	Streams.apply(terrain, list)
 
 
 ## Всё, что встаёт после рощ и лугов: жизнь у ручьёв, мосты, поля с оградами, мельницы, луга в цветах
 static func life(g) -> void:
+	var tree: SceneTree = g.get_tree()
 	_water_life(g)
+	await tree.process_frame
 	_bridges(g)
 	if not on():
 		return
+	await tree.process_frame
 	_stream_banks(g)
+	await tree.process_frame
 	_flow(g)
 	if not gen_low:
+		await tree.process_frame
 		_patches(g)
+		await tree.process_frame
 		_fields(g)
 
 

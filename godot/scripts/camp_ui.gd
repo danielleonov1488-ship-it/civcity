@@ -1,5 +1,8 @@
 class_name CampUI
 extends Control
+
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Форт V3: действия привязаны к участкам, павильоны — временный адаптер.
 
 const Kit = preload("res://scripts/ui_kit_a.gd")
@@ -305,7 +308,17 @@ func toggle() -> void:
 		open()
 
 
+var _opening_serial := 0
+var opening := false
+
+
 func open() -> void:
+	var started := Perf14.begin()
+	_open()
+	Perf14.end(Perf14.FORT_OPEN, started)
+
+
+func _open() -> void:
 	if not lg.v3() or not lg.window_open():
 		hud.notify(lg.lock_text(), "lock")
 		return
@@ -319,7 +332,9 @@ func open() -> void:
 	lg.begin_fort_guide()
 	visible = true
 	move_to_front()
-	_start_diorama()
+	_opening_serial += 1
+	opening = true
+	_open_diorama(_opening_serial)
 	set_process(true)
 	set_process_input(true)
 	_refresh()
@@ -328,6 +343,8 @@ func open() -> void:
 
 
 func close() -> void:
+	_opening_serial += 1
+	opening = false
 	if lu.camp_window != "":
 		lu.close(false)
 	_set_placement("")
@@ -1860,6 +1877,27 @@ func show_chests(reward: Dictionary = {}) -> void:
 
 func _show_soldier(sid: int) -> void:
 	show_dweller(sid)
+
+
+func _open_diorama(serial: int) -> void:
+	var tree := get_tree()
+	var art := {}
+	if USE_3D and use_cutaway and not is_instance_valid(diorama) and DisplayServer.get_name() != "headless":
+		await tree.process_frame
+		if serial != _opening_serial or not visible:
+			return
+		var paths := FortCutaway.opening_art(lg)
+		if ResourceLoader.exists(FortCutaway.ART + "fort/shell_front.png"):
+			art = await CityWarmup.fetch(tree, paths)
+	if serial != _opening_serial or not visible:
+		return
+	var started := Perf14.begin()
+	_start_diorama()
+	_refresh()
+	_layout()
+	opening = false
+	Perf14.end(Perf14.CAMP_BUILD, started)
+	art.clear()
 
 
 func _start_diorama() -> void:

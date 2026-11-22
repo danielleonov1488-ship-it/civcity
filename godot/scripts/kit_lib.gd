@@ -13,6 +13,7 @@ const TEX := "res://assets/kit/tex/"
 
 static var _meta := {}
 static var _scenes := {}
+static var _source_meshes := {}
 static var _meshes := {}             # "файл/узел" → Mesh (с общими материалами)
 static var _mats := {}               # имя → общий материал
 static var _tints := {}              # цвет → штукатурка этого цвета
@@ -145,30 +146,37 @@ static func _mesh(name: String) -> Mesh:
 		return null
 	var file := body.substr(0, cut)
 	var node := body.substr(cut + 1)
-	if not _scenes.has(file):
+	if not _source_meshes.has(file):
 		var path := DIR + file + ".glb"
 		var loading := Perf14.begin()
-		_scenes[file] = load(path) if ResourceLoader.exists(path) else null
+		var scene := load(path) as PackedScene if ResourceLoader.exists(path) else null
 		Perf14.loaded(path, loading)
-	var ps: PackedScene = _scenes[file]
-	if ps == null:
-		_meshes[name] = null
-		return null
-	var inst := ps.instantiate()
-	var found: MeshInstance3D = null
-	for mi: MeshInstance3D in inst.find_children("*", "MeshInstance3D", true, false):
-		if String(mi.name) == node or String(mi.get_parent().name) == node:
-			found = mi
-			break
+		var source := {}
+		if scene:
+			_scenes[file] = scene
+			var inst := scene.instantiate()
+			for mi: MeshInstance3D in inst.find_children("*", "MeshInstance3D", true, false):
+				for label: String in [String(mi.name), String(mi.get_parent().name)]:
+					if not source.has(label):
+						source[label] = mi.mesh
+			inst.free()
+		_source_meshes[file] = source
+	var src_mesh: Mesh = _source_meshes[file].get(node)
 	var out: Mesh = null
-	if found:
-		out = found.mesh.duplicate() as Mesh
+	if src_mesh:
+		var copying := Perf14.begin()
+		out = src_mesh.duplicate() as Mesh
+		Perf14.end(Perf14.MESH_COPY, copying)
 		for s in out.get_surface_count():
 			var src := out.surface_get_material(s)
 			var nm := src.resource_name if src else "CivKit"
 			if lit and nm == "CivKit":
 				nm = "CivKitLit"
 			out.surface_set_material(s, _mat(nm))
-	inst.free()
 	_meshes[name] = out
 	return out
+
+
+static func release_sources() -> void:
+	_source_meshes.clear()
+	_scenes.clear()

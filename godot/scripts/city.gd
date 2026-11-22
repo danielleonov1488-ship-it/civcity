@@ -1234,6 +1234,7 @@ class ComputeFrame:
 	var working_buildings := {}
 	var working_stats: Dictionary
 	var working_goods: Dictionary
+	var deadline := Time.get_ticks_usec() + 4500
 
 	func _init(city: City) -> void:
 		live_buildings = city.buildings
@@ -1254,6 +1255,20 @@ class ComputeFrame:
 		city.buildings = live_buildings
 		city.stats = live_stats
 		city.goods = live_goods
+
+	func slice_due() -> bool:
+		return Time.get_ticks_usec() >= deadline
+
+	func next_frame(city: City, tree: SceneTree, revision: int, terrain: int) -> bool:
+		suspend(city)
+		var waiting := Time.get_ticks_usec()
+		await tree.process_frame
+		city.compute_wait_us += Time.get_ticks_usec() - waiting
+		if revision != city._compute_revision or terrain != city.land.gen:
+			return false
+		resume(city)
+		deadline = Time.get_ticks_usec() + 4500
+		return true
 
 	func publish(city: City) -> void:
 		suspend(city)
@@ -1346,6 +1361,12 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	var stores := []
 	var oc := over_cap()                    # сверх предела уровня — не работают и не берут работников
 	for id in buildings:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				compute(true, instant_homes)
+				return
+			started = Perf13.begin()
 		var b: Dictionary = buildings[id]
 		var d := def(b)
 		match d["kind"]:
@@ -1389,6 +1410,12 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	goods = {}
 	var legacy_supply := {}
 	for id in buildings:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				compute(true, instant_homes)
+				return
+			started = Perf13.begin()
 		var b: Dictionary = buildings[id]
 		var d := def(b)
 		if d["kind"] == "decor" or d["kind"] == "house":
@@ -1412,6 +1439,12 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 		elif d["kind"] == "store" and b["active"]:
 			stores.append(b)
 	for id in buildings:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				compute(true, instant_homes)
+				return
+			started = Perf13.begin()
 		var b: Dictionary = buildings[id]
 		var d := def(b)
 		if d["kind"] == "shop":
@@ -1430,6 +1463,12 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 			monuments.append(b)
 	# лавки обслуживают ближайшие дома в своей дальности, сколько хватит сил
 	for h in houses:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				compute(true, instant_homes)
+				return
+			started = Perf13.begin()
 		h["score"] = {}            # тип лавки → бонус
 		h["needs"] = {}            # вид потребности → true
 		HouseNeeds.reset(h)
@@ -1447,6 +1486,12 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	var want_buildings: Array = buildings.values() if wants_v >= 1 else []
 	var want_grid := _grid(want_buildings) if wants_v >= 1 else {}
 	for s in shops:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				compute(true, instant_homes)
+				return
+			started = Perf13.begin()
 		var d := def(s)
 		var r := shop_range(d)
 		var cap := _shop_capacity(d, s["staff"])
@@ -1473,14 +1518,9 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 		s["near_n"] = near.size()      # сколько домов в её дальности
 	Perf13.end(Perf13.CITY_STAFF, started)
 	if staged != null:
-		staged.suspend(self)
-		var waiting := Time.get_ticks_usec()
-		await tree.process_frame
-		compute_wait_us += Time.get_ticks_usec() - waiting
-		if revision != _compute_revision or terrain != land.gen:
+		if not await staged.next_frame(self, tree, revision, terrain):
 			compute(true, instant_homes)
 			return
-		staged.resume(self)
 	started = Perf13.begin()
 	# Счастье дома: основа, нужные классу лавки, украшения и памятники минус нехватка и теснота.
 	# Старые города сохраняют прежние бонусы; карточка показывает те же happy_parts.
@@ -1517,14 +1557,9 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	for h in houses:
 		if staged != null and Time.get_ticks_usec() - slice_start >= 4500:
 			Perf13.end(Perf13.CITY_HOMES, started)
-			staged.suspend(self)
-			var waiting := Time.get_ticks_usec()
-			await tree.process_frame
-			compute_wait_us += Time.get_ticks_usec() - waiting
-			if revision != _compute_revision or terrain != land.gen:
+			if not await staged.next_frame(self, tree, revision, terrain):
 				compute(true, instant_homes)
 				return
-			staged.resume(self)
 			started = Perf13.begin()
 			slice_start = Time.get_ticks_usec()
 		var cls: String = def(h)["cls"]
@@ -1721,14 +1756,9 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	stats["class_happy"] = per_class
 	Perf13.end(Perf13.CITY_HOMES, started)
 	if staged != null:
-		staged.suspend(self)
-		var waiting := Time.get_ticks_usec()
-		await tree.process_frame
-		compute_wait_us += Time.get_ticks_usec() - waiting
-		if revision != _compute_revision or terrain != land.gen:
+		if not await staged.next_frame(self, tree, revision, terrain):
 			compute(true, instant_homes)
 			return
-		staged.resume(self)
 	started = Perf13.begin()
 	stats["happy_tips"] = _happy_tips(houses, stores, hgrid)
 	Perf13.end(Perf13.CITY_ADVICE, started)

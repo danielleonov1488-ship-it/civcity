@@ -1,6 +1,7 @@
 extends "res://scripts/charpilot_actor.gd"
 ## Внешность противника и набор боевых поз.
 
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const ASSETS := "res://assets/legion_enemies/"
 const BULL := "res://assets/animals/Bull.glb"
 const Boss = preload("res://scripts/legion_boss_model.gd")
@@ -88,7 +89,7 @@ static func portrait_texture(id: String) -> Texture2D:
 	return load(path) as Texture2D if ResourceLoader.exists(path, "Texture2D") else null
 
 
-static func prewarm(waves: Array) -> void:
+static func prewarm(waves: Array, tree: SceneTree) -> void:
 	var warmed := {}
 	for wave: Array in waves:
 		for entry: Dictionary in wave:
@@ -96,6 +97,8 @@ static func prewarm(waves: Array) -> void:
 			if warmed.has(key):
 				continue
 			warmed[key] = true
+			await tree.process_frame
+			var started := Perf14.begin()
 			if BOSSES.has(key):
 				Boss.prewarm(key)
 			elif BEASTS.has(key):
@@ -105,12 +108,19 @@ static func prewarm(waves: Array) -> void:
 				var sex := "_f" if key == "boudicca" else "_m"
 				_kit_file(_body_file(kit[0], sex), ASSETS)
 				for i in 2:
+					Perf14.end(Perf14.BATTLE_OPEN, started)
+					await tree.process_frame
+					started = Perf14.begin()
 					_kit_file("%s_%d%s" % [kit[0], i, sex], ASSETS)
 				for part: String in [kit[1], kit[2], kit[3][0], kit[3][1]]:
 					if not part.is_empty():
+						Perf14.end(Perf14.BATTLE_OPEN, started)
+						await tree.process_frame
+						started = Perf14.begin()
 						_kit_file(part, ASSETS)
 				if kit[0] == "celt" and sex == "_m":
 					_kit_file("moustache", ASSETS)
+			Perf14.end(Perf14.BATTLE_OPEN, started)
 
 
 func build_enemy(key: String, number: int, variant := -1) -> bool:

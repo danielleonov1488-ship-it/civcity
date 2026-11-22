@@ -105,7 +105,37 @@ static func names(prefix: String) -> Array:
 
 ## remap — подмена картинок: {"Stucco_White_01": "Stucco_Orange_01"} перекрашивает штукатурку дома;
 ## remap["tint"] — оттенок (деревья чуть зеленее палитры, ближе к уютной зелени Town to City)
+static func texture_paths(name: String, remap: Dictionary, paths: Dictionary) -> void:
+	var slots: Array = _mesh_slots.get(name, _mesh_slots.get(name + "_LOD0", []))
+	for entry: Array in slots:
+		var slot: String = entry[0]
+		var pair: Array = _slots.get(slot, entry.slice(1))
+		var albedo: String = String(pair[0]).get_basename()
+		var path := _tex_path(String(remap.get(albedo, albedo)))
+		if path != "":
+			paths[path] = true
+		var normal: String = String(pair[1]).get_basename()
+		if not normal.begins_with("PolygonAncientEmpire_") and normal != "":
+			path = _tex_path(normal)
+			if path != "":
+				paths[path] = true
+
+
+static func _material_texture(path: String) -> Texture2D:
+	var started := Perf14.begin()
+	var texture := Gfx.tex(path)
+	Perf14.loaded(path, started)
+	return texture
+
+
 static func material(slot: String, remap := {}) -> Material:
+	var started := Perf14.begin()
+	var value := material_profiled(slot, remap)
+	Perf14.end(Perf14.MATERIAL, started)
+	return value
+
+
+static func material_profiled(slot: String, remap := {}) -> Material:
 	var mkey := slot + "|" + str(remap)
 	if _mats.has(mkey):
 		return _mats[mkey]
@@ -127,14 +157,14 @@ static func material(slot: String, remap := {}) -> Material:
 			m.albedo_color = tints[albedo]
 		var ap := _tex_path(albedo)
 		if ap != "":
-			m.albedo_texture = Gfx.tex(ap)             # на «Очень низкой» — копия поменьше (scripts/gfx.gd)
+			m.albedo_texture = _material_texture(ap)             # на «Очень низкой» — копия поменьше (scripts/gfx.gd)
 		else:
 			unknown["tex:" + albedo] = true
 		# у общей палитры карта рельефа от другого набора — без неё палитра чище (как у Synty)
 		var np := "" if normal.begins_with("PolygonAncientEmpire_") else _tex_path(normal)
 		if np != "":
 			m.normal_enabled = true
-			m.normal_texture = Gfx.tex(np)
+			m.normal_texture = _material_texture(np)
 			m.normal_scale = 0.6
 		# решётки окон: просветы прозрачные — за ними тёмная комната, ночью у жилых домов тёплый свет
 		if albedo.begins_with("Window"):
@@ -220,7 +250,7 @@ static func make(name: String, remap := {}) -> Node3D:
 				var src := mi.mesh.surface_get_material(i)
 				slot = src.resource_name if src else ""
 			var m := material(slot, remap)
-			if m is StandardMaterial3D and (m as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_DISABLED and _two_faced(mi.mesh, i):
+			if m is StandardMaterial3D and (m as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_DISABLED and _two_faced(mi.mesh, i, name + "|" + String(n.get_path_to(mi)) + "|" + str(open_bridge)):
 				m = _cull_back(m as StandardMaterial3D)
 			mi.set_surface_override_material(i, m)
 	return n
@@ -266,11 +296,13 @@ static func _open_bridge_arch(source: Mesh) -> ArrayMesh:
 ## лист, нормалью наружу. Поверхности, где лист один и нормаль по его лицу (Ivy_Flowers_01–03, лоза, ящики цветов),
 ## остаются двусторонними: у них Godot разворачивает нормаль правильно
 static var _faced := {}
-static func _two_faced(mesh: Mesh, s: int) -> bool:
-	var k := "%d|%d" % [mesh.get_instance_id(), s]
+static func _two_faced(mesh: Mesh, s: int, source: String) -> bool:
+	var k := "%s|%d" % [source, s]
 	if _faced.has(k):
 		return _faced[k]
+	var started := Perf14.begin()
 	var ia := mesh.surface_get_arrays(s)
+	Perf14.end(Perf14.MESH_READ, started)
 	var vs: PackedVector3Array = ia[Mesh.ARRAY_VERTEX]
 	var ns: PackedVector3Array = ia[Mesh.ARRAY_NORMAL]
 	var idx: PackedInt32Array = ia[Mesh.ARRAY_INDEX] if ia[Mesh.ARRAY_INDEX] != null else PackedInt32Array()

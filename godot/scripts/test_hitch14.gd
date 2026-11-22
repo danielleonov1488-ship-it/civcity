@@ -16,6 +16,10 @@ var counts := PackedInt64Array([0, 0, 0, 0])
 var active := false
 var before := 0
 var process_ms := 0.0
+var draw_ms := 0.0
+var draw_started := 0
+var phase_counts := {}
+var traces := PackedStringArray()
 var frame_count := 0
 var scenario := ""
 var phase := ""
@@ -28,6 +32,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	Spectacle.warm_crowds = not args.has("cold_crowd")
 	var tag := str(args.get("tag", "before"))
 	report = FileAccess.open(out.path_join("hitch_%s.md" % tag), FileAccess.WRITE)
 	events = FileAccess.open(out.path_join("hitch_%s.jsonl" % tag), FileAccess.WRITE)
@@ -40,6 +45,7 @@ func _run() -> void:
 	_line("Адаптер %s. Длительности по часам, от начала кадра до начала следующего. Таймеры вложены: их нельзя складывать. Счётчики компиляции показывают количество, CPU/GPU рендера — данные последнего доступного кадра. Неизмеренный остаток не приписывается компиляции или загрузке." % RenderingServer.get_video_adapter_name())
 	get_tree().process_frame.connect(_frame)
 	RenderingServer.frame_pre_draw.connect(_before_draw)
+	RenderingServer.frame_post_draw.connect(_after_draw)
 	for q: String in str(args.get("q", "high,low")).split(","):
 		for kind: String in str(args.get("city", "owner,new")).split(","):
 			scenario = "%s/%s" % [kind, q]
@@ -47,11 +53,18 @@ func _run() -> void:
 				_fail("не открыт город " + scenario)
 				continue
 			game.hud.set_speed(0.0)
-			_prepare_sites()
+			if args.has("free_only"):
+				game._set_hour(9.0)
+			else:
+				_prepare_sites()
 			set_view(OWNER_VIEWS if kind == "owner" else NEW_VIEWS, 0)
 			await frames(90)
+			if scenario == "owner/high" and not args.has("cold_crowd"):
+				await _pipeline_replay()
 			_begin()
-			await _actions()
+			if not args.has("free_only"):
+				await _actions()
+			await _free_play()
 			await _finish()
 	events.close()
 	report.close()
@@ -59,12 +72,23 @@ func _run() -> void:
 	get_tree().quit(1 if fails else 0)
 
 
+func _pipeline_replay() -> void:
+	var vp := get_viewport()
+	var before_draw := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW))
+	var before_specialization := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SPECIALIZATION))
+	await Game.CityWarmup._render(game, vp.msaa_3d, vp.screen_space_aa, game.sun.shadow_enabled, true)
+	var draw := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW)) - before_draw
+	var specialization := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SPECIALIZATION)) - before_specialization
+	_line("Повтор прохода после освобождения сеток: draw +%d, specialization +%d." % [draw, specialization])
+
+
 func _begin() -> void:
 	counts.fill(0)
 	top.clear()
 	pending.clear()
-	Timers.usec.resize(Timers.LABELS.size())
-	Timers.usec.fill(0)
+	Timers.reset_frame()
+	phase_counts.clear()
+	traces.clear()
 	CityTimers.usec.resize(CityTimers.LABELS.size())
 	CityTimers.usec.fill(0)
 	Timers.enabled = true
@@ -90,6 +114,7 @@ func _actions() -> void:
 	if not b0.is_empty():
 		game.city.remove(b0, false)
 	await frames(6)
+	await _colosseum_normal()
 	var types: Array[String] = []
 	for key: String in Defs.B:
 		if game.city.city_buildable(key) and not Defs.B[key].get("fixed", false) and key != "center":
@@ -97,6 +122,11 @@ func _actions() -> void:
 	# Одна площадка на тип, затем освобождаем место. Сотни тестовых объектов не остаются в городе.
 	var view_pos := Vector3(62, Land.BASE_Y, 80)
 	for key in types:
+		if args.has("focus") and key not in ["medic", "academy"]:
+			continue
+		if args.has("focus"):
+			_mark("модель " + key)
+			await game._request_preview(key, 0, 0)
 		var had_credit := game.city.wonder_credits.has(key)
 		var original_credit := int(game.city.wonder_credits.get(key, 0))
 		game.city.wonder_credits[key] = 1
@@ -211,6 +241,35 @@ func _actions() -> void:
 	_mark("приближение")
 	set_view(views, 0)
 	await frames(30)
+
+
+func _colosseum_normal() -> void:
+	_mark("Колизей · предварительный просмотр")
+	await game._request_preview("colosseum", 0, 0)
+	game.ghost = Parts.ghost(Catalog.make("colosseum", 0, 0))
+	game.ghost_key = "colosseum:0:0:0:" + str(Vector2i.ZERO)
+	game.add_child(game.ghost)
+	_mark("Колизей · обычная анимация стройки")
+	game.speed = 3.0
+	game.build_anim = true
+	var b := game.city.place("colosseum", Vector2(62, 80), 0.0, 0, 0, true)
+	game.build_anim = false
+	game.speed = 0.0
+	if b.is_empty():
+		_fail("Колизей: стройка не запущена")
+		return
+	var id := int(b["id"])
+	var deadline := Time.get_ticks_msec() + 25000
+	while game._grow_live.has(id) and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	if not game.visuals.has(id) or not game.spectacle.venues.has(id):
+		_fail("Колизей: после стройки нет трибун")
+	game.city.remove(b, false)
+	game._clear_preview_models()
+	await frames(8)
+
+
+func _free_play() -> void:
 	game.can_save = true
 	game.hud.set_speed(3.0)
 	var seconds := float(args.get("seconds", "180"))
@@ -245,7 +304,14 @@ func _pipelines() -> PackedInt64Array:
 
 func _before_draw() -> void:
 	if active:
-		process_ms = (Time.get_ticks_usec() - before) / 1000.0
+		draw_started = Time.get_ticks_usec()
+		process_ms = (draw_started - before) / 1000.0
+
+
+func _after_draw() -> void:
+	if active and draw_started > 0:
+		draw_ms = (Time.get_ticks_usec() - draw_started) / 1000.0
+		draw_started = 0
 
 
 func _frame() -> void:
@@ -255,11 +321,10 @@ func _frame() -> void:
 	var ms := (now - before) / 1000.0
 	var pipes := _pipelines()
 	if ms > LIMITS[0]:
-		var split := {}
-		for i in Timers.LABELS.size():
-			split[Timers.LABELS[i]] = Timers.usec[i] / 1000.0
-		for id in [CityTimers.CITY_STAFF, CityTimers.CITY_HOMES, CityTimers.CITY_ADVICE, CityTimers.FORT, CityTimers.BATTLE]:
-			split[CityTimers.LABELS[id]] = CityTimers.usec[id] / 1000.0
+		var split := Timers.sections()
+		for id in CityTimers.LABELS.size():
+			if CityTimers.usec[id] > 0:
+				split[CityTimers.LABELS[id]] = CityTimers.usec[id] / 1000.0
 		var vp := get_viewport().get_viewport_rid()
 		var extras := {}
 		for sub: SubViewport in game.find_children("*", "SubViewport", true, false):
@@ -269,25 +334,31 @@ func _frame() -> void:
 				extras[str(sub.get_path())] = RenderingServer.viewport_get_measured_render_time_gpu(sub_rid)
 		var row := {"scenario": scenario, "frame": frame_count, "ms": ms, "phase": phase,
 			"actions": pending.duplicate(), "sections_ms": split, "loads_us": Timers.load_paths.duplicate(),
-			"process_ms": process_ms, "hour_total_ms": CityTimers.usec[CityTimers.CITY_HOUR] / 1000.0, "render_cpu_ms": RenderingServer.viewport_get_measured_render_time_cpu(vp),
+			"process_ms": process_ms, "draw_ms": draw_ms, "game_hour": game.hour,
+			"clock_busy": game._clock_busy, "hour_total_ms": CityTimers.usec[CityTimers.CITY_HOUR] / 1000.0, "render_cpu_ms": RenderingServer.viewport_get_measured_render_time_cpu(vp),
 			"gpu_root_ms": RenderingServer.viewport_get_measured_render_time_gpu(vp), "gpu_sub_ms": extras,
 			"pipeline_canvas_mesh_surface_draw_specialization": []}
 		for i in pipes.size():
 			row["pipeline_canvas_mesh_surface_draw_specialization"].append(pipes[i] - pipeline_counts[i])
-		events.store_line(JSON.stringify(row))
+		traces.append(JSON.stringify(row))
 		if top.size() < 10 or float(top[-1]["ms"]) < ms:
 			top.append(row)
 			top.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["ms"] > b["ms"])
 			if top.size() > 10:
 				top.pop_back()
+		var per_phase: PackedInt64Array = phase_counts.get(phase, PackedInt64Array([0, 0, 0, 0]))
 		for i in LIMITS.size():
-			counts[i] += int(ms > LIMITS[i])
+			var hit := int(ms > LIMITS[i])
+			counts[i] += hit
+			per_phase[i] += hit
+		phase_counts[phase] = per_phase
 	frame_count += 1
 	pipeline_counts = pipes
 	pending.clear()
-	Timers.usec.fill(0)
+	Timers.reset_frame()
 	CityTimers.usec.fill(0)
-	Timers.load_paths.clear()
+	draw_ms = 0.0
+	process_ms = 0.0
 	before = Time.get_ticks_usec()
 
 
@@ -296,7 +367,12 @@ func _finish() -> void:
 	active = false
 	Timers.enabled = false
 	CityTimers.enabled = false
+	for event: String in traces:
+		events.store_line(event)
 	events.flush()
+	var free: PackedInt64Array = phase_counts.get("свободная симуляция ×3", PackedInt64Array([0, 0, 0, 0]))
+	_line("")
+	_line("Свободная игра ×3 (%s): %d / %d / %d / %d кадров >25 / >33 / >50 / >100 мс." % [scenario, free[0], free[1], free[2], free[3]])
 	_line("")
 	_line("## %s · %d кадров" % [scenario, frame_count])
 	_line("")

@@ -1,5 +1,7 @@
 class_name GrassCarpet
 extends Node3D
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Трава-ковёр (14.11, владелец: «хочу, чтобы выглядело как в паке Synty вся природа»): на свободной траве вокруг
 ## камеры — густые кустики травы и полевые цветы набора Meadow Forest (на картинке набора земли под травой почти не
 ## видно). Куски по TILE м — по MultiMesh на траву и на цветы (два вызова отрисовки на кусок), без теней, вдали
@@ -179,7 +181,11 @@ func _tile_dist(k: Vector2i, cam: Vector3) -> float:
 func _process(_dt: float) -> void:
 	if radius <= 0.0 or land == null:
 		return
+	if game.spectacle and game.spectacle.crowd_upload_frame == Engine.get_process_frames():
+		return
+	var started := Perf14.begin()
 	step(BUDGET_MS)
+	Perf14.end(Perf14.GRASS, started)
 
 
 ## Куски вокруг камеры: недостающие и поменявшиеся — строить (не дольше ms), дальние — убрать, густота вдали — реже

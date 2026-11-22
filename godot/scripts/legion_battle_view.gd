@@ -1,6 +1,7 @@
 class_name LegionBattleView
 extends Control
 
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Рисованное поле боя. Читает позы и события LegionSim, не меняет состояние боя.
 
@@ -107,6 +108,18 @@ func _ready() -> void:
 	ground.views = views
 	resized.connect(_fit)
 	_fit()
+
+
+static func opening_art(biome: String) -> Dictionary:
+	var paths := {ART + "battle/field_%d.jpg" % int(FIELDS.get(biome, 1)): true}
+	for sheet: String in SILHOUETTE:
+		if not _frames.has(sheet):
+			paths[ART + "chars/%s.png" % sheet] = true
+	for kind: String in ["fx_hit", "fx_heal", "fx_arrow"]:
+		if not _frames.has(kind):
+			paths[ART + "battle/%s.png" % kind] = true
+	paths["res://assets/ui/ai/icons/rock.png"] = true
+	return paths
 
 
 func set_field(biome: String) -> void:
@@ -245,7 +258,8 @@ func prewarm(waves: Array = []) -> void:
 	for kind: String in ["fx_hit", "fx_heal", "fx_arrow"]:
 		_effect_frames(kind)
 	_stone = load("res://assets/ui/ai/icons/rock.png")
-	Enemy.prewarm(waves)
+	await get_tree().process_frame
+	await Enemy.prewarm(waves, get_tree())
 
 
 func add_unit(u: LegionSim.Unit) -> Fighter:
@@ -1232,6 +1246,21 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 			f.frame = mini(3, int(k * 4.0))
 			f.position = f.origin.lerp(f.target, k) - Vector2(0, sin(k * PI) * 70.0)
 	ground.tick(gdt)
+
+
+func clear_visible() -> void:
+	var started := Perf14.begin()
+	var deadline := Time.get_ticks_usec() + 3500
+	for root: Node2D in [units, effects]:
+		for child: Node in root.get_children():
+			root.remove_child(child)
+			child.queue_free()
+			if Time.get_ticks_usec() >= deadline:
+				Perf14.end(Perf14.BATTLE_CLOSE, started)
+				await get_tree().process_frame
+				started = Perf14.begin()
+				deadline = Time.get_ticks_usec() + 3500
+	Perf14.end(Perf14.BATTLE_CLOSE, started)
 
 
 func clear() -> void:

@@ -45,6 +45,11 @@ func _run() -> void:
 	Engine.max_fps = CAP
 	game.hud.set_speed(0.0)
 	await _city_views("Город владельца", OWNER_VIEWS)
+	if args.has("owner_only"):
+		report.close()
+		print("BUDGET14 DONE ", file)
+		get_tree().quit()
+		return
 	if not await boot_city("new", "high", false):
 		print("BUDGET14 FAIL новый город не открыт")
 		get_tree().quit(1)
@@ -85,7 +90,7 @@ func _city_views(scenario: String, views: Array) -> void:
 	for q: String in QUALITIES:
 		set_quality(q)
 		Engine.max_fps = CAP
-		for index in VIEWS.size():
+		for index in (1 if args.has("center_only") else VIEWS.size()):
 			set_view(views, index)
 			var result := await _sample()
 			_row(scenario, q, VIEWS[index], result)
@@ -97,8 +102,10 @@ func _battle_views() -> void:
 		Engine.max_fps = CAP
 		var battle := open_battle(true)
 		battle.set_process(false)
-		await frames(10)
-		if battle.sim == null:
+		var deadline := Time.get_ticks_msec() + 15000
+		while (battle.sim == null or battle.phase != "intro") and Time.get_ticks_msec() < deadline:
+			await frames(1)
+		if battle.sim == null or battle.phase != "intro":
 			failed = true
 			print("BUDGET14 FAIL нет симуляции боя ", q)
 			battle.abort()

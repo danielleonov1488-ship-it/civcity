@@ -356,12 +356,10 @@ static func small_textures(on: bool) -> void:
 					_queue.append([m, p])
 		elif m is ShaderMaterial and (m as ShaderMaterial).get_shader_parameter("albedo_tex") is Texture2D:
 			_queue.append([m, "albedo_tex"])
-	# всё, что понадобится, — сразу в фон (параллельно), а меняем по порядку, по мере готовности
+	# Оригиналы запрашиваем сразу. Копии запускает очередь, когда до них доходит.
 	for e: Array in _queue:
 		var t := _tex_get(e[0], e[1])
-		if on and t is CompressedTexture2D and t.resource_path != "" and t.get_width() >= SMALL_FROM:
-			_start(t.resource_path)
-		elif not on and t.has_meta("orig"):
+		if not on and t.has_meta("orig"):
 			var o := str(t.get_meta("orig"))
 			if not _req.has(o) and not ResourceLoader.has_cached(o) and ResourceLoader.load_threaded_request(o) == OK:
 				_req[o] = true
@@ -428,6 +426,8 @@ static func _next(t: Texture2D, sync: bool):
 		var key := t.resource_path
 		if _small.has(key):
 			return _small[key]
+		if not sync and not _jobs.has(key):
+			_start(key)
 		if _jobs.has(key):
 			if not sync and not WorkerThreadPool.is_task_completed(_jobs[key]):
 				return false
@@ -748,6 +748,10 @@ static func _cache_file(path: String, ctex: String) -> String:
 ## Папка копий: своя на каждую сборку (как hud._icon_dir), старые удаляются
 static func _tex_dir() -> String:
 	if _tdir != "":
+		return _tdir
+	if OS.get_environment("CIVCITY_TESTWIN") == "hidden":
+		_tdir = GamePaths.save_dir().path_join("tex2k")
+		DirAccess.make_dir_recursive_absolute(_tdir)
 		return _tdir
 	var key := "t1"
 	if not OS.has_feature("editor"):
@@ -1180,6 +1184,8 @@ static func settings_block(h, v: VBoxContainer, more: VBoxContainer = null) -> v
 		b.name = "q_" + key
 		b.add_theme_font_size_override("font_size", 16)
 		b.pressed.connect(func():
+			if h.game.settings["quality"] != key:
+				h.game.fade_quality()
 			h.game.settings["quality"] = key
 			h.game.settings["quality_user"] = true            # ручной выбор — больше ничего само не меняет
 			h.game.save_settings()

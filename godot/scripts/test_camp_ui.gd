@@ -23,6 +23,13 @@ func frames(n: int) -> void:
 		await get_tree().process_frame
 
 
+func ready_fort() -> bool:
+	var deadline := Time.get_ticks_msec() + 8000
+	while camp.opening and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	return check(camp.visible and not camp.opening and is_instance_valid(camp.diorama), "fort room controls ready")
+
+
 func check(ok: bool, message: String) -> bool:
 	if not ok:
 		push_error("CAMPUI FAIL " + message)
@@ -87,7 +94,7 @@ func _run() -> void:
 	if not check(camp != null, "HUD camp attached"):
 		return
 	camp.open()
-	if not check(camp.visible and camp.top_button.visible, "camp opened"):
+	if not await ready_fort() or not check(camp.top_button.visible, "camp opened"):
 		return
 	if not await shot("1_camp"):
 		return
@@ -108,6 +115,13 @@ func _run() -> void:
 		return
 	camp.show_building("forge")
 	if not await shot("5_forge_card"):
+		return
+	camp.close()
+	await frames(2)
+	camp.open()
+	if not await ready_fort():
+		return
+	if not await shot("6_fort_reopened"):
 		return
 	print("CAMPUI DONE")
 	get_tree().quit()

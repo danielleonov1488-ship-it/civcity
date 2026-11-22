@@ -1,6 +1,7 @@
 class_name Hud
 extends CanvasLayer
 
+const CityWarmup = preload("res://scripts/city_warmup.gd")
 const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Интерфейс в римском духе — рисованный набор владельца (assets/ui/ai): резные рамки с меандром, свитки
 ## с валиками, бронзовые медальоны с цветными иконками, табличка с орлом и лентой названия города. Устроен как в Town to City:
@@ -285,7 +286,10 @@ func _ready() -> void:
 ## Размер интерфейса из настроек, но не крупнее, чем помещается по ширине окна (MIN_W логических точек):
 ## иначе нижние полосы и кнопки наверху наезжают друг на друга
 func apply_scale(s: float) -> void:
-	get_window().content_scale_factor = clampf(s, 0.7, ui_cap())
+	var scale := clampf(s, 0.7, ui_cap())
+	if is_equal_approx(get_window().content_scale_factor, scale):
+		return
+	get_window().content_scale_factor = scale
 	var ws := Vector2(get_window().size)
 	if ws.x >= 64.0 and ws.y >= 64.0:
 		_fit_bottom.call_deferred()           # экран в точках стал уже — полосы внизу подогнать
@@ -1852,6 +1856,7 @@ func _close_windows() -> void:
 
 ## Свиток стройки и карточка постройки не открыты вместе (как в Town to City): одно прячет другое
 func _close_tray() -> void:
+	_drop_category_models()
 	if tray and tray.visible:
 		open_cat = ""
 		tray.visible = false
@@ -2969,6 +2974,7 @@ func _fit_bottom() -> void:
 
 func _toggle_cat(cid: String) -> void:
 	if open_cat == cid and tray.visible:
+		_drop_category_models()
 		open_cat = ""
 		tray.visible = false
 		_refresh_cat_buttons()
@@ -3161,6 +3167,12 @@ func _decor_list() -> Array:
 
 
 func _fill_cards() -> void:
+	var started := Perf14.begin()
+	_fill_cards_profiled()
+	Perf14.end(Perf14.UI, started)
+
+
+func _fill_cards_profiled() -> void:
 	_sync_build_tabs()
 	for ch in tray_grid.get_children():
 		tray_grid.remove_child(ch)
@@ -3194,6 +3206,8 @@ func _fill_cards() -> void:
 					if ds[0] == open_dsub:
 						tray_title.text += " · " + String(ds[1])
 	var list := _decor_list() if open_cat == "decor" else _types_in(open_cat, open_ssub if open_cat == "special" else open_sub)
+	if tray.visible and game.ready_done:
+		_warm_category(list)
 	if list.is_empty() and open_cat == "decor":
 		var em := _label({"fav": "Здесь будут украшения со звёздочкой ★ — правая кнопка мыши по карточке.",
 			"recent": "Здесь будут украшения, что вы ставили последними.", "search": "Ничего не нашлось — попробуйте другое слово."}.get(decor_mode, "Здесь пока пусто."), 16, true, C_SOFT)
@@ -4065,6 +4079,12 @@ func _card_or_cat(cat: String, type: String) -> Control:
 
 
 func _process(_dt: float) -> void:
+	var started := Perf14.begin()
+	_process_timed(_dt)
+	Perf14.end(Perf14.HUD, started)
+
+
+func _process_timed(_dt: float) -> void:
 	var city_visible: bool = game == null or not game.legion_city_hidden()
 	if not _ptr_shown.is_empty() and Time.get_ticks_msec() >= int(_ptr_shown["until"]):
 		_ptr_shown = {}
@@ -7588,6 +7608,12 @@ func _set_lang(l: String) -> void:
 
 
 func _open_settings(stay := false) -> void:
+	var started := Perf14.begin()
+	_open_settings_profiled(stay)
+	Perf14.end(Perf14.SETTINGS, started)
+
+
+func _open_settings_profiled(stay := false) -> void:
 	_settings_more_refresh()
 	var adv := settings_panel.find_child("adv", true, false) as CheckBox
 	if adv != null:
@@ -8497,7 +8523,8 @@ func toggle_pause() -> void:
 
 func set_speed(s: float) -> void:
 	game.speed = s
-	refresh()
+	for sb in speed_btns:
+		_set_on(sb[0], is_equal_approx(s, sb[1]))
 
 
 # ---------- значки над постройками (нет работников, нет склада, ждут жильё) ----------
@@ -9024,7 +9051,41 @@ func _menu_go(m: String) -> void:
 
 # ---------- картинки построек для карточек ----------
 
+var _category_serial := 0
+var _category_models := {}
 var icons_loading := false
+
+
+func _warm_category(types: Array) -> void:
+	_drop_category_models()
+	var serial := _category_serial
+	var tree := get_tree()
+	var seen := {}
+	for type: String in types:
+		if serial != _category_serial or not tray.visible:
+			return
+		var tier := 1 if Defs.B[type]["kind"] == "house" else 0
+		var paths := {}
+		CityWarmup.models(Catalog.make(type, tier), paths, true)
+		for path: String in paths.keys():
+			if seen.has(path):
+				paths.erase(path)
+			else:
+				seen[path] = true
+		if paths.is_empty():
+			continue
+		var models := await CityWarmup.fetch(tree, paths)
+		if serial != _category_serial or not tray.visible:
+			return
+		_category_models.merge(models, true)
+		while _category_models.size() > 12:
+			_category_models.erase(_category_models.keys()[0])
+
+
+func _drop_category_models() -> void:
+	_category_serial += 1
+	_category_models.clear()
+
 
 
 func _make_icons() -> void:
@@ -9090,7 +9151,13 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 	var col := 0
 	var idir := _icon_dir()
 	var drawn := 0
+	var deadline := Time.get_ticks_usec() + 4000
 	for type in Defs.B:
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			if not _icons_alive(vp):
+				return
+			deadline = Time.get_ticks_usec() + 4000
 		var d: Dictionary = Defs.B[type]
 		if bool(d.get("hidden", false)):
 			continue
@@ -9108,7 +9175,24 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 				_refresh_building_pictures(type)
 				continue
 		drawn += 1
+		var paths := {}
+		CityWarmup.models(bp, paths)
+		var models := await CityWarmup.fetch(get_tree(), paths)
+		if not _icons_alive(vp):
+			return
+		var kit_before := KitLib._meshes.size()
+		var special_before := Parts._special.size()
+		var art_before := Artisau._cache.size()
+		var materials_before := Synty._mats.size()
+		var seasonal_before := Synty.season_mats.size()
 		var g := Parts.ghost(bp, "outline", Color(0, 0, 0, 0))
+		# Модели значка живут до снимка. Сохраняем только сетки и материалы города.
+		for name: String in KitLib._meshes.keys().slice(kit_before):
+			KitLib._meshes.erase(name)
+		for name: String in Synty._mats.keys().slice(materials_before):
+			if not name.begins_with("meadow|"):
+				Synty._mats.erase(name)
+		Synty.season_mats.resize(seasonal_before)
 		for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
 			gi.material_override = null
 		# тёмная плашка под землёй (ровняет землю под клумбой, лужком, перголой) — на картинке не нужна
@@ -9117,6 +9201,10 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 				g.remove_child(ch)
 				ch.free()
 		add_pets(g, type)                         # корова, лошадь, кошки приюта — и на картинке карточки
+		for name: String in Parts._special.keys().slice(special_before):
+			Parts._special.erase(name)
+		for name: String in Artisau._cache.keys().slice(art_before):
+			Artisau._cache.erase(name)
 		holder.add_child(g)
 		var box := Artisau.aabb(g)
 		var c := box.get_center()
@@ -9139,6 +9227,7 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		_refresh_building_pictures(type)
 		img.save_png(path)
 		g.queue_free()
+		models.clear()
 		await get_tree().process_frame
 		if not _icons_alive(vp):
 			return

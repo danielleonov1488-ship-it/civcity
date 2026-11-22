@@ -55,6 +55,7 @@ var plot_signs := {}
 var plot_fill: MeshInstance3D            # подсветка участка под курсором (его можно купить)
 var plot_fill_key := Vector2i(-1, -1)
 var night_lights: Array[OmniLight3D] = []
+var _lamp_strength := 0.0
 var actors_root: Node3D
 var swimmers := []                    # утки и лебеди на прудах
 var _actor_speed := 1.0
@@ -96,6 +97,7 @@ var _clock_busy := false
 var _clock_commit_frame := -1
 var _actors_due := false
 var _place_refresh_frame := -1
+var _terrain_task := -1
 var _autosave_task := -1
 var _save_gen := 0                    # номер сохранения: автосохранение по кадрам не пишет поверх более нового
 var settings := {"fullscreen": false, "quality": "high", "ui_scale": 1.0, "autosave": true, "music": 0.55, "sfx": 0.7}
@@ -311,11 +313,14 @@ func _ready() -> void:
 	_environment()
 	_grading()
 	_loading_show()
-	if mode in ["menu", "new", "play"] and DisplayServer.get_name() != "headless":
-		await get_tree().process_frame
-		await CityWarmup.prepare(get_tree())
+	var terrain: Array[Land] = []
+	_terrain_task = WorkerThreadPool.add_task(_make_land.bind(terrain), true, "Генерация земли")
 	await _step("Земля и холмы", 0.05)
-	land = Land.new()
+	while not WorkerThreadPool.is_task_completed(_terrain_task):
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(_terrain_task)
+	_terrain_task = -1
+	land = terrain[0]
 	MeadowNature.prepare(land)                # ложбины ручьёв считаются в фоне, пока грузится город
 	city = City.new(land)
 	city.want_nature = _want_nature_near
@@ -388,9 +393,9 @@ func _ready() -> void:
 	await _step("Город", 0.25)
 	var loaded := false
 	if mode == "play":
-		loaded = _load()
+		loaded = await _load()
 	elif not visiting.is_empty():
-		loaded = _load(String(visiting["path"]))   # в гостях: город друга (не сохраняется — режим demo)
+		loaded = await _load(String(visiting["path"]))   # в гостях: город друга (не сохраняется — режим demo)
 	if not loaded:
 		city.tips["v22_pace"] = true             # новая игра — сразу по новым правилам, объяснять перемены не нужно
 		if mode in ["play", "new"]:
@@ -419,12 +424,15 @@ func _ready() -> void:
 	await _step("Леса и луга", 0.35)
 	if not loaded:
 		land.meadow_new = true                # новая карта лугов: мельницы и водяное колесо на окраинах (13.11)
-	MeadowNature.streams(self)                # ручьи — только где свободно (старые города) или все (новая игра): scripts/streams.gd
-	_horizon()                                # пейзаж до горизонта — после ручьёв: река приходит из-за горизонта (Streams.far_carve)
-	_nature()
+	await get_tree().process_frame
+	await MeadowNature.streams(self)                # ручьи — только где свободно (старые города) или все (новая игра): scripts/streams.gd
+	await get_tree().process_frame
+	await _horizon()                                # пейзаж до горизонта — после ручьёв: река приходит из-за горизонта (Streams.far_carve)
+	await _nature(true)
 	_nature_arches()
 	_ponds_life()
-	MeadowNature.life(self)                   # у ручьёв, мосты, луга в цветах, поля с оградами, мельницы (scripts/meadow_nature.gd)
+	await get_tree().process_frame
+	await MeadowNature.life(self)                   # у ручьёв, мосты, луга в цветах, поля с оградами, мельницы (scripts/meadow_nature.gd)
 	_cliff_rocks()
 	surf_img = land.make_surface()
 	surf_img.generate_mipmaps()
@@ -446,14 +454,14 @@ func _ready() -> void:
 	for ch: Vector2i in order:
 		_build_chunk(ch)
 		built += 1
-		if built % 16 == 0:
+		if built % 4 == 0:
 			await _step("Рисуем землю", 0.4 + 0.45 * built / total)
 	grass = GrassCarpet.new()                 # трава-ковёр вокруг камеры (14.11): куски строятся понемногу каждый кадр
 	add_child(grass)
 	grass.setup(self)
 	await _step("Жители", 0.9)
 	_hero_check()                             # свой герой (Д11): в своей игре он есть всегда (старый город — случайный, пока игрок не создаст)
-	people.setup(land, city, self)
+	await people.setup(land, city, self)
 	rig = CameraRig.new()
 	add_child(rig)
 	rig.land = land
@@ -523,6 +531,8 @@ func _ready() -> void:
 		while hud.icons_loading:
 			await get_tree().process_frame
 		await CityWarmup.render_effects(self)
+		await PersonCard.prewarm(hud)
+	CityWarmup.release_sources()
 	ready_done = true
 	_loading_hide()
 	if args.has("noui"):
@@ -552,6 +562,10 @@ func _ready() -> void:
 	LegionNet.me().attach_city()              # бои с городами по сети: отряд обороны на сервер, отчёты о нападениях; имя города с сервера (scripts/legion_net.gd)
 	QaDrive.attach(self)                      # автопроверка собранной игры, только с аргументом --qa=… (scripts/qa_drive.gd)
 	_hero_offer(loaded)                       # экран «Ваш герой»: начало новой игры, старый город — один раз (Д11)
+
+
+static func _make_land(result: Array[Land]) -> void:
+	result.append(Land.new())
 
 
 func _step(text: String, k: float) -> void:
@@ -669,8 +683,15 @@ func _load_settings() -> void:
 
 ## Окно на весь экран (или развёрнуто); окно автопроверки (gpu_run.sh: CIVCITY_TESTWIN=hidden) — 1920×1080
 ## за краем всех экранов: не мелькает перед владельцем, а его мышь не попадает в окно и не мешает проверкам
+var _test_window_placed := false
+var _applied_quality := ""
+
+
 func _window_mode() -> void:
 	if OS.get_environment("CIVCITY_TESTWIN") == "hidden":
+		if _test_window_placed:
+			return
+		_test_window_placed = true
 		var left := 0
 		for i in DisplayServer.get_screen_count():
 			left = mini(left, DisplayServer.screen_get_position(i).x)
@@ -678,7 +699,29 @@ func _window_mode() -> void:
 		DisplayServer.window_set_size(Vector2i(1920, 1080))
 		DisplayServer.window_set_position(Vector2i(left - 1920 - 400, 0))
 		return
-	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if settings["fullscreen"] else DisplayServer.WINDOW_MODE_MAXIMIZED)
+	var target := DisplayServer.WINDOW_MODE_FULLSCREEN if settings["fullscreen"] else DisplayServer.WINDOW_MODE_MAXIMIZED
+	if DisplayServer.window_get_mode() != target:
+		DisplayServer.window_set_mode(target)
+
+
+var _quality_fade: CanvasLayer
+
+
+func fade_quality() -> void:
+	if is_instance_valid(_quality_fade):
+		_quality_fade.queue_free()
+	_quality_fade = CanvasLayer.new()
+	_quality_fade.layer = 49
+	add_child(_quality_fade)
+	var panel := ColorRect.new()
+	panel.color = Color("352a21")
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_quality_fade.add_child(panel)
+	var tween := _quality_fade.create_tween()
+	tween.tween_interval(0.04)
+	tween.tween_property(panel, "modulate:a", 0.0, 0.18)
+	tween.tween_callback(_quality_fade.queue_free)
 
 
 func save_settings() -> void:
@@ -690,7 +733,10 @@ func save_settings() -> void:
 
 func apply_settings() -> void:
 	_window_mode()
-	_apply_quality()
+	if _applied_quality != str(settings.get("quality", "high")):
+		_apply_quality()
+	elif shot_path == "":
+		Engine.max_fps = Gfx.fps_cap(settings)
 	if hud:
 		hud.apply_scale(float(settings["ui_scale"]))
 	if gfx:
@@ -699,7 +745,14 @@ func apply_settings() -> void:
 
 ## Уровни графики «Высокая / Средняя / Низкая / Очень низкая» — scripts/gfx.gd (Средняя и Высокая — как были)
 func _apply_quality() -> void:
+	var started := Perf14.begin()
+	_apply_quality_profiled()
+	Perf14.end(Perf14.QUALITY, started)
+
+
+func _apply_quality_profiled() -> void:
 	Gfx.apply(self)
+	_applied_quality = str(settings.get("quality", "high"))
 
 
 # ---------- небо, солнце, свет, цвет ----------
@@ -781,6 +834,12 @@ func _grading() -> void:
 ## сбоку; долгое золотое утро и вечер, короткая сиреневая ночь, при которой всё видно; фонари и окна
 ## загораются постепенно в сумерках. Цвет кадра — тёплые света и прохладные тени (grade.gdshader).
 func _set_hour(h: float) -> void:
+	var started := Perf14.begin()
+	_set_hour_profiled(h)
+	Perf14.end(Perf14.SKY, started)
+
+
+func _set_hour_profiled(h: float) -> void:
 	hour = fposmod(h, 24.0)
 	var lh := look_hour if look_hour >= 0.0 else hour   # свет: часы игры или час ролика
 	# день: 0 — ночь, 1 — полный день; рассвет 4.6–7.2, закат 18.6–21.6
@@ -842,6 +901,7 @@ func _set_hour(h: float) -> void:
 	# окна и фонари: разгораются в сумерках. Окна домов и лавок — еле тёплый огонёк, как от спички
 	# (улицу освещают фонари и жаровни, а не дома); к полуночи и он почти гаснет
 	var lamp := 1.0 - smoothstep(0.15, 0.7, day)
+	_lamp_strength = lamp
 	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
 	if lm:
 		lm.emission_energy_multiplier = lamp * (0.018 if lh > 23.0 or lh < 4.0 else 0.045)
@@ -917,6 +977,7 @@ func far_y(x: float, z: float) -> float:
 ## как на карте, дальше холмы и горы в дымке; большая дорога уходит на север за горизонт. Сетка мельче у края
 ## карты (4 м) и у дороги (1 м поперёк, 2 м вдоль), дальше — 16 м. По краю карты — юбка вниз (щелей нет).
 func _horizon() -> void:
+	var deadline := Time.get_ticks_usec() + 5000
 	var S := Land.SIZE
 	var R := 1600.0
 	var lo := S / 2.0 - R
@@ -950,6 +1011,9 @@ func _horizon() -> void:
 	var nz := far_zs.size()
 	far_hy.resize(nx * nz)
 	for j in nz:
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
 		for i in nx:
 			far_hy[j * nx + i] = land.far_height(far_xs[i], far_zs[j])
 	var fz := FastNoiseLite.new()
@@ -972,6 +1036,9 @@ func _horizon() -> void:
 	cols.resize(nx * nz)
 	uvs.resize(nx * nz)
 	for j in nz:
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
 		for i in nx:
 			var k := j * nx + i
 			var x := far_xs[i]
@@ -992,6 +1059,9 @@ func _horizon() -> void:
 			uvs[k] = Vector2(8.0, y)
 	var ix := PackedInt32Array()
 	for j in nz - 1:
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
 		for i in nx - 1:
 			var cx := (far_xs[i] + far_xs[i + 1]) * 0.5
 			var cz := (far_zs[j] + far_zs[j + 1]) * 0.5
@@ -1048,12 +1118,15 @@ func _horizon() -> void:
 		rb.material_override = rm
 		rb.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(rb)
-	_far_nature()
+	await _far_nature()
 	# дальние леса: деревья пятнами (без теней — далеко)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 4
 	var batches := {}
 	for k in 16000:
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
 		var p := Vector2(rng.randf_range(-640.0, S + 640.0), rng.randf_range(-640.0, S + 640.0))
 		var dx := maxf(maxf(-p.x, p.x - S), 0.0)
 		var dz := maxf(maxf(-p.y, p.y - S), 0.0)
@@ -1072,12 +1145,13 @@ func _horizon() -> void:
 		if not batches.has(key):
 			batches[key] = {"name": nm, "list": [], "shadow": false, "range": 0.0}
 		batches[key]["list"].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.45, 0.8)), Vector3(p.x, y - 0.3, p.y)))
-	far_forest = _batch_mm(batches)
+	far_forest = await _batch_mm(batches)
 
 
 ## Природа за краем карты вблизи (до 110 м): те же рощи (тот же шум лесов, что в _nature), одиночные деревья,
 ## кусты, цветы, трава и камешки той же густоты — край карты не виден по природе. Их нельзя снести: там не наша земля
 func _far_nature() -> void:
+	var deadline := Time.get_ticks_usec() + 5000
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 6
 	var fn := FastNoiseLite.new()
@@ -1088,6 +1162,9 @@ func _far_nature() -> void:
 	var n := int((S + 2.0 * B) * (S + 2.0 * B) * 52000.0 / (S * S))
 	var batches := {}
 	for k in n:
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
 		var x := rng.randf_range(-B, S + B)
 		var z := rng.randf_range(-B, S + B)
 		var r := rng.randf()
@@ -1140,14 +1217,18 @@ func _far_nature() -> void:
 		if not batches.has(key):
 			batches[key] = {"name": name, "list": [], "shadow": not small, "range": 150.0 if small else 0.0}
 		batches[key]["list"].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(x, y, z)))
-	far_near = _batch_mm(batches)
+	far_near = await _batch_mm(batches)
 
 
 ## Много одинаковых деталей одним MultiMesh на кусок: batches[ключ] = {name, list: [Transform3D], shadow, range}; → узлы
 func _batch_mm(batches: Dictionary) -> Array:
 	var made := []
 	var srcs := {}
+	var deadline := Time.get_ticks_usec() + 5000
 	for key in batches:
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
 		var bt: Dictionary = batches[key]
 		var nm: String = bt["name"]
 		if not srcs.has(nm):
@@ -1321,7 +1402,8 @@ func _light(at: Vector3, k := 1.0) -> OmniLight3D:
 	l.light_color = Color("ffb366")
 	l.omni_range = 4.6
 	l.omni_attenuation = 1.4
-	l.light_energy = 1.4
+	l.visible = _lamp_strength * k > 0.02
+	l.light_energy = _lamp_strength * k * (2.6 if k >= 1.0 else 1.6)
 	l.shadow_enabled = false
 	add_child(l)
 	night_lights.append(l)
@@ -1329,13 +1411,17 @@ func _light(at: Vector3, k := 1.0) -> OmniLight3D:
 
 
 ## Рощи пятнами, луга с цветами и травой, кусты. Каждое дерево и камень — отдельные: их можно снести или перенести
-func _nature() -> void:
+func _nature(sliced := false) -> void:
+	var deadline := Time.get_ticks_usec() + 5000
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5
 	var fn := FastNoiseLite.new()
 	fn.seed = 77
 	fn.frequency = 0.02
 	for n in 52000:
+		if sliced and n % 64 == 0 and Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
 		var x := rng.randf_range(1.0, Land.SIZE - 1.0)
 		var z := rng.randf_range(1.0, Land.SIZE - 1.0)
 		var p := Vector2(x, z)
@@ -1672,13 +1758,12 @@ func _rebuild_land(limit := 6, busy := false) -> void:
 			Perf14.end(Perf14.LAND_MESH, mesh_started)
 			n += 1
 	if people and people.land and not stroke_on and not land.dirty_walk.is_empty():
-		var walk := []
-		for ch in land.dirty_walk.keys():
-			walk.append(ch)
+		var deadline := Time.get_ticks_usec() + 3500
+		for ch in land.dirty_walk.keys().slice(0, 3):
 			land.dirty_walk.erase(ch)
-			if walk.size() >= 3:
-				break                             # сетка ходьбы — по 3 куска за кадр
-		people.refresh(walk)
+			people.refresh([ch])
+			if Time.get_ticks_usec() >= deadline:
+				break
 
 
 # ---------- постройки: картинка ----------
@@ -1717,13 +1802,32 @@ var _grows := 0
 var _grow_live := {}                  # id стройки → [tween, призрак, леса] — снесли или отменили, пока растёт: убрать сразу
 
 func _grow_anim(b: Dictionary) -> void:
+	var started := Perf14.begin()
+	_grow_anim_profiled(b)
+	Perf14.end(Perf14.CITY_GROW, started)
+
+
+func _grow_anim_profiled(b: Dictionary) -> void:
 	var bp := city.blueprint(b)
-	var g := Parts.ghost(bp, "place", GROW_TINT)
+	var key := "%s:%d:%d:%d:%s" % [b["type"], b["tier"], b["variant"], b["color"], City.field_size(b)]
+	var g: Node3D
+	if is_instance_valid(ghost) and ghost_key == key:
+		g = ghost
+		ghost = null
+		ghost_key = ""
+		g.visible = true
+		Parts.ghost_color(g, GROW_TINT)
+		var tint := g.get_meta("mat", null) as ShaderMaterial
+		if tint:
+			tint.next_pass = null
+	else:
+		g = Parts.ghost(bp, "place", GROW_TINT)
 	if spectacle:
 		spectacle.prepare_layout(b, g)
 	var xf := city.xf(b)
 	g.transform = xf
-	add_child(g)
+	if g.get_parent() == null:
+		add_child(g)
 	var id: int = b["id"]
 	var full: bool = _grows < GROW_MAX and city.def(b)["kind"] != "farm"
 	var dur := clampf(GROW_T / maxf(1.0, speed), GROW_MIN, GROW_T) if full else GROW_SHORT
@@ -1740,22 +1844,30 @@ func _grow_anim(b: Dictionary) -> void:
 		g.scale = Vector3(1.0, 0.04, 1.0)
 		tw.tween_property(g, "scale", Vector3(1.0, 1.06, 1.0), dur).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		tw.tween_property(g, "scale", Vector3.ONE, 0.18)
-	tw.tween_callback(func():
-		if (_grow_live.get(id, [null]) as Array)[0] == tw:
-			_grow_live.erase(id)
-		g.queue_free()
-		if scaf:
-			scaf.queue_free()
-			_grows -= 1
-		if city.buildings.has(id):
-			_show(city.buildings[id])
-			_puff(Vector3(b["pos"].x, float(b["y"]) + 0.3, b["pos"].y), Color("efe3c8")))
+	tw.tween_callback(_finish_grow.bind(id, tw))
 	# пыль — всю стройку, у подножия, по всему следу
 	var bb: Array = _bounds(bp)
 	var puffs := int(dur / 0.8) if full else 3
 	for k in puffs:
 		var at := xf * Vector3(randf_range(float(bb[0]), float(bb[1])), 0.2, randf_range(float(bb[2]), float(bb[3])))
 		get_tree().create_timer(dur / puffs * k).timeout.connect(func(): _puff(at, Color("e8dcc4")))
+
+
+func _finish_grow(id: int, tween: Tween) -> void:
+	while city.buildings.has(id) and spectacle.layout_pending(city.buildings[id]):
+		await get_tree().process_frame
+	var entry: Array = _grow_live.get(id, [])
+	if entry.is_empty() or entry[0] != tween:
+		return
+	_grow_live.erase(id)
+	(entry[1] as Node3D).queue_free()
+	if entry[2]:
+		(entry[2] as Node3D).queue_free()
+		_grows -= 1
+	if city.buildings.has(id):
+		var b: Dictionary = city.buildings[id]
+		_show(b)
+		_puff(Vector3(b["pos"].x, float(b["y"]) + 0.3, b["pos"].y), Color("efe3c8"))
 
 
 ## Порядок стройки «по кирпичику» (владелец 11.11): стены сначала кладутся из кирпичей — ряд за рядом, кирпич за
@@ -2159,7 +2271,6 @@ func _show(b: Dictionary) -> void:
 	_sync_actors(b)
 	if spectacle and Spectacle.is_venue(b["type"]):
 		spectacle.venue_show(b)               # трибуны и арена: зрители, гладиаторы, колесницы
-	_set_hour(hour)
 
 
 func _hide(b: Dictionary) -> void:
@@ -2396,8 +2507,37 @@ func _sync_actors(b: Dictionary) -> void:
 
 
 func _sync_all_actors() -> void:
+	var started := Perf14.begin()
+	_sync_all_actors_profiled()
+	Perf14.end(Perf14.ACTORS, started)
+
+
+func _sync_all_actors_profiled() -> void:
 	for id in city.buildings:
 		_sync_actors(city.buildings[id])
+
+
+var _actor_sync_ids := []
+var _actor_sync_at := 0
+
+
+func _step_actor_sync() -> void:
+	var started := Perf14.begin()
+	if _actor_sync_ids.is_empty():
+		_actor_sync_ids = city.buildings.keys()
+		_actor_sync_at = 0
+		_actors_due = false
+	var deadline := Time.get_ticks_usec() + 4000
+	while _actor_sync_at < _actor_sync_ids.size():
+		var id: int = _actor_sync_ids[_actor_sync_at]
+		_actor_sync_at += 1
+		if city.buildings.has(id):
+			_sync_actors(city.buildings[id])
+		if Time.get_ticks_usec() >= deadline:
+			break
+	if _actor_sync_at >= _actor_sync_ids.size():
+		_actor_sync_ids.clear()
+	Perf14.end(Perf14.ACTORS, started)
 
 
 ## Дым из отдушины — мягкие клубы
@@ -2664,6 +2804,12 @@ func legion_city_hidden() -> bool:
 
 
 func _city_visuals(hidden: bool) -> void:
+	var started := Perf14.begin()
+	_city_visuals_profiled(hidden)
+	Perf14.end(Perf14.CITY_VISUALS, started)
+
+
+func _city_visuals_profiled(hidden: bool) -> void:
 	if hidden == _city_was_hidden:
 		return
 	_city_was_hidden = hidden
@@ -2684,7 +2830,9 @@ func _city_visuals(hidden: bool) -> void:
 
 func _process(dt: float) -> void:
 	var started := Perf13.begin()
+	var frame_started := Perf14.begin()
 	_process_profiled(dt)
+	Perf14.end(Perf14.GAME, frame_started)
 	Perf13.end(Perf13.CITY, started)
 
 
@@ -2698,6 +2846,10 @@ func _process_profiled(dt: float) -> void:
 	if sandbox and mode in ["play", "new"] and city.money < 5000000.0:
 		city.money = 9999999.0                # песочница: деньги не кончаются
 	frame += 1
+	if _preview_source_frame >= 0 and Engine.get_process_frames() - _preview_source_frame > 120:
+		_preview_models.clear()
+		_preview_source_frame = -1
+		CityWarmup.release_sources()
 	# тяжёлое — по одному за кадр (3.3: после мазка кадры не дольше ~40 мс): пересчёт города, окно, люди у построек;
 	# в такой кадр сетка земли не перестраивается (маска покрытий — всегда)
 	var heavy := true
@@ -2707,11 +2859,12 @@ func _process_profiled(dt: float) -> void:
 		if _hud_due:
 			_hud_due = false
 			_hour_hud_part = 1
+		var hud_started := Perf14.begin()
 		hud.refresh(_hour_hud_part)
+		Perf14.end(Perf14.UI, hud_started)
 		_hour_hud_part = (_hour_hud_part + 1) % 4
-	elif _actors_due and not hidden and _clock_commit_frame != Engine.get_process_frames():
-		_actors_due = false
-		_sync_all_actors()
+	elif (_actors_due or not _actor_sync_ids.is_empty()) and not hidden and _clock_commit_frame != Engine.get_process_frames():
+		_step_actor_sync()
 	else:
 		heavy = false
 	_minimized_pause()
@@ -3066,11 +3219,17 @@ func set_tool(t: String) -> void:
 		ghost.queue_free()
 		ghost = null
 		ghost_key = ""
+	_clear_preview_models()
 	_clear_highlight()
 	if Defs.B.has(t) and tool_variant >= 0:
 		next_variant = tool_variant
 	elif Defs.B.has(t):
 		next_variant = randi() % int(Defs.B[t].get("variants", 1))
+	if ready_done and Defs.B.has(t) and moving.is_empty() and not bool(Defs.B[t].get("seg", false)):
+		var d: Dictionary = Defs.B[t]
+		var tier := 1 if d["kind"] == "house" else (city.level if t == "center" else 0)
+		var variant := 0 if d["kind"] == "decor" and not d.has("nat") else next_variant
+		_request_preview(t, tier, variant)
 	if t == "floor" and city.mark_seen("@floor") and hud:
 		hud.update_new_marks()                # взяли «Этаж» — пометка «НОВОЕ» с кнопки снята
 	if t == "upgrade" and city.mark_seen("@upgrade") and hud:
@@ -4272,6 +4431,12 @@ func _row_bounds(bp: Bp) -> Array:
 
 
 func _update_tool() -> void:
+	var started := Perf14.begin()
+	_update_tool_profiled()
+	Perf14.end(Perf14.TOOL, started)
+
+
+func _update_tool_profiled() -> void:
 	if decor_arrow != null:
 		decor_arrow.hide()
 	hover = ground_at_mouse()
@@ -4367,11 +4532,19 @@ func _update_tool() -> void:
 		return
 	if not Defs.B.has(tool):
 		return
+	if _preview_pending:
+		place_info = {}
+		return
 	if Defs.B[tool].get("seg", false) and moving.is_empty():
 		place_info = {}                    # у забора своего призрака-места нет: Z/X крутят его от tool_yaw, а не от прошлого дома
 		_fence_update()                    # забор тянут мышью, как дорогу (перенос звена — как любой постройки)
 		return
 	var pl := placement(tool, hover)
+	if moving.is_empty():
+		_request_preview(tool, int(pl["tier"]), int(pl["variant"]))
+		if _preview_pending:
+			place_info = {}
+			return
 	color_lock = true                      # цвет призрака выбран — до постройки не меняется
 	pl["_t"] = tool                        # для чего посчитано (статус у курсора берёт место отсюда)
 	place_info = pl
@@ -4405,6 +4578,59 @@ func _update_tool() -> void:
 
 const GHOST_OK := Color(0.45, 1.0, 0.45, 0.07)     # годное место: настоящие цвета постройки, лишь лёгкая зелень
 const GHOST_BAD := Color(1.0, 0.25, 0.2, 0.5)
+var _preview_serial := 0
+var _preview_pending := false
+var _preview_models := {}
+var _preview_source_frame := -1
+var _preview_type := ""
+var _preview_variant := -1
+var _preview_tier := -1
+
+
+func _clear_preview_models() -> void:
+	_preview_serial += 1
+	_preview_pending = false
+	_preview_type = ""
+	_preview_models.clear()
+
+
+func _request_preview(type: String, tier: int, variant: int) -> void:
+	if _preview_type == type and _preview_tier == tier and _preview_variant == variant:
+		return
+	_clear_preview_models()
+	_preview_type = type
+	_preview_variant = variant
+	_preview_tier = tier
+	var serial := _preview_serial
+	var paths := {}
+	var bp := Catalog.make(type, tier, variant)
+	CityWarmup.models(bp, paths, true)
+	if paths.is_empty():
+		return
+	_preview_pending = true
+	var tree := get_tree()
+	var models := await CityWarmup.fetch(tree, paths)
+	var seen := {}
+	var deadline := Time.get_ticks_usec() + 3000
+	for part: Array in bp.parts:
+		var name: String = part[0]
+		if seen.has(name):
+			continue
+		if serial != _preview_serial:
+			return
+		if Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			if serial != _preview_serial:
+				return
+			deadline = Time.get_ticks_usec() + 3000
+		seen[name] = true
+		Bp.model_aabb(name)
+	if serial == _preview_serial:
+		_preview_models = models
+		_preview_source_frame = Engine.get_process_frames()
+		_preview_pending = false
+
+
 var _ghost_line: ShaderMaterial                       # тонкая светлая обводка годного призрака
 
 
@@ -4431,11 +4657,13 @@ func _ghost_frozen() -> void:
 	var c := int(pl["color"])
 	if color_user >= 0 and Defs.B[tool]["kind"] != "decor" and moving.is_empty():
 		c = color_user                        # цвет выбрали в панели — призрак сразу этого цвета (3.4)
-	var key := "%s:%d:%d:%d" % [tool, pl["tier"], v, c]
+	var size := City.field_size(pl)
+	var key := "%s:%d:%d:%d:%s" % [tool, pl["tier"], v, c, size]
 	if key != ghost_key:
 		var xf := ghost.transform
 		ghost.queue_free()
-		ghost = Parts.ghost(Catalog.make(tool, pl["tier"], v, c), "place")
+		var bp := Catalog.make(tool, pl["tier"], v, c) if size == Vector2i.ZERO else Catalog.field_bp(tool, size)
+		ghost = Parts.ghost(bp, "place")
 		add_child(ghost)
 		ghost.transform = xf
 		ghost_key = key
@@ -5574,6 +5802,8 @@ func _unhandled_input(e: InputEvent) -> void:
 
 
 func _click() -> void:
+	if _preview_pending:
+		return
 	if tool == "story_zone" and stories != null:
 		stories.place_zone(hover)
 		return
@@ -6694,6 +6924,9 @@ static func _prepare_autosave(data: Dictionary, path: String, result: Dictionary
 
 
 func _exit_tree() -> void:
+	if _terrain_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_terrain_task)
+		_terrain_task = -1
 	if _autosave_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_autosave_task)
 		_autosave_task = -1
@@ -6707,6 +6940,7 @@ func _sim_hour(midnight := false) -> void:
 	var t0 := Time.get_ticks_usec()
 	_hud_later = hud != null
 	await city.sim_day(get_tree())
+	var tail_started := Perf14.begin()
 	_hud_later = false
 	_hero_hour()
 	if midnight:
@@ -6718,6 +6952,7 @@ func _sim_hour(midnight := false) -> void:
 		Perf13.usec[Perf13.CITY_HOUR] += elapsed
 	_clock_commit_frame = Engine.get_process_frames()
 	_clock_busy = false
+	Perf14.end(Perf14.HOUR_TAIL, tail_started)
 
 
 # ---------- свой герой (Д11) ----------
@@ -6788,9 +7023,34 @@ func _load(path := "") -> bool:
 	city.load_data(data)
 	if clock_hours:
 		hour = float(data.get("hour", 8.0))
-	for id in city.buildings:
-		_show(city.buildings[id])
+	var batch := []
+	var deadline := Time.get_ticks_usec() + 4000
+	for b: Dictionary in city.buildings.values():
+		batch.append(b)
+		if batch.size() >= 8 or Time.get_ticks_usec() >= deadline:
+			await _show_loaded(batch)
+			batch.clear()
+			deadline = Time.get_ticks_usec() + 4000
+	await _show_loaded(batch)
+	_set_hour(hour)
 	return true
+
+
+func _show_loaded(batch: Array) -> void:
+	if batch.is_empty():
+		return
+	var paths := {}
+	for b: Dictionary in batch:
+		CityWarmup.models(city.blueprint(b), paths)
+	var models := await CityWarmup.fetch(get_tree(), paths)
+	var deadline := Time.get_ticks_usec() + 5000
+	for b: Dictionary in batch:
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
+		_show(b)
+	models.clear()
+
 
 
 ## Перезапуск сцены в другом режиме (меню, свой город, новый, готовый)

@@ -79,11 +79,15 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 	else:
 		var src := Synty.make(name, remap)
 		for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-			var mesh := mi.mesh.duplicate() as Mesh
-			for s in mesh.get_surface_count():
-				var m := mi.get_surface_override_material(s)
-				if m:
-					mesh.surface_set_material(s, m)
+			var mesh := mi.mesh
+			if not name.begins_with("K:") or not remap.is_empty() or tile.x >= 0:
+				var copy_started := Perf14.begin()
+				mesh = mesh.duplicate() as Mesh
+				Perf14.end(Perf14.MESH_COPY, copy_started)
+				for s in mesh.get_surface_count():
+					var m := mi.get_surface_override_material(s)
+					if m:
+						mesh.surface_set_material(s, m)
 			var sub := _sub(mesh, Citizen._rel(mi, src))
 			_small(name, sub, tile)
 			g["subs"].append(sub)
@@ -102,7 +106,9 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 	var subs := []
 	var ok := true
 	for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
+		var copy_started := Perf14.begin()
 		var mesh := mi.mesh.duplicate() as Mesh
+		Perf14.end(Perf14.MESH_COPY, copy_started)
 		for s in mesh.get_surface_count():
 			var m := mi.get_surface_override_material(s)
 			if m == null:
@@ -245,6 +251,13 @@ static func _far_fade(mesh: Mesh) -> void:
 
 
 func _sub(mesh: Mesh, local: Transform3D, colors := false) -> Dictionary:
+	var started := Perf14.begin()
+	var value := _sub_profiled(mesh, local, colors)
+	Perf14.end(Perf14.MULTIMESH, started)
+	return value
+
+
+func _sub_profiled(mesh: Mesh, local: Transform3D, colors := false) -> Dictionary:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = colors
