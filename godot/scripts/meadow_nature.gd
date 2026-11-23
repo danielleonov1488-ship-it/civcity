@@ -11,6 +11,8 @@ extends RefCounted
 ## «Средней» и «Высокой»; деревья набора (листва — тысячи карточек) на «Низкой» и «Очень низкой» рисуются прежними
 ## лёгкими деревьями Synty того же роста (подмена сетки в тех же MultiMesh — места и ручки природы не меняются).
 
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const SEED := 1313
 
 ## Рост моделей набора (верх, м при масштабе 1) — масштаб подбирается под нужную высоту
@@ -119,23 +121,27 @@ static func extra(rng: RandomNumberGenerator, forest: float) -> Array:
 
 ## Земля и дороги из набора (shaders/land.gdshader, meadow_on): трава с клевером, цветами и мхом, мостовая из булыжника,
 ## тропы — утоптанная земля, кромки и дворики — гравий, берега — земля
-static func ground(g) -> void:
+static func ground(g, tree: SceneTree) -> void:
 	if not on():
 		return
 	var m: ShaderMaterial = g.land_mat
-	var t := func(n: String) -> Texture2D: return load(Meadow._tex_path(n))
-	m.set_shader_parameter("g_tex_a", t.call("Grass_Texture_01"))
-	m.set_shader_parameter("g_tex_b", t.call("Grass_Texture_02"))
-	m.set_shader_parameter("g_clover", t.call("Grass_Clovers_Texture_01"))
-	m.set_shader_parameter("g_flower", t.call("Grass_Flowers_Texture_01"))
-	m.set_shader_parameter("g_moss", t.call("Moss_Texture_01"))
-	m.set_shader_parameter("path_tex", t.call("Dirt_Cracked_Pebbles_Texture_01"))
-	m.set_shader_parameter("gravel_tex", t.call("Gravel_Texture_01"))
-	m.set_shader_parameter("earth_tex", t.call("Dirt_Texture_01"))
-	m.set_shader_parameter("tile_road", t.call("Cobblestone_Texture_01"))
+	var names := {
+		"g_tex_a": "Grass_Texture_01", "g_tex_b": "Grass_Texture_02",
+		"g_clover": "Grass_Clovers_Texture_01", "g_flower": "Grass_Flowers_Texture_01",
+		"g_moss": "Moss_Texture_01", "path_tex": "Dirt_Cracked_Pebbles_Texture_01",
+		"gravel_tex": "Gravel_Texture_01", "earth_tex": "Dirt_Texture_01",
+		"tile_road": "Cobblestone_Texture_01"}
+	var paths := {}
+	for param: String in names:
+		var path := Meadow._tex_path(names[param])
+		names[param] = path
+		paths[path] = true
+	var textures := await CityWarmup.fetch(tree, paths)
+	var started := Perf14.begin()
+	for param: String in names:
+		m.set_shader_parameter(param, textures.get(names[param]))
 	m.set_shader_parameter("road_scale", 3.2)
 	m.set_shader_parameter("road_tint", Vector3(1.12, 1.03, 0.88))
-	m.set_shader_parameter("noise_tex", noise_tex())
 	m.set_shader_parameter("meadow_on", true)
 	if v2:
 		# природа 2: земля под травой — сочная жёлто-зелёная (в тон траве-ковру: вдали, где ковра нет, — тот же цвет)
@@ -143,14 +149,24 @@ static func ground(g) -> void:
 		m.set_shader_parameter("pal1", Vector3(0.16, 0.25, 0.034))
 		m.set_shader_parameter("pal2", Vector3(0.2, 0.3, 0.042))
 		m.set_shader_parameter("pal3", Vector3(0.26, 0.34, 0.05))
+	Perf14.end(Perf14.START_GROUND, started)
+	if _noise == null:
+		var images: Array[Image] = []
+		var task := WorkerThreadPool.add_task(_noise_image.bind(images), false, "Шум земли")
+		while not WorkerThreadPool.is_task_completed(task):
+			await tree.process_frame
+		WorkerThreadPool.wait_for_task_completion(task)
+		started = Perf14.begin()
+		if _noise == null:
+			_noise = ImageTexture.create_from_image(images[0])
+		Perf14.end(Perf14.START_GROUND, started)
+	m.set_shader_parameter("noise_tex", _noise)
 
 
 ## Плавный шум для пятен травы (shaders/land.gdshader noise_tex): 4 бесшовных симплекс-шума (разные семена) в каналах
 ## RGBA, 256², с мипмапами; один раз за запуск (~десятки мс)
 static var _noise: ImageTexture = null
-static func noise_tex() -> ImageTexture:
-	if _noise != null:
-		return _noise
+static func _noise_image(images: Array[Image]) -> void:
 	var S := 256
 	var chans := []
 	for i in 4:
@@ -173,8 +189,7 @@ static func noise_tex() -> ImageTexture:
 		data[k * 4 + 3] = c3[k]
 	var img := Image.create_from_data(S, S, false, Image.FORMAT_RGBA8, data)
 	img.generate_mipmaps()
-	_noise = ImageTexture.create_from_image(img)
-	return _noise
+	images.append(img)
 
 
 ## Своя и чужая земля для травы (shaders/land.gdshader own_tex): точка на участок, белое — чужая; при загрузке
@@ -215,25 +230,42 @@ static func prepare(land: Land) -> void:
 static func streams(g) -> void:
 	gen_low = Gfx.is_low(str(g.settings.get("quality", "high")))
 	var t0 := Time.get_ticks_msec()
+	var tree: SceneTree = g.get_tree()
 	if _task >= 0:
+		while not WorkerThreadPool.is_task_completed(_task):
+			await tree.process_frame
 		WorkerThreadPool.wait_for_task_completion(_task)
-		_task = -1
-	var list := Streams.choose(g.land, g.land.streams_saved)
-	Streams.apply(g.land, list)
-	Streams.set_far(g.land.streams)           # река — за край карты, в долину пейзажа до горизонта (Game._horizon)
-	print("Streams: ", list, " за ", Time.get_ticks_msec() - t0, " мс")
+	var terrain: Land = g.land
+	_task = WorkerThreadPool.add_task(_apply_streams.bind(terrain), false, "Русла ручьёв")
+	while not WorkerThreadPool.is_task_completed(_task):
+		await tree.process_frame
+	WorkerThreadPool.wait_for_task_completion(_task)
+	_task = -1
+	Streams.set_far(terrain.streams)
+	print("Streams: ", terrain.streams, " за ", Time.get_ticks_msec() - t0, " мс")
+
+
+static func _apply_streams(terrain: Land) -> void:
+	var list := Streams.choose(terrain, terrain.streams_saved)
+	Streams.apply(terrain, list)
 
 
 ## Всё, что встаёт после рощ и лугов: жизнь у ручьёв, мосты, поля с оградами, мельницы, луга в цветах
 static func life(g) -> void:
+	var tree: SceneTree = g.get_tree()
 	_water_life(g)
+	await tree.process_frame
 	_bridges(g)
 	if not on():
 		return
+	await tree.process_frame
 	_stream_banks(g)
+	await tree.process_frame
 	_flow(g)
 	if not gen_low:
+		await tree.process_frame
 		_patches(g)
+		await tree.process_frame
 		_fields(g)
 
 
@@ -421,6 +453,7 @@ static func _river_life(g, id: int, rng: RandomNumberGenerator) -> void:
 ## Течение: полоса над водой каждого ручья (светлые струйки бегут вниз по течению). Одна сетка на все ручьи, без теней;
 ## на «Низкой» и «Очень низкой» спрятана (quality)
 static var flow_node: MeshInstance3D = null
+static var _flow_frozen := false
 static func _flow(g) -> void:
 	var land: Land = g.land
 	var sts := [SurfaceTool.new(), SurfaceTool.new()]           # 0 — ручьи, 1 — река (шире и быстрее)
@@ -485,7 +518,7 @@ static func _flow(g) -> void:
 	for si in mats.size():
 		mi.set_surface_override_material(si, mats[si])
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.visible = not low
+	mi.visible = not low and not _flow_frozen
 	g.add_child(mi)
 	flow_node = mi
 
@@ -900,7 +933,7 @@ static func quality(g, is_low: bool) -> void:
 	if g.land_mat:
 		g.land_mat.set_shader_parameter("rich", not is_low)
 	if is_instance_valid(flow_node):
-		flow_node.visible = not is_low
+		flow_node.visible = not is_low and not _flow_frozen
 
 
 ## Группа пула (одна модель на кусок 48 м) — по нынешнему уровню
@@ -981,6 +1014,7 @@ static func _standin_mesh(base: String, sub: Dictionary) -> Mesh:
 
 ## Снимки для сверки (test_perf: время стоит): качание листвы, крылья мельниц и течение ручьёв — замерли
 static func freeze(on_: bool) -> void:
+	_flow_frozen = on_
 	for k in Meadow._mats:
 		var m = Meadow._mats[k]
 		if m is ShaderMaterial:

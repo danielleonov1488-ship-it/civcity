@@ -1,5 +1,9 @@
 class_name LegionUi
 extends Control
+
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Окно «Легион» (старый замысел владельца, новая графика): одно окно с вкладками
 ##   «Походы»   — рисованная карта провинции (assets/ui/ai/legion/40a…40h.jpg, пока карты нет — своя нарисованная),
 ##                бои стоят на каменных площадках тропы, в конце — босс; карточка боя: враги по волнам, награда,
@@ -241,7 +245,7 @@ func toggle() -> void:
 		open()
 
 
-func open(tab_id := "") -> void:
+func open(tab_id := "", sliced := false) -> void:
 	if lg == null:
 		return
 	if lg.v3() and tab_id == "":
@@ -254,7 +258,7 @@ func open(tab_id := "") -> void:
 	hud._close_tray()
 	hud._hide_info()
 	camp_window = ""
-	win.show()
+	win.visible = not lg.v3()
 	visible = true
 	move_to_front()
 	lg.flags["seen"] = true
@@ -276,7 +280,7 @@ func open(tab_id := "") -> void:
 		lg.flags.erase("turn_page")
 		_turn_page()
 	else:
-		_select_tab(tab_id if tab_id != "" else tab)
+		await _select_tab(tab_id if tab_id != "" else tab, sliced)
 	_update_button()
 	hud._update_pointer()
 
@@ -337,7 +341,7 @@ var _last_sig := ""
 
 
 func _process(dt: float) -> void:
-	if not visible:
+	if not visible or battle_returning:
 		return
 	if camp_window != "":
 		if overlay == null or not is_instance_valid(overlay):
@@ -545,7 +549,7 @@ func _paint_tab(b: Button, light_bg: bool) -> void:
 	lbl.add_theme_constant_override("outline_size", 0 if light_bg else 6)
 
 
-func _select_tab(id: String) -> void:
+func _select_tab(id: String, sliced := false) -> void:
 	tab = id if tabs.has(id) else "campaign"
 	for k in tabs:
 		var b: Button = tabs[k]
@@ -556,7 +560,7 @@ func _select_tab(id: String) -> void:
 	if id == "pvp" and _pvp_state != "loading":
 		_pvp_state = "idle"                  # каждый заход — свежий список соперников
 		_pvp_auto = false
-	_rebuild()
+	await _rebuild(sliced)
 
 
 # =====================================================================
@@ -669,11 +673,27 @@ func _trial(tier: int) -> void:
 			_say(err))
 
 
-func _rebuild() -> void:
+func _rebuild(sliced := false) -> void:
 	if content == null or lg == null:
 		return
 	_live = []
 	hud._clear(content)
+	if lg.v3() and camp_window == "":
+		if _map_rebuild_waiting:
+			_dirty = true
+			return
+		var region := clampi(view_r, 0, Legion.regions().size() - 1)
+		if not _map_ready.has(region):
+			_map_rebuild_waiting = true
+			await _prepare_map(region)
+			_map_rebuild_waiting = false
+			if not visible or camp_window != "":
+				return
+			if view_r != region:
+				await _rebuild(sliced)
+				return
+	elif sliced and tab == "campaign":
+		await _prepare_map(clampi(view_r, 0, Legion.regions().size() - 1))
 	_fight_btn = null
 	guide_stage_button = null
 	guide_region_button = null
@@ -681,7 +701,7 @@ func _rebuild() -> void:
 	_upg_btn = null
 	if lg.v3() and camp_window == "":
 		win.hide()
-		_build_fort_map()
+		await _build_fort_map(sliced)
 		_last_sig = _sig()
 		hud._update_pointer()
 		return
@@ -714,9 +734,10 @@ func _rebuild() -> void:
 		"events":
 			body = _build_events()
 		_:
-			body = _build_campaign()
+			body = await _build_campaign(sliced)
 	body.set_anchors_preset(Control.PRESET_FULL_RECT)
-	content.add_child(body)
+	if body.get_parent() == null:
+		content.add_child(body)
 	_update_header()
 	_update_tut()
 	_last_sig = _sig()
@@ -1230,7 +1251,8 @@ func _clear_fort_map() -> void:
 	fort_map_values.clear()
 
 
-func _build_fort_map() -> void:
+func _build_fort_map(sliced := false) -> void:
+	var started := Perf14.begin()
 	_clear_fort_map()
 	var frontier := lg.frontier()
 	view_c = clampi(view_c, 0, int(frontier["cycle"]))
@@ -1277,13 +1299,27 @@ func _build_fort_map() -> void:
 		art._ground = _tex[cache_key]
 		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		fort_trail.add_child(art)
+	Perf14.detail("battle_map_art" if sliced else "fort_map_art", started)
+	if sliced:
+		await get_tree().process_frame
+		if not visible or not is_instance_valid(fort_map):
+			return
 	var done_count := 0
+	started = Perf14.begin()
+	var deadline := Time.get_ticks_usec() + 3500
 	var pins := Control.new()
 	pins.name = "FortMapNodes"
 	pins.size = MAP_PX
 	pins.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fort_trail.add_child(pins)
 	for index in Legion.stages():
+		if sliced and Time.get_ticks_usec() >= deadline:
+			Perf14.detail("battle_map_stages", started)
+			await get_tree().process_frame
+			if not visible or not is_instance_valid(fort_map):
+				return
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 3500
 		var boss := index == Legion.stages() - 1
 		var stage := lg.stage_info(view_c, view_r, index)
 		var done := lg.stage_done(view_c, view_r, index)
@@ -1364,7 +1400,14 @@ func _build_fort_map() -> void:
 	back.pressed.connect(func(): close())
 	fort_map.add_child(back)
 	_pin(back, Vector2(0, 1), Vector2(-22, -22))
+	Perf14.detail("battle_map_stages" if sliced else "fort_map_stages", started)
+	if sliced:
+		await get_tree().process_frame
+		if not visible or not is_instance_valid(fort_map):
+			return
+	started = Perf14.begin()
 	_build_fort_provinces()
+	Perf14.detail("battle_map_provinces" if sliced else "fort_map_provinces", started)
 	_update_fort_map_resources()
 	_layout_fort_trail()
 	_fit.call_deferred()
@@ -1779,7 +1822,76 @@ func _fort_reward(row: HBoxContainer, tex: Texture2D, value: String, tip: String
 	row.add_child(item)
 
 
-func _build_campaign() -> Control:
+var _map_warming := {}
+var _map_ready := {}
+var _map_rebuild_waiting := false
+
+
+func warm_fort_map() -> void:
+	var region := view_r
+	if lg.fort_guide_combat():
+		region = 0
+	elif region < 0:
+		region = int(lg.frontier()["r"])
+	_prepare_map(clampi(region, 0, Legion.regions().size() - 1))
+
+
+## Готовим фон похода в форте или за занавесом боя.
+func _prepare_map(region_index: int) -> void:
+	var tree := get_tree()
+	while _map_warming.has(region_index):
+		await tree.process_frame
+	if _map_ready.has(region_index):
+		return
+	_map_warming[region_index] = true
+	var region: Dictionary = Legion.regions()[region_index]
+	var id := String(region["id"])
+	var path: String = Legion.art("map", id)["file"]
+	var resources := await CityWarmup.fetch(get_tree(), {path: true, path.get_basename() + ".jpg": true})
+	var texture := _art("map", id)
+	resources.clear()
+	if texture != null:
+		_map_ready[region_index] = true
+		_map_warming.erase(region_index)
+		return
+	var started := Perf14.begin()
+	var biome: Dictionary = BIOMES.get(String(region["biome"]), BIOMES["forest"])
+	var key := "ground:%d" % region_index
+	var task := -1
+	var images: Array[Image] = []
+	if not _tex.has(key):
+		var seed_value := 1000 + region_index * 17
+		task = WorkerThreadPool.add_task(func() -> void:
+			images.append(MapPaint.ground_image(biome, seed_value)))
+	var deadline := Time.get_ticks_usec() + 3500
+	for name: String in (biome["deco"] as Array) + (biome["land"] as Array):
+		if name == "camp":
+			_ic39(name)
+		else:
+			hud.ico(name, 96)
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.detail("battle_map_icons", started)
+			await get_tree().process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 3500
+	Perf14.detail("battle_map_icons", started)
+	var enemy := String(region["boss"])
+	var enemy_path: String = Legion.art("enemy", enemy)["file"]
+	resources = await CityWarmup.fetch(tree, {enemy_path: true, enemy_path.get_basename() + ".jpg": true})
+	_art("enemy", enemy)
+	if task >= 0:
+		while not WorkerThreadPool.is_task_completed(task):
+			await get_tree().process_frame
+		WorkerThreadPool.wait_for_task_completion(task)
+		started = Perf14.begin()
+		_tex[key] = ImageTexture.create_from_image(images[0])
+		Perf14.detail("battle_map_ground_upload", started)
+	_map_ready[region_index] = true
+	_map_warming.erase(region_index)
+
+
+func _build_campaign(sliced := false) -> Control:
+	var started := Perf14.begin()
 	var fr := lg.frontier()
 	if view_r < 0:
 		view_r = int(fr["r"])
@@ -1799,10 +1911,24 @@ func _build_campaign() -> Control:
 		back.pressed.connect(func(): close())
 		back.name = "CampaignBack"
 		left.add_child(back)
-	left.add_child(_map_view())
-	left.add_child(_region_strip())
 	h.add_child(left)
-	h.add_child(_stage_card(lg.stage_info(int(sel["c"]), int(sel["r"]), int(sel["s"]))))
+	left.add_child(_map_view())
+	Perf14.detail("battle_map_stages" if sliced else "legion_campaign_map", started)
+	if sliced:
+		content.add_child(h)
+		await get_tree().process_frame
+	started = Perf14.begin()
+	left.add_child(_region_strip())
+	if sliced:
+		Perf14.detail("battle_map_provinces", started)
+		await get_tree().process_frame
+		started = Perf14.begin()
+	var st := lg.stage_info(int(sel["c"]), int(sel["r"]), int(sel["s"]))
+	if sliced:
+		await _stage_card(st, h)
+	else:
+		h.add_child(await _stage_card(st))
+		Perf14.detail("legion_stage_card", started)
 	return h
 
 
@@ -2129,7 +2255,8 @@ func _region_strip() -> Control:
 	return h
 
 
-func _stage_card(st: Dictionary) -> Control:
+func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
+	var started := Perf14.begin()
 	var p := _bar_panel(8)
 	p.custom_minimum_size = Vector2(CARD_W, 0)
 	var v := VBoxContainer.new()
@@ -2177,6 +2304,11 @@ func _stage_card(st: Dictionary) -> Control:
 	hh.add_child(tv)
 	v.add_child(hh)
 	v.add_child(_hdiv(12))
+	if partial_parent != null:
+		partial_parent.add_child(p)
+		Perf14.detail("battle_map_stage_heading", started)
+		await get_tree().process_frame
+		started = Perf14.begin()
 	# враги по волнам
 	var waves: Array = st["waves"]
 	v.add_child(_l("Враги — %d %s" % [waves.size(), Hud._plural(waves.size(), "волна", "волны", "волн")], 16, true))
@@ -2207,6 +2339,10 @@ func _stage_card(st: Dictionary) -> Control:
 				_badge(holder, "×%d" % int(groups[k]), Vector2(1, 1), 13)
 			wh.add_child(holder)
 		v.add_child(wh)
+	if partial_parent != null:
+		Perf14.detail("battle_map_stage_waves", started)
+		await get_tree().process_frame
+		started = Perf14.begin()
 	if bool(st.get("vet", false)):
 		var seen := {}
 		var bits := []
@@ -2369,6 +2505,8 @@ func _stage_card(st: Dictionary) -> Control:
 		v.add_child(_wl("Учебный бой: в нужный миг подскажем, что нажать.", CARD_W - 24, 13, C_GOOD, true, true))
 	elif not teaching:
 		v.add_child(_wl("Отряд дерётся сам; ваше — состав и умения в нужный миг." + ("" if st["done"] else " «Авто» — после первой победы."), CARD_W - 24, 13, C_SOFT, false, true))
+	if partial_parent != null:
+		Perf14.detail("battle_map_stage_card", started)
 	return p
 
 
@@ -2494,6 +2632,9 @@ func _fight(st: Dictionary) -> void:
 	_show_result(out, setup)
 
 
+var battle_returning := false
+
+
 ## Бой закрыт: окно снова открыто (бой с городом — итог уходит на сервер)
 func _on_battle_closed(out: Dictionary) -> void:
 	# итог боя с городом — только если это он (delta ставит лишь apply_pvp_result): итог похода серверу не уходит,
@@ -2514,7 +2655,10 @@ func _on_battle_closed(out: Dictionary) -> void:
 		sel = {"c": int(nx["cycle"]), "r": int(nx["r"]), "s": int(nx["s"])}
 		view_r = int(nx["r"])
 		view_c = int(nx["cycle"])
-	open("pvp" if was_pvp else "campaign")
+	battle_returning = true
+	_dirty = false
+	await open("pvp" if was_pvp else "campaign", battle_returning)
+	battle_returning = false
 
 
 func _show_result(out: Dictionary, setup: Dictionary) -> void:
@@ -4219,14 +4363,17 @@ class MapPaint extends Control:
 
 	## Земля: два слоя шума (тон травы и проплешины земли) — мазками, а не ровной заливкой
 	func _make_ground(B: Dictionary) -> void:
+		_ground = ImageTexture.create_from_image(ground_image(B, seed_v))
+
+	static func ground_image(B: Dictionary, seed_value: int) -> Image:
 		var W := 256
 		var H := 144
 		var n := FastNoiseLite.new()
-		n.seed = seed_v
+		n.seed = seed_value
 		n.frequency = 0.03
 		n.fractal_octaves = 4
 		var n2 := FastNoiseLite.new()
-		n2.seed = seed_v + 7
+		n2.seed = seed_value + 7
 		n2.frequency = 0.07
 		n2.fractal_octaves = 2
 		var img := Image.create(W, H, false, Image.FORMAT_RGB8)
@@ -4242,7 +4389,7 @@ class MapPaint extends Control:
 				if d > 0.32:
 					c = c.lerp(dirt, minf(0.7, (d - 0.32) * 1.6))
 				img.set_pixel(x, y, c)
-		_ground = ImageTexture.create_from_image(img)
+		return img
 
 	func _draw() -> void:
 		var S := size
@@ -4459,7 +4606,7 @@ class MapPaint extends Control:
 
 
 func _input(event: InputEvent) -> void:
-	if not visible or lg == null or not lg.v3():
+	if not visible or battle_returning or lg == null or not lg.v3():
 		return
 	if event is InputEventMouseButton:
 		var mouse := event as InputEventMouseButton

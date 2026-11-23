@@ -1,4 +1,6 @@
 extends "res://scripts/test_tutor7.gd"
+
+const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
 ## Полный путь новой игры, замеры каждого кадра и снимок каждую секунду.
 
 const Task := "D:/CivCity/.work/stage7/tutor13/"
@@ -62,7 +64,13 @@ var strip_busy := false
 
 
 func _ready() -> void:
-	await launcher_run("TUTOR13", Task + "shots/", Task + "profiles/")
+	await launcher_run("TUTOR13", String(get_meta("perf14_shots", Task + "shots/")),
+		String(get_meta("perf14_profiles", Task + "profiles/")))
+
+
+func finish_run() -> void:
+	print(tag + " DONE fails=%d" % fails)
+	TestSuite.finish(self, 1 if fails > 0 else 0)
 
 
 func _process(dt: float) -> void:
@@ -229,7 +237,8 @@ func run() -> void:
 	get_window().content_scale_size = Vector2i.ZERO
 	get_window().size = ViewSize
 	await frames(5)
-	strip_folder = Task + "strip_frames/%d" % int(Time.get_unix_time_from_system())
+	var strip_root := Task if out == Task + "shots/" else out.get_base_dir()
+	strip_folder = strip_root.path_join("strip_frames/%d" % int(Time.get_unix_time_from_system()))
 	if not check(DirAccess.make_dir_recursive_absolute(strip_folder) == OK, "strip directory"):
 		return
 	print("TUTOR13 STRIP FRAMES ", strip_folder)

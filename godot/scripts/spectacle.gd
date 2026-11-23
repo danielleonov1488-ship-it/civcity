@@ -1,5 +1,7 @@
 class_name Spectacle
 extends Node3D
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Зрелища: большие постройки живут. К представлению горожане идут в амфитеатр, цирк и театр, рассаживаются
 ## по трибунам — лицом к арене, ровно на ступенях (таз на сиденье, ступни на ступени ниже), под навесами
 ## и на парапете не садятся; на арене бьются гладиаторы, в цирке скачут колесницы, в театре — спектакль.
@@ -71,6 +73,13 @@ const SND := {"cheer": ["arena/crowd_cheer.ogg", -6.0], "roar": ["arena/crowd_ro
 	"hit": [["battle/metalPot2.ogg", "battle/knifeSlice.ogg"], -4.0], "gate": ["battle/creak1.ogg", -10.0]}
 static var _streams := {}
 var _shots := 0
+var _tris_jobs := {}
+static var warm_crowds := true
+var _crowd_models: Array[String] = []
+var _crowd_prepare_index := 0
+var _crowd_upload_index := 0
+var crowd_upload_frame := -1
+var _crowd_prepared := false
 
 
 func setup(g, args := {}) -> void:
@@ -95,6 +104,7 @@ func venue_show(b: Dictionary) -> void:
 	if String(VENUES[b["type"]]["kind"]) == "tavern" and int(city.cozy_v) < 1:
 		return                                   # вечер в таверне — в новой игре
 	venue_hide(b)
+	_prepare_crowd()
 	var lay := layout(b)
 	var root := Node3D.new()
 	root.name = "Venue_%d" % int(b["id"])
@@ -106,7 +116,7 @@ func venue_show(b: Dictionary) -> void:
 		"taken": {}, "who": [], "phase": "idle", "forced": "", "target": 0, "due": 0.0, "order": [], "oi": 0, "rid_q": [],
 		"t": 0.0, "act": null, "react_t": 0.0, "called": false}
 	venues[V["id"]] = V
-	V["order"] = _fill_order(lay)
+	V["order"] = lay["order"]
 	# гул трибун: громче, чем больше народу
 	var mur := AudioStreamPlayer3D.new()
 	mur.stream = stream("arena/crowd_murmur.ogg", true)
@@ -145,46 +155,125 @@ func venue_hide(b: Dictionary) -> void:
 	venues.erase(int(b["id"]))
 
 
-## Места постройки (по её чертежу; один раз на тип и вариант)
+## Сетка и места готовятся на копиях данных, пока идёт анимация стройки.
+func prepare_layout(b: Dictionary, ghost: Node3D) -> void:
+	if not is_venue(String(b["type"])):
+		return
+	var key := _layout_key(b)
+	if _layouts.has(key) or _tris_jobs.has(key):
+		return
+	var started := Perf14.begin()
+	var meshes := Tris.capture_meshes(ghost)
+	Perf14.end(Perf14.MESH_READ, started)
+	var job := [-1, {}]
+	_tris_jobs[key] = job
+	_stage_layout(key, String(b["type"]), city.blueprint(b), meshes, job)
+
+
+func _stage_layout(key: String, type: String, bp: Bp, meshes: Array, job: Array) -> void:
+	await get_tree().process_frame
+	while game._placement_running:
+		await get_tree().process_frame
+	if not _tris_jobs.has(key):
+		return
+	var cache := {}
+	var faces := []
+	var deadline := Time.get_ticks_usec() + 2400
+	for item: Array in meshes:
+		var mesh: Mesh = item[1]
+		if not cache.has(mesh):
+			if Time.get_ticks_usec() >= deadline:
+				await get_tree().process_frame
+				if not _tris_jobs.has(key):
+					return
+				deadline = Time.get_ticks_usec() + 2400
+			var started := Perf14.begin()
+			cache[mesh] = mesh.get_faces()
+			Perf14.end(Perf14.MESH_READ, started)
+		faces.append([item[0], cache[mesh]])
+	job[0] = WorkerThreadPool.add_task(_prepare_seats.bind(type, bp, faces, job[1]))
+
+
+static func _prepare_seats(type: String, bp: Bp, faces: Array, result: Dictionary) -> void:
+	var tris := Tris.new()
+	tris.build_faces(faces)
+	var layout_rng := RandomNumberGenerator.new()
+	layout_rng.seed = hash([type, bp.parts])
+	result.merge(_make_layout(type, bp, tris, layout_rng))
+
+
+func layout_pending(b: Dictionary) -> bool:
+	var job: Array = _tris_jobs.get(_layout_key(b), [])
+	return not job.is_empty() and (int(job[0]) < 0 or not WorkerThreadPool.is_task_completed(job[0]))
+
+
+func _exit_tree() -> void:
+	for job: Array in _tris_jobs.values():
+		if int(job[0]) >= 0:
+			WorkerThreadPool.wait_for_task_completion(job[0])
+	_tris_jobs.clear()
+
+
+static func _layout_key(b: Dictionary) -> String:
+	return "%s|%d|%d|%d|%s|%s" % [b["type"], int(b.get("tier", 0)), int(b.get("variant", 0)),
+		int(b.get("color", 0)), b.has("kw"), SizeLadder.old_lot(b)]
+
+
+## Места постройки (по её чертежу; один раз на облик)
 func layout(b: Dictionary) -> Dictionary:
-	var key := "%s|%d|%d" % [b["type"], int(b.get("variant", 0)), int(b.get("color", 0))]
+	var key := _layout_key(b)
 	if _layouts.has(key):
 		return _layouts[key]
+	var started := Perf14.begin()
 	var t0 := Time.get_ticks_msec()
-	var bp := city.blueprint(b)
-	var tris := Tris.new()
-	tris.build(bp)
+	var lay: Dictionary
+	var job: Array = _tris_jobs.get(key, [])
+	if not job.is_empty() and int(job[0]) >= 0:
+		WorkerThreadPool.wait_for_task_completion(job[0])
+		lay = job[1]
+	else:
+		var bp := city.blueprint(b)
+		var tris := Tris.new()
+		tris.build(bp)
+		lay = _make_layout(String(b["type"]), bp, tris, rng)
+	_tris_jobs.erase(key)
+	lay["ms"] = Time.get_ticks_msec() - t0
+	print("SPECTACLE layout %s: %d seats (dropped %d), %d tris, %d ms" % [key, (lay["seats"] as Array).size(), int(lay.get("dropped", 0)), lay["tris"].count, lay["ms"]])
+	_layouts[key] = lay
+	Perf14.end(Perf14.SPECTACLE, started)
+	return lay
+
+
+static func _make_layout(type: String, bp: Bp, tris: Tris, layout_rng: RandomNumberGenerator) -> Dictionary:
 	var lay := {"seats": [], "groups": {}, "tris": tris}
-	# уменьшенная трибуна (Catalog.SHRINK): ступени ниже — зритель сидит на своём месте, ступни чуть ниже кромки ступени
-	_amphi_drop = Crowd.SEAT_DROP * float(Catalog.SHRINK.get(String(b["type"]), 1.0))
-	match String(VENUES[b["type"]]["kind"]):
+	var drop := Crowd.SEAT_DROP * float(Catalog.SHRINK.get(type, 1.0))
+	var kind := String(VENUES[type]["kind"])
+	match kind:
 		"temple":
-			_temple(lay, bp, tris)
+			_temple(lay, bp, tris, layout_rng)
 		"bath":
-			_bath(lay, bp, tris)
+			_bath(lay, bp, tris, layout_rng)
 		"forum":
-			_forum(lay, bp, tris)
+			_forum(lay, bp, tris, layout_rng)
 		"school":
 			_school(lay, bp, tris)
 		"tavern":
-			_tavern(lay, bp, tris)
+			_tavern(lay, bp, tris, layout_rng)
 		_:
-			for p in bp.parts:
+			for p: Array in bp.parts:
 				if p[0] == "SM_Bld_Amphitheatre_01":
-					_amphi(lay, p[1], tris)
+					_amphi(lay, p[1], tris, drop)
 				elif p[0] == "#bench":
 					_bench(lay, p[1], tris)
-	if String(VENUES[b["type"]]["kind"]) == "theatre":
+	if kind == "theatre":
 		_stage(lay, bp)
-	lay["ms"] = Time.get_ticks_msec() - t0
-	print("SPECTACLE layout %s: %d seats (dropped %d), %d tris, %d ms" % [key, (lay["seats"] as Array).size(), int(lay.get("dropped", 0)), tris.count, lay["ms"]])
-	_layouts[key] = lay
+	lay["order"] = _fill_order(lay)
 	return lay
 
 
 ## Места на ступенях одного сектора амфитеатра (деталь с осями xf): ряды по дуге, проход посредине сектора.
 ## Путь каждого зрителя: из-под верхнего обхода — вверх на обход, вниз по проходу, вдоль своего ряда — к месту
-func _amphi(lay: Dictionary, xf: Transform3D, tris: Tris) -> void:
+static func _amphi(lay: Dictionary, xf: Transform3D, tris: Tris, drop: float) -> void:
 	var sx := xf.basis.x.length()
 	var c := xf.origin
 	var aisle := deg_to_rad(AMPHI_AISLE)
@@ -235,7 +324,7 @@ func _amphi(lay: Dictionary, xf: Transform3D, tris: Tris) -> void:
 				var F := Vector3(c.x - E.x, 0, c.z - E.z).normalized()
 				var pelvis := E - F * PELVIS_IN
 				var root := pelvis + F * People.SIT_BACK
-				var seat_y := _check(tris, pelvis, root, F, top, _amphi_drop)
+				var seat_y := _check(tris, pelvis, root, F, top, drop)
 				if seat_y == -INF:
 					lay["dropped"] = int(lay.get("dropped", 0)) + 1
 					continue
@@ -259,7 +348,7 @@ func _amphi(lay: Dictionary, xf: Transform3D, tris: Tris) -> void:
 
 ## Скамья цирка (#bench: коробка 1×1×1, растянутая по скамье; лицо — +Z детали, к дорожке). Путь — из-под верхнего
 ## обхода на обход, вниз по ближней лестнице (за концом скамьи) и вдоль ряда
-func _bench(lay: Dictionary, xf: Transform3D, tris: Tris) -> void:
+static func _bench(lay: Dictionary, xf: Transform3D, tris: Tris) -> void:
 	var ax := xf.basis.x
 	var L := ax.length()
 	var dir := ax / L
@@ -324,7 +413,7 @@ func _bench(lay: Dictionary, xf: Transform3D, tris: Tris) -> void:
 
 
 ## Путь от точки a по земле и ступеням к точке b (высоты — лучом сверху, не выше прежней + подъём ступени)
-func _ground_path(tris: Tris, a: Vector3, b: Vector3) -> PackedVector3Array:
+static func _ground_path(tris: Tris, a: Vector3, b: Vector3) -> PackedVector3Array:
 	var out := PackedVector3Array([a])
 	var n := maxi(1, int(a.distance_to(Vector3(b.x, a.y, b.z)) / 0.25))
 	var y := a.y
@@ -337,7 +426,7 @@ func _ground_path(tris: Tris, a: Vector3, b: Vector3) -> PackedVector3Array:
 
 
 ## Над точкой открыто: до высоты up нет ни кровли, ни колонны, ни статуи (и рядом — на r в четыре стороны)
-func _open(tris: Tris, p: Vector3, up: float, r := 0.22) -> bool:
+static func _open(tris: Tris, p: Vector3, up: float, r := 0.22) -> bool:
 	for o: Vector2 in [Vector2.ZERO, Vector2(r, 0), Vector2(-r, 0), Vector2(0, r), Vector2(0, -r)]:
 		if tris.any_in(p.x + o.x, p.z + o.y, p.y + 0.06, p.y + up):
 			return false
@@ -346,7 +435,7 @@ func _open(tris: Tris, p: Vector3, up: float, r := 0.22) -> bool:
 
 ## Храм: утренняя служба — горожане стоят на ступенях и перед ними лицом к храму (к −Z), жрец наверху лестницы
 ## поднимает руки к ним. Места — где под ногами ступень или мостовая, а над головой открыто (не под портиком)
-func _temple(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+static func _temple(lay: Dictionary, bp: Bp, tris: Tris, layout_rng: RandomNumberGenerator) -> void:
 	var door := bp.door
 	var lo: Vector2 = tris.lo_xz
 	var hi: Vector2 = tris.hi_xz
@@ -382,12 +471,12 @@ func _temple(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 			var h := tris.surface(x, z, top.y + 0.1)
 			if h == -INF and z > top.z + 0.2:
 				h = 0.0                          # перед храмом — мостовая (за чертежом): стоят и там
-			var jx := x + rng.randf_range(-0.13, 0.13)          # не строем: чуть вразброс
-			var jz := z + rng.randf_range(-0.1, 0.1)
-			if h > -INF and absf(x) > 0.55 and _open(tris, Vector3(jx, h, jz), 1.9) and rng.randf() < 0.88:
+			var jx := x + layout_rng.randf_range(-0.13, 0.13)          # не строем: чуть вразброс
+			var jz := z + layout_rng.randf_range(-0.1, 0.1)
+			if h > -INF and absf(x) > 0.55 and _open(tris, Vector3(jx, h, jz), 1.9) and layout_rng.randf() < 0.88:
 				var root := Vector3(jx, h, jz)
 				var path := _ground_path(tris, Vector3(door.x + clampf(jx, -1.5, 1.5), 0.0, door.z + 3.6), root)
-				var yaw := atan2(top.x - jx, top.z - jz) + rng.randf_range(-0.2, 0.2)     # лицом к жрецу
+				var yaw := atan2(top.x - jx, top.z - jz) + layout_rng.randf_range(-0.2, 0.2)     # лицом к жрецу
 				list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": -h * 10.0 + absf(x) * 0.1 + z * 0.3, "pose": "stand"})
 			z += STAND_GAP
 		x += STAND_GAP
@@ -407,7 +496,7 @@ func _temple(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 
 
 ## Термы: купальщики стоят в бассейнах по грудь в воде и болтают (#water — вода, коробка); входят от двери
-func _bath(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+static func _bath(lay: Dictionary, bp: Bp, tris: Tris, layout_rng: RandomNumberGenerator) -> void:
 	var door := bp.door
 	var list := []
 	for p in bp.parts:
@@ -431,8 +520,8 @@ func _bath(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 				# к бассейну от двери, у края — вниз по ступеням в воду
 				var edge := Vector3(w.x, 0.0, c.z + sz / 2.0 + 0.35)
 				var path := PackedVector3Array([Vector3(door.x, 0.0, door.z + 0.6), edge, Vector3(w.x, wy - BATH_DEPTH * 0.5, c.z + sz / 2.0 - 0.3), root])
-				var yaw := atan2(c.x - w.x + 0.01, c.z - w.z) + rng.randf_range(-0.6, 0.6)
-				list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": rng.randf(), "pose": "bath"})
+				var yaw := atan2(c.x - w.x + 0.01, c.z - w.z) + layout_rng.randf_range(-0.6, 0.6)
+				list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": layout_rng.randf(), "pose": "bath"})
 	list.sort_custom(func(a, b): return a["far"] < b["far"])
 	var ids := []
 	for s in list:
@@ -443,7 +532,7 @@ func _bath(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 
 ## Форум: оратор на рострах (#marble — помост посредине, самый широкий) лицом к площади, слушатели стоят на
 ## площади перед рострами лицом к нему (где над головой открыто — не под портиками)
-func _forum(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+static func _forum(lay: Dictionary, bp: Bp, tris: Tris, layout_rng: RandomNumberGenerator) -> void:
 	var ro: Transform3D
 	var best := 0.0
 	for p in bp.parts:
@@ -473,18 +562,18 @@ func _forum(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 	while x <= hw:
 		var z := front + 0.9
 		while z < door.z - 0.2:
-			var jx := x + rng.randf_range(-0.14, 0.14)
-			var jz := z + rng.randf_range(-0.12, 0.12)
+			var jx := x + layout_rng.randf_range(-0.14, 0.14)
+			var jz := z + layout_rng.randf_range(-0.12, 0.12)
 			var h := tris.surface(jx, jz, 0.6)
 			var in_fire := false
 			for fp: Vector2 in fires:
 				if fp.distance_to(Vector2(jx, jz)) < 1.3:
 					in_fire = true
 					break
-			if h > -INF and not in_fire and _open(tris, Vector3(jx, h, jz), 1.9) and rng.randf() < 0.7:
+			if h > -INF and not in_fire and _open(tris, Vector3(jx, h, jz), 1.9) and layout_rng.randf() < 0.7:
 				var root := Vector3(jx, h, jz)
 				var path := _ground_path(tris, Vector3(door.x + clampf(jx, -1.5, 1.5), 0.0, door.z + 0.6), root)
-				var yaw := atan2(spk.x - jx, spk.z - jz) + rng.randf_range(-0.25, 0.25)
+				var yaw := atan2(spk.x - jx, spk.z - jz) + layout_rng.randf_range(-0.25, 0.25)
 				list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": jz + absf(jx) * 0.3, "pose": "stand"})
 			z += gap
 		x += gap
@@ -498,7 +587,7 @@ func _forum(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 
 ## Таверна: посетители на стульях у круглых столиков и на скамьях у длинного стола (лицом к столу), двое-трое стоят
 ## во дворе друг к другу лицом — болтают у жаровни. Высота сиденья — по самой модели (луч сверху)
-func _tavern(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+static func _tavern(lay: Dictionary, bp: Bp, tris: Tris, layout_rng: RandomNumberGenerator) -> void:
 	var door := bp.door
 	var tables := []
 	for p in bp.parts:
@@ -545,7 +634,7 @@ func _tavern(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 			root.y = seat - Crowd.SEAT_RISE
 			var path := PackedVector3Array([Vector3(door.x, 0, door.z + 0.4), Vector3(root.x - F3.x * 0.5, 0, root.z - F3.z * 0.5),
 				Vector3(root.x, root.y + Crowd.SEAT_RISE - Crowd.SEAT_DROP, root.z)])
-			list.append({"root": root, "yaw": atan2(F3.x, F3.z), "row": 0, "path": path, "far": rng.randf(), "pose": "sit"})
+			list.append({"root": root, "yaw": atan2(F3.x, F3.z), "row": 0, "path": path, "far": layout_rng.randf(), "pose": "sit"})
 	# стоят у жаровни: пары лицом друг к другу
 	var pairs := 0
 	var z := door.z - 0.7
@@ -561,8 +650,8 @@ func _tavern(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 				continue
 			for q: Array in [[Vector3(a.x, ha, a.z), PI / 2], [Vector3(c.x, hc, c.z), -PI / 2]]:
 				var r0: Vector3 = q[0]
-				list.append({"root": r0, "yaw": float(q[1]) + rng.randf_range(-0.2, 0.2), "row": 0,
-					"path": _ground_path(tris, Vector3(door.x, 0.0, door.z + 0.4), r0), "far": 2.0 + rng.randf(), "pose": "stand"})
+				list.append({"root": r0, "yaw": float(q[1]) + layout_rng.randf_range(-0.2, 0.2), "row": 0,
+					"path": _ground_path(tris, Vector3(door.x, 0.0, door.z + 0.4), r0), "far": 2.0 + layout_rng.randf(), "pose": "stand"})
 			pairs += 1
 		z -= 0.8
 	list.sort_custom(func(a2, b2): return a2["far"] < b2["far"])
@@ -574,7 +663,7 @@ func _tavern(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 
 
 ## Школа: ученики на скамьях (SM_Prop_Seat_Bench — лицом к учителю, +Z), учитель у своего кресла лицом к ним
-func _school(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+static func _school(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 	var door := bp.door
 	var list := []
 	var teacher := Vector3.INF
@@ -609,7 +698,7 @@ func _school(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 
 
 ## Театр и одеон: на сцене (#marble — самый широкий помост) — актёр или музыкант лицом к трибунам (к −Z)
-func _stage(lay: Dictionary, bp: Bp) -> void:
+static func _stage(lay: Dictionary, bp: Bp) -> void:
 	var st: Transform3D
 	var best := 0.0
 	for p in bp.parts:
@@ -628,10 +717,7 @@ func _stage(lay: Dictionary, bp: Bp) -> void:
 ## Можно ли сесть (высота сиденья по модели или −INF): под тазом — сиденье (у задуманной высоты top), под ступнями —
 ## ступень ниже ровно на Crowd.SEAT_DROP (ноги на ступени, а не в воздухе и не в камне), над ступнями и перед коленями
 ## ничего не торчит (парапет), над головой — пусто (навесы, статуи, жаровни)
-var _amphi_drop := Crowd.SEAT_DROP
-
-
-func _check(tris: Tris, pelvis: Vector3, root: Vector3, F: Vector3, top: float, drop := Crowd.SEAT_DROP) -> float:
+static func _check(tris: Tris, pelvis: Vector3, root: Vector3, F: Vector3, top: float, drop := Crowd.SEAT_DROP) -> float:
 	var seat := tris.surface(pelvis.x, pelvis.z, top + 0.05)
 	if seat == -INF or absf(seat - top) > 0.06:
 		return -INF
@@ -651,7 +737,7 @@ func _check(tris: Tris, pelvis: Vector3, root: Vector3, F: Vector3, top: float, 
 
 ## Порядок, в котором занимают места: по группам (ряд, сторона прохода) — от дальних к проходу; группы вперемешку,
 ## нижние ряды чуть раньше верхних
-func _fill_order(lay: Dictionary) -> Array:
+static func _fill_order(lay: Dictionary) -> Array:
 	var queues := []
 	for k in lay["groups"]:
 		var ids: Array = lay["groups"][k]
@@ -835,9 +921,52 @@ func _q_fill() -> float:
 	return 1.0
 
 
+func _prepare_crowd() -> void:
+	if warm_crowds and _crowd_models.is_empty():
+		_crowd_models.assign(Citizen.PLEBS + Citizen.RICH)
+
+
+## Когда видна заставка, загружаем по одному набору зрителей за кадр.
+func finish_loading_crowds() -> void:
+	while not _crowd_step(true):
+		await get_tree().process_frame
+
+
+func _crowd_step(during_load := false) -> bool:
+	if _crowd_prepared or _crowd_models.is_empty():
+		return true
+	if _crowd_prepare_index < _crowd_models.size():
+		if _crowd_prepare_index >= 2 and Crowd.pending(_crowd_models[_crowd_prepare_index - 2]):
+			return false
+		Crowd.prepare(_crowd_models[_crowd_prepare_index])
+		_crowd_prepare_index += 1
+		return false
+	for mdl: String in _crowd_models:
+		if Crowd.pending(mdl):
+			return false
+		Crowd.collect(mdl)
+	if _crowd_upload_index < _crowd_models.size():
+		if not during_load and (not game.ready_done or game.speed <= 0.0):
+			return false
+		crowd_upload_frame = Engine.get_process_frames()
+		Crowd.rig(_crowd_models[_crowd_upload_index])
+		_crowd_upload_index += 1
+		return false
+	_crowd_prepared = true
+	return true
+
+
 func _process(dt: float) -> void:
-	if game == null or not game.ready_done or paused or game.mode == "menu":
-		return                               # за главным меню представлений нет: фон не тратит кадры
+	var started := Perf14.begin()
+	_process_body(dt)
+	Perf14.end(Perf14.SPECTACLE_FRAME, started)
+
+
+func _process_body(dt: float) -> void:
+	if game == null or game.mode == "menu":
+		return
+	if not _crowd_step() or not game.ready_done or paused:
+		return
 	var us0 := Time.get_ticks_usec()
 	_step(dt)
 	if _perf:
@@ -863,6 +992,8 @@ func _step(dt: float) -> void:
 	if sdt <= 0.0:
 		return
 	var cam := get_viewport().get_camera_3d()
+	var visit_started := Time.get_ticks_usec()
+	var first_work_us := 0
 	for id in venues:
 		var V: Dictionary = venues[id]
 		if cam:
@@ -870,11 +1001,19 @@ func _step(dt: float) -> void:
 			(V["crowd"] as Crowd).set_shadows(d < SHADOW_D and not Gfx.is_low(str(game.settings.get("quality", "high"))))
 		var ph := _phase_of(V)
 		if ph != V["phase"]:
+			if first_work_us >= 3500:
+				continue
+			visit_started = Time.get_ticks_usec()
 			_enter_phase(V, ph)
+			first_work_us += Time.get_ticks_usec() - visit_started
 		match ph:
 			"gather":
 				_gather_step(V, sdt)
 			"show":
+				if first_work_us < 3500 and bool(V.get("fill_visible", false)):
+					visit_started = Time.get_ticks_usec()
+					_fill_visible_seats(V)
+					first_work_us += Time.get_ticks_usec() - visit_started
 				_late_step(V)
 			"leave":
 				_leave_step(V, sdt)
@@ -930,10 +1069,8 @@ func _enter_phase(V: Dictionary, ph: String) -> void:
 			sfx.emit("horn", (V["root"] as Node3D).global_position + Vector3(0, 6, 0), 0.6)
 		"show":
 			_target(V)
-			if old == "idle":
-				# представление уже идёт (игру загрузили посреди дня) — зрители на местах
-				while (V["who"] as Array).size() < int(V["target"]) and int(V["oi"]) < (V["order"] as Array).size():
-					_arrive(V, {}, true)
+			# Игра открылась посреди представления: зрители появятся на местах за несколько кадров.
+			V["fill_visible"] = old == "idle"
 		"leave":
 			# конец представления: овация, потом встают и расходятся
 			V["due"] = 0.0
@@ -1022,6 +1159,17 @@ func _gather_step(V: Dictionary, sdt: float) -> void:
 				break
 		if not _arrive(V, r, false):
 			break
+
+
+func _fill_visible_seats(V: Dictionary) -> void:
+	if not bool(V.get("fill_visible", false)):
+		return
+	var deadline := Time.get_ticks_usec() + 1600
+	while (V["who"] as Array).size() < int(V["target"]) and int(V["oi"]) < (V["order"] as Array).size():
+		_arrive(V, {}, true)
+		if Time.get_ticks_usec() >= deadline:
+			return
+	V["fill_visible"] = false
 
 
 ## Опоздавшие горожане (дошли до входа, когда уже началось) — тоже на трибуну, если есть место
@@ -1356,13 +1504,33 @@ class Tris:
 	## Все треугольники чертежа (в осях постройки), кроме отвесных: им вертикальный луч не нужен
 	func build(bp: Bp) -> void:
 		var gh := Parts.ghost(bp, "place")
+		var faces := read_faces(capture_meshes(gh))
+		gh.free()
+		build_faces(faces)
+
+	static func capture_meshes(ghost: Node3D) -> Array:
+		var meshes := []
+		for mi: MeshInstance3D in ghost.find_children("*", "MeshInstance3D", true, false):
+			if mi.mesh != null:
+				meshes.append([Citizen._rel(mi, ghost), mi.mesh])
+		return meshes
+
+	static func read_faces(meshes: Array) -> Array:
+		var cached := {}
+		var faces := []
+		for entry: Array in meshes:
+			var mesh: Mesh = entry[1]
+			if not cached.has(mesh):
+				cached[mesh] = mesh.get_faces()
+			faces.append([entry[0], cached[mesh]])
+		return faces
+
+	func build_faces(faces: Array) -> void:
 		var lo := Vector2(INF, INF)
 		var hi := Vector2(-INF, -INF)
-		for mi: MeshInstance3D in gh.find_children("*", "MeshInstance3D", true, false):
-			if mi.mesh == null:
-				continue
-			var xf := Citizen._rel(mi, gh)
-			var f := mi.mesh.get_faces()
+		for item: Array in faces:
+			var xf: Transform3D = item[0]
+			var f: PackedVector3Array = item[1]
 			for i in range(0, f.size(), 3):
 				var a := xf * f[i]
 				var b := xf * f[i + 1]
@@ -1377,7 +1545,8 @@ class Tris:
 				lo.y = minf(lo.y, minf(a.z, minf(b.z, c.z)))
 				hi.x = maxf(hi.x, maxf(a.x, maxf(b.x, c.x)))
 				hi.y = maxf(hi.y, maxf(a.z, maxf(b.z, c.z)))
-		gh.free()
+		if v.is_empty():
+			return
 		lo_xz = lo
 		hi_xz = hi
 		count = v.size() / 3

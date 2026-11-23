@@ -377,7 +377,7 @@ func far_height(x: float, z: float) -> float:
 
 ## Клетка поменялась. mesh — поменялся видимый уступ (12,5 см): сетку куска перестроить; mask — поменялось
 ## покрытие: маска для шейдера (и стенки уступов — сетка «потом», dirty_soft). Ни то ни другое — только для сохранения
-func _mark(i: int, j: int, mesh := true, mask := true) -> void:
+func _mark(i: int, j: int, mesh := true, mask := true, changes_walk := true) -> void:
 	gen += 1
 	var ci := clampi(i / CH, 0, CHN - 1)
 	var cj := clampi(j / CH, 0, CHN - 1)
@@ -386,7 +386,7 @@ func _mark(i: int, j: int, mesh := true, mask := true) -> void:
 	_save_dirty[ch] = true
 	dirty_walk[ch] = true
 	if mask:
-		walk_ver += 1
+		walk_ver += int(changes_walk)
 		var mi := i / SM
 		var mj := j / SM
 		if mi < mask_lo.x:
@@ -938,9 +938,11 @@ func footprint_cells(rects: Array, pos: Vector2, yaw: float, pad := 0.0) -> Pack
 	var out := PackedInt32Array()
 	var ax := Vector2(cos(yaw), -sin(yaw))
 	var fw := Vector2(sin(yaw), cos(yaw))
+	var single := rects.size() == 1
 	var seen := {}
 	for r: Rect2 in rects:
 		var rr := r.grow(pad)
+		var end := rr.end
 		var lo := Vector2(INF, INF)
 		var hi := Vector2(-INF, -INF)
 		for cnr: Vector2 in [rr.position, rr.position + Vector2(rr.size.x, 0), rr.position + Vector2(0, rr.size.y), rr.end]:
@@ -950,15 +952,18 @@ func footprint_cells(rects: Array, pos: Vector2, yaw: float, pad := 0.0) -> Pack
 		var c0 := cell(lo)
 		var c1 := cell(hi)
 		for j in range(c0.y, c1.y + 1):
+			var row := j * N
 			for i in range(c0.x, c1.x + 1):
 				var q := cell_center(i, j) - pos
 				var lx := q.dot(ax)
 				var lz := q.dot(fw)
-				if lx >= rr.position.x and lx <= rr.end.x and lz >= rr.position.y and lz <= rr.end.y:
-					var k := idx(i, j)
-					if not seen.has(k):
+				if lx >= rr.position.x and lx <= end.x and lz >= rr.position.y and lz <= end.y:
+					var k := row + i
+					if not single:
+						if seen.has(k):
+							continue
 						seen[k] = true
-						out.append(k)
+					out.append(k)
 	return out
 
 
@@ -991,46 +996,52 @@ func flatten_cells(cells: PackedInt32Array, y: float, kd := -1) -> void:
 		if hq(k) != y or (kd >= 0 and kind[k] != kd):
 			var step := hq(k) != y
 			var kch := kd >= 0 and kind[k] != kd
+			var changes_walk := kch and walk_kind(kind[k]) != walk_kind(kd)
 			h[k] = y
 			if kd >= 0:
 				if kind[k] != kd and (deco[k] & ROAD_STYLE) != 0:
 					set_deco(k, deco[k] & ~ROAD_STYLE)
 				kind[k] = kd
-			_mark(k % N, k / N, step, kch)
+			_mark(k % N, k / N, step, kch, changes_walk)
 
 
 ## Земля вокруг постройки плавно подходит к её полу — без ям и ступенек (rc клеток вокруг)
 func blend_ring(cells: PackedInt32Array, y: float, rc := 7) -> void:
-	var dist := {}
-	var front: Array[int] = []
+	var seen := {}
 	for k in cells:
-		dist[k] = 0
-		front.append(k)
+		seen[k] = true
+	var front := cells
 	for step in range(1, rc + 1):
-		var nxt: Array[int] = []
-		for k in front:
-			var i := k % N
-			var j := k / N
-			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-				if not inside(i + d.x, j + d.y):
-					continue
-				var k2 := idx(i + d.x, j + d.y)
-				if dist.has(k2):
-					continue
-				dist[k2] = step
-				nxt.append(k2)
-		front = nxt
-	for k in dist:
-		var st: int = dist[k]
-		if st == 0 or occ[k] != 0 or walk_kind(kind[k]) or h[k] < WATER_Y + 0.2:
-			continue
-		var t := 1.0 - float(st) / float(rc + 1)
+		front = _next_ring(front, seen)
+		var t := 1.0 - float(step) / float(rc + 1)
 		t = t * t * (3.0 - 2.0 * t)
-		var ny := lerpf(h[k], y, t)
-		if absf(ny - h[k]) > 0.01:
-			var old := hq(k)
-			h[k] = ny
-			_mark(k % N, k / N, hq(k) != old, false)
+		for k in front:
+			if occ[k] != 0 or walk_kind(kind[k]) or h[k] < WATER_Y + 0.2:
+				continue
+			var ny := lerpf(h[k], y, t)
+			if absf(ny - h[k]) > 0.01:
+				var old := hq(k)
+				h[k] = ny
+				_mark(k % N, k / N, hq(k) != old, false)
+
+
+const RING_STEPS := [1, -1, N, -N]
+
+
+func _next_ring(front: PackedInt32Array, seen: Dictionary, stop_at_kerb := false) -> PackedInt32Array:
+	var next := PackedInt32Array()
+	for k in front:
+		var col := k % N
+		for offset: int in RING_STEPS:
+			var other := k + offset
+			if other < 0 or other >= N * N or seen.has(other):
+				continue
+			if (offset == 1 and col == N - 1) or (offset == -1 and col == 0):
+				continue
+			seen[other] = true
+			if not stop_at_kerb or occ[other] == 0 or not wear_block.has(occ[other]):
+				next.append(other)
+	return next
 
 
 # ---------- окантовка у домов: утоптанная глина (Town to City) ----------
@@ -1081,14 +1092,13 @@ func wear_stamp(cells: PackedInt32Array, door := Vector2.INF) -> void:
 	if cells.is_empty():
 		return
 	var seen := {}
-	var front := PackedInt32Array()
+	var front := cells
 	var i0 := N
 	var j0 := N
 	var i1 := -1
 	var j1 := -1
 	for k in cells:
 		seen[k] = true
-		front.append(k)
 		wear[k] = 255
 		var ci := k % N
 		var cj := k / N
@@ -1098,19 +1108,10 @@ func wear_stamp(cells: PackedInt32Array, door := Vector2.INF) -> void:
 		j1 = maxi(j1, cj)
 	for st in range(1, APRON_W.size()):
 		var w: int = APRON_W[st]
-		var nxt := PackedInt32Array()
+		front = _next_ring(front, seen, true)
 		for k in front:
-			var ci := k % N
-			for k2: int in [k + 1 if ci < N - 1 else -1, k - 1 if ci > 0 else -1, k + N, k - N]:
-				if k2 < 0 or k2 >= N * N or seen.has(k2):
-					continue
-				seen[k2] = true
-				if occ[k2] != 0 and wear_block.has(occ[k2]):
-					continue            # стена домуса: не красим и дальше за неё не идём
-				nxt.append(k2)
-				if wear[k2] < w:
-					wear[k2] = w
-		front = nxt
+			if wear[k] < w:
+				wear[k] = w
 	var R := APRON_W.size() - 1
 	i0 -= R
 	j0 -= R

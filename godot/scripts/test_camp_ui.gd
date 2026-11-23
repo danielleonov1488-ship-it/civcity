@@ -1,4 +1,6 @@
 extends Node3D
+
+const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
 ## Пять кадров лагеря. Запускает владелец проверки; пользовательские сохранения не пишем.
 
 var out := "D:/CivCity/.work/stage1/legion/camp_shots/"
@@ -23,10 +25,17 @@ func frames(n: int) -> void:
 		await get_tree().process_frame
 
 
+func ready_fort() -> bool:
+	var deadline := Time.get_ticks_msec() + 8000
+	while camp.opening and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	return check(camp.visible and not camp.opening and is_instance_valid(camp.diorama), "fort room controls ready")
+
+
 func check(ok: bool, message: String) -> bool:
 	if not ok:
 		push_error("CAMPUI FAIL " + message)
-		get_tree().quit(1)
+		TestSuite.finish(self, 1)
 	return ok
 
 
@@ -71,6 +80,8 @@ func _run() -> void:
 	legion.mats = {"iron": 120, "wood": 90, "leather": 60}
 	if not check(int(city.stats["pop"]) >= 60 and legion.v3(), "V3 and population"):
 		return
+	# На третье место нужен штаб второго уровня.
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "hq", 2)
 	for i in 4:
 		var s := preload("res://scripts/test_fort_fixture.gd").recruit(legion)
 		if not check(not s.is_empty(), "recruit %d: %s" % [i, legion.can_recruit_resident()]):
@@ -78,8 +89,11 @@ func _run() -> void:
 		if i < 3 and not check(legion.set_place(i, int(s["id"])), "place %d" % i):
 			return
 	# Уровни — только фикстура; таймер запускает обычное действие модели.
-	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "hq", 2)
 	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "forge", 1)
+	var cost := Legion.fort_cost("forge", 2)
+	for material: String in cost["mats"]:
+		legion.mats[material] = maxi(legion.mat(material), int(cost["mats"][material]))
+	legion.rations = maxf(legion.rations, float(cost["rations"]))
 	if not check(legion.camp_upgrade("forge"), legion.camp_can_upgrade("forge")):
 		return
 	city.changed.emit()
@@ -87,7 +101,7 @@ func _run() -> void:
 	if not check(camp != null, "HUD camp attached"):
 		return
 	camp.open()
-	if not check(camp.visible and camp.top_button.visible, "camp opened"):
+	if not await ready_fort() or not check(camp.top_button.visible, "camp opened"):
 		return
 	if not await shot("1_camp"):
 		return
@@ -109,5 +123,12 @@ func _run() -> void:
 	camp.show_building("forge")
 	if not await shot("5_forge_card"):
 		return
+	camp.close()
+	await frames(2)
+	camp.open()
+	if not await ready_fort():
+		return
+	if not await shot("6_fort_reopened"):
+		return
 	print("CAMPUI DONE")
-	get_tree().quit()
+	TestSuite.finish(self)

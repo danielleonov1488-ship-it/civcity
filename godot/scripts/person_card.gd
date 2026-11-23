@@ -9,6 +9,7 @@ extends RefCounted
 ## Та же карточка, портрет и «Следовать» — для своего героя (Д11); «Внешность» станет его «Гардеробом».
 
 const W := 420.0                       # ширина карточки
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const PORTRAIT := 112                  # сторона портрета
 const LIST_MAX := 40                   # «Горожане»: строк в списке не больше
 
@@ -1073,10 +1074,12 @@ static func _tone_btn(hud: Hud, t: String, on: bool, cb: Callable) -> Button:
 
 ## Портрет в бронзовом медальоне: свой маленький мир (SubViewport) с копией; make(vp) кладёт в него того, кого рисуем
 static func _portrait_box(hud: Hud, key: String, make: Callable) -> Control:
-	if _vp == null or not is_instance_valid(_vp) or _vp_key != key:
+	var started := Perf14.begin()
+	if not is_instance_valid(_vp) or _vp.get_parent() != hud or _vp_key != key:
 		close()
 		_vp = _make_vp(hud)
 		_vp_key = key
+		_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		make.call(_vp)
 		_aim()
 	var holder := Control.new()
@@ -1100,13 +1103,35 @@ static func _portrait_box(hud: Hud, key: String, make: Callable) -> Control:
 	tr.offset_bottom = -o
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.add_child(tr)
+	Perf14.end(Perf14.PORTRAIT, started)
 	return holder
+
+
+static func prewarm(hud: Hud) -> void:
+	var ppl: People = hud.game.people
+	var who: Dictionary = ppl.hero_r
+	if not ppl.residents.is_empty():
+		who = ppl.residents[0]
+	if who.is_empty():
+		return
+	var layout := VBoxContainer.new()
+	layout.hide()
+	hud.add_child(layout)
+	if ppl.residents.is_empty():
+		layout.add_child(_portrait_box(hud, "warm", func(vp: SubViewport): _person_subject(vp, ppl, who)))
+	else:
+		_fill_person(hud, layout, who)
+	await RenderingServer.frame_post_draw
+	layout.queue_free()
+	close()
+	await hud.get_tree().process_frame
 
 
 static func _make_vp(hud: Hud) -> SubViewport:
 	var vp := SubViewport.new()
 	vp.size = Vector2i(192, 192)
 	vp.own_world_3d = true
+	vp.positional_shadow_atlas_size = 0
 	vp.msaa_3d = Viewport.MSAA_4X
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	hud.add_child(vp)
@@ -1194,9 +1219,10 @@ static func _aim() -> void:
 	cam.look_at(head - Vector3(0, 0.02, 0), Vector3.UP)
 
 
-## Карточку закрыли: мирок портрета — долой
+## Закрытая карточка освобождает модель и буферы портрета.
 static func close() -> void:
-	if _vp != null and is_instance_valid(_vp):
+	if is_instance_valid(_vp):
+		_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 		_vp.queue_free()
 	_vp = null
 	_vp_key = ""

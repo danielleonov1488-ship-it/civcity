@@ -1,6 +1,7 @@
 class_name City
 extends RefCounted
 
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Жизнь города — как в Town to City: три класса жителей, лавки по видам потребностей обслуживают
 ## ближайшие дома в своей дальности (сколько потянут рабочие), памятники и украшения радуют всех вокруг,
@@ -180,14 +181,22 @@ func _apron_add(b: Dictionary) -> void:
 
 ## Все окантовки заново (загрузка сохранения: окантовка не сохраняется — старые города получают её сами).
 ## Сначала — какие постройки с бордюром: глина за их стены не заходит, как и при постройке по ходу игры
-func apron_all() -> void:
+func apron_all(tree: SceneTree = null) -> void:
 	land.wear.fill(0)
 	land.wear_block.clear()
 	for id in buildings:
 		if apron_of(buildings[id]) == 2:
 			land.wear_block[int(id)] = true
+	var started := Perf14.begin()
+	var deadline := Time.get_ticks_usec() + 4500
 	for id in buildings:
 		_apron_add(buildings[id])
+		if tree != null and Time.get_ticks_usec() >= deadline:
+			Perf14.detail("load_aprons", started)
+			await tree.process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4500
+	Perf14.detail("load_aprons", started)
 
 
 ## Постройку убрали: её окантовку стереть, кольца соседей в том месте — записать заново (снесли домус — глина
@@ -444,12 +453,15 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	var hi := -INF
 	var on_water := 0
 	var arches := not land.under.is_empty()
+	const EDGE_CELLS := int(1.0 / Land.CELL)
+	const PLOT_CELLS := int(Land.PLOT / Land.CELL)
 	for k in cells:
-		var q := land.cell_center(k % Land.N, k / Land.N)
-		if q.x < 1.0 or q.y < 1.0 or q.x > Land.SIZE - 1.0 or q.y > Land.SIZE - 1.0:
+		var i := k % Land.N
+		var j := k / Land.N
+		if i < EDGE_CELLS or j < EDGE_CELLS or i >= Land.N - EDGE_CELLS or j >= Land.N - EDGE_CELLS:
 			res["err"] = "Край карты"
 			return res
-		if not land.is_owned(q) and ignore_id != -2:
+		if ignore_id != -2 and not land.owned.has(Vector2i(i / PLOT_CELLS, j / PLOT_CELLS)):
 			res["err"] = "Эта земля ещё не куплена"
 			return res
 		if size != Vector2i.ZERO and Land.walk_kind(land.kind[k]):
@@ -548,57 +560,88 @@ func _road_near(p: Vector2, r: float, own_cells: PackedInt32Array) -> bool:
 
 var _home_net_ver := -1
 var _home_net_center := -1
-var _home_net := {}
+var _home_net_seed := Vector2i(-1, -1)
+var _home_net := PackedByteArray()
 
 
-## Дороги от площади станции. Пересчитываем только после правок земли.
+## От почты связаны целые полосы мощения. Обходим полосы вместо отдельных клеток.
 func _home_network() -> void:
 	var ctr := center()
 	var cid := int(ctr.get("id", -1))
-	if _home_net_ver == land.walk_ver and _home_net_center == cid:
+	var start := land.cell(door_point(ctr)) if cid >= 0 else Vector2i(-1, -1)
+	if _home_net_ver == land.walk_ver and _home_net_center == cid and _home_net_seed == start:
 		return
 	_home_net_ver = land.walk_ver
 	_home_net_center = cid
-	_home_net.clear()
+	_home_net_seed = start
+	_home_net.resize(Land.N * Land.N)
+	_home_net.fill(0)
 	if ctr.is_empty():
 		return
-	var start := land.cell(door_point(ctr))
+	var kinds := land.kind
+	var occ := land.occ
+	var walkable := PackedByteArray()
+	walkable.resize(256)
+	for kd in 256:
+		walkable[kd] = int(Land.walk_kind(kd))
 	var queue := PackedInt32Array()
-	for z in range(start.y - 7, start.y + 8):
-		for x in range(start.x - 7, start.x + 8):
-			if not land.inside(x, z):
-				continue
-			var k := land.idx(x, z)
-			if Land.walk_kind(land.kind[k]) and (land.occ[k] == 0 or land.occ[k] == cid):
-				_home_net[k] = true
+	for z in range(maxi(0, start.y - 7), mini(Land.N, start.y + 8)):
+		for x in range(maxi(0, start.x - 7), mini(Land.N, start.x + 8)):
+			var k := z * Land.N + x
+			if walkable[kinds[k]] and (occ[k] == 0 or occ[k] == cid):
+				_home_net[k] = 1
 				queue.append(k)
 	var head := 0
 	while head < queue.size():
-		var k := queue[head]
+		var seed := queue[head]
 		head += 1
-		for off: Vector2i in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
-			var at := Vector2i(k % Land.N, k / Land.N) + off
-			if not land.inside(at.x, at.y):
+		if _home_net[seed] == 2:
+			continue
+		var y := seed / Land.N
+		var left := seed
+		var right := seed
+		while left > y * Land.N:
+			var k := left - 1
+			if _home_net[k] == 2 or not walkable[kinds[k]] or (occ[k] != 0 and occ[k] != cid):
+				break
+			left = k
+		while right < (y + 1) * Land.N - 1:
+			var k := right + 1
+			if _home_net[k] == 2 or not walkable[kinds[k]] or (occ[k] != 0 and occ[k] != cid):
+				break
+			right = k
+		for k in range(left, right + 1):
+			_home_net[k] = 2
+		for dy: int in [-1, 1]:
+			if y + dy < 0 or y + dy >= Land.N:
 				continue
-			var next := land.idx(at.x, at.y)
-			if _home_net.has(next) or not Land.walk_kind(land.kind[next]) or (land.occ[next] != 0 and land.occ[next] != cid):
-				continue
-			_home_net[next] = true
-			queue.append(next)
+			var connected := false
+			var delta := dy * Land.N
+			for k in range(left + delta, right + delta + 1):
+				if _home_net[k] == 2 or not walkable[kinds[k]] or (occ[k] != 0 and occ[k] != cid):
+					connected = false
+					continue
+				if not connected and _home_net[k] == 0:
+					_home_net[k] = 1
+					queue.append(k)
+				connected = true
 
 
 ## У входа есть мостовая, связанная с площадью, а не отдельный мазок.
 func house_connected(b: Dictionary) -> bool:
-	if not is_house(b) or not _road_near(door_point(b), 1.7, b["cells"]):
+	if not is_house(b):
+		return false
+	var door := door_point(b)
+	if not _road_near(door, 1.7, b["cells"]):
 		return false
 	_home_network()
-	var at := land.cell(door_point(b))
+	var at := land.cell(door)
 	var own: PackedInt32Array = b["cells"]
 	for z in range(at.y - 7, at.y + 8):
 		for x in range(at.x - 7, at.x + 8):
 			if land.inside(x, z):
 				var k := land.idx(x, z)
-				if _home_net.has(k) and not own.has(k):
+				if _home_net[k] != 0 and not own.has(k):
 					return true
 	return false
 
@@ -639,7 +682,7 @@ static func _grid_near(g: Dictionary, p: Vector2, r: float) -> Array:
 
 
 ## Поставить постройку (деньги списываются); возвращает запись. free — даром и без проверок (готовый город)
-func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false, size := Vector2i.ZERO) -> Dictionary:
+func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false, size := Vector2i.ZERO, defer_compute := false, checked := {}) -> Dictionary:
 	if bool(Defs.B[type].get("hidden", false)):
 		return {}
 	if not free and not city_buildable(type):
@@ -648,7 +691,9 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	var d: Dictionary = Defs.B[type]
 	if color < 0:
 		color = pick_color(pos)
-	var chk := check_place(type, pos, yaw, variant, color, -2 if free else -1, PackedInt32Array(), false, size)
+	var chk := checked
+	if chk.is_empty():
+		chk = check_place(type, pos, yaw, variant, color, -2 if free else -1, PackedInt32Array(), false, size)
 	if (size != Vector2i.ZERO or (not free and d.get("sub", "") == "wonders")) and chk["err"] != "":
 		return {}
 	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else 0),
@@ -683,28 +728,59 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		if not bulk:
 			Chronicle.add(self, "decor" if d["kind"] == "decor" else "built")   # летопись: построено игроком
 	var cells: PackedInt32Array = b["cells"]
+	var terrain_started := Perf14.begin()
 	if not d.get("water", false):
 		land.flatten_cells(cells, b["y"], Land.Kind.FIELD if d["kind"] == "farm" else -1)
 		if d["kind"] != "decor":
 			land.blend_ring(cells, b["y"], 8)
+	var changes_walk := false
 	for k in cells:
 		if land.occ[k] >= 0:                   # арку у въезда (занятость < 0) не затираем даже готовым городом
+			changes_walk = changes_walk or Land.walk_kind(land.kind[k])
 			land.occ[k] = b["id"]
-	land.walk_ver += 1
+	land.walk_ver += int(changes_walk)
+	Perf14.detail("placement_terrain", terrain_started)
+	var apron_started := Perf14.begin()
 	_under_add(b)
 	buildings[b["id"]] = b
 	_apron_add(b)
+	Perf14.detail("placement_apron", apron_started)
 	if apron_of(b) == 2:
 		land.wear_block[int(b["id"])] = true
 		_apron_refresh(b)
 	if bulk:                                    # готовый город раскладывается разом — пересчёт один раз в конце
 		building_added.emit(b)
 		return b
-	compute()
-	building_added.emit(b)
-	_check_goals()
-	changed.emit()
+	if defer_compute:
+		place_compute_pending = true
+		building_added.emit(b)
+	else:
+		compute()
+		building_added.emit(b)
+		_check_goals()
+		changed.emit()
 	return b
+
+
+var place_compute_pending := false
+
+
+## Обычная стройка меняет землю сразу, результаты для домов публикуются вместе.
+func finish_place(tree: SceneTree = null) -> void:
+	while place_compute_pending:
+		var computed: bool = true
+		if tree == null:
+			compute()
+		else:
+			computed = await compute(false, [], tree, true)
+		if computed and place_compute_pending:
+			if tree != null and research.has("artisans") and not await _prepare_upgrade_ready(tree):
+				continue
+			if not place_compute_pending:
+				return
+			place_compute_pending = false
+			_check_goals()
+			changed.emit()
 
 
 ## Полоса под арками постройки (акведук) — в Land.under: b.under — её клетки (не сохраняется, при загрузке — заново)
@@ -756,10 +832,12 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 	if refund:
 		money += refund_price(b)
 		flow("build", refund_price(b))
+	var changes_walk := false
 	for k in (b["cells"] as PackedInt32Array):
 		if land.occ[k] == int(b["id"]):        # чужое (арку у въезда, соседа) не освобождаем
+			changes_walk = changes_walk or Land.walk_kind(land.kind[k])
 			land.occ[k] = 0
-	land.walk_ver += 1
+	land.walk_ver += int(changes_walk)
 	for k in (b.get("under", PackedInt32Array()) as PackedInt32Array):
 		if int(land.under.get(k, 0)) == int(b["id"]):
 			land.under.erase(k)
@@ -829,16 +907,20 @@ func manual_hiring() -> bool:
 
 ## Записи взрослых — одни и те же для экономики, улиц и сохранения.
 func workforce() -> Array:
-	var out: Array = []
+	var out := []
 	for home: Dictionary in buildings.values():
-		if not is_house(home):
-			continue
-		var cls: String = def(home)["cls"]
-		for family: Dictionary in home.get("families", []):
-			for member: Dictionary in Residents.fit(family, hash([family["name"], home["id"]]), cls):
-				if int(member.get("age", 0)) > 0:
-					out.append({"m": member, "cls": cls, "home": home["id"], "pos": home["pos"], "family": family["name"]})
+		_collect_workers(home, out)
 	return out
+
+
+func _collect_workers(home: Dictionary, out: Array) -> void:
+	if not is_house(home):
+		return
+	var cls: String = def(home)["cls"]
+	for family: Dictionary in home.get("families", []):
+		for member: Dictionary in Residents.fit(family, hash([family["name"], home["id"]]), cls):
+			if int(member.get("age", 0)) > 0:
+				out.append({"m": member, "cls": cls, "home": home["id"], "pos": home["pos"], "family": family["name"]})
 
 
 const WORK_CLASSES := {"plebs": ["plebs", "artisans", "patricians"], "artisans": ["artisans", "patricians"], "patricians": ["patricians"]}
@@ -848,38 +930,49 @@ const WORK_CLASSES := {"plebs": ["plebs", "artisans", "patricians"], "artisans":
 func _staff_roster() -> Array:
 	var roster := workforce()
 	for b: Dictionary in buildings.values():
-		b["hire_classes"] = {}
-		b["staff_count"] = 0
-		b["staff_output"] = 0.0
-		b["prof_fit"] = 0
+		_reset_staff(b)
 	for worker: Dictionary in roster:
-		var m: Dictionary = worker["m"]
-		var id := int(m.get("job", -1))
-		worker["employed"] = false
-		if id == moving_id and id >= 0:
-			worker["employed"] = true
-			continue
-		var b: Dictionary = buildings.get(id, {})
-		var slot := String(m.get("job_class", ""))
-		if not b.is_empty():
-			var allowed: Dictionary = _job_slots(b)
-			if slot == "":
-				for cl: String in Defs.CLASS_ORDER:
-					if allowed.has(cl) and worker["cls"] in WORK_CLASSES[cl] and int(b["hire_classes"].get(cl, 0)) < int(allowed[cl]):
-						slot = cl
-						break
-			if allowed.has(slot) and worker["cls"] in WORK_CLASSES[slot] and int(b["hire_classes"].get(slot, 0)) < int(allowed[slot]) and int(b["staff_count"]) < int(b.get("hire", 0)):
-				b["hire_classes"][slot] = int(b["hire_classes"].get(slot, 0)) + 1
-				b["staff_count"] += 1
-				var output := happiness_output(buildings.get(int(worker["home"]), {}))
-				b["staff_output"] += output
-				if Defs.PROF_ON and String(m.get("prof", "")) == Defs.building_profession(def(b)):
-					b["prof_fit"] += output
-				m["job_class"] = slot
-				worker["employed"] = true
-				continue
-		# compute вызывается и для предварительного просмотра перестройки. Назначения здесь не стираем.
+		_assign_staff(worker)
 	return roster
+
+
+func _reset_staff(b: Dictionary) -> void:
+	b["hire_classes"] = {}
+	b["staff_count"] = 0
+	b["staff_output"] = 0.0
+	b["prof_fit"] = 0
+
+
+# Неподходящее назначение не стираем: пересчёт бывает и при предварительном просмотре.
+func _assign_staff(worker: Dictionary, staged: ComputeFrame = null) -> void:
+	var m: Dictionary = worker["m"]
+	var id := int(m.get("job", -1))
+	worker["employed"] = false
+	if id == moving_id and id >= 0:
+		worker["employed"] = true
+		return
+	var b: Dictionary = buildings.get(id, {})
+	var slot := String(m.get("job_class", ""))
+	if not b.is_empty():
+		var allowed: Dictionary = _job_slots(b)
+		if slot == "":
+			for cl: String in Defs.CLASS_ORDER:
+				if allowed.has(cl) and worker["cls"] in WORK_CLASSES[cl] and int(b["hire_classes"].get(cl, 0)) < int(allowed[cl]):
+					slot = cl
+					break
+		if allowed.has(slot) and worker["cls"] in WORK_CLASSES[slot] and int(b["hire_classes"].get(slot, 0)) < int(allowed[slot]) and int(b["staff_count"]) < int(b.get("hire", 0)):
+			b["hire_classes"][slot] = int(b["hire_classes"].get(slot, 0)) + 1
+			b["staff_count"] += 1
+			var output := happiness_output(buildings.get(int(worker["home"]), {}))
+			b["staff_output"] += output
+			if Defs.PROF_ON and String(m.get("prof", "")) == Defs.building_profession(def(b)):
+				b["prof_fit"] += output
+			if staged == null:
+				m["job_class"] = slot
+			else:
+				staged.member_slots.append([m, slot])
+			worker["employed"] = true
+			return
 
 
 func staff_members(b: Dictionary) -> Array:
@@ -1186,6 +1279,7 @@ var compute_wait_us := 0
 
 class ComputeFrame:
 	const BUILDING := ["road", "fill", "staff", "active", "over"]
+	const STAFF := ["hire_classes", "staff_count", "staff_output", "prof_fit"]
 	const SHOP := ["served", "serves", "cap", "why", "near_n"]
 	const HOUSE := ["road", "score", "needs", "need_coverage", "need_states", "need_sources",
 		"deco", "deco_bonus", "set_bonus", "street", "monuments", "mon_types", "density", "missing",
@@ -1193,14 +1287,19 @@ class ComputeFrame:
 	const SUMMARY := ["happy_parts", "dim_any", "pop", "residents", "workers", "jobs", "free",
 		"ratio", "filled", "happy", "needs", "class_happy", "happy_tips"]
 
+	var member_slots := []
+	var stage_staff := false
+	var placement := 0
 	var live_buildings: Dictionary
 	var live_stats: Dictionary
 	var live_goods: Dictionary
 	var working_buildings := {}
 	var working_stats: Dictionary
 	var working_goods: Dictionary
+	var deadline := Time.get_ticks_usec() + 4500
 
-	func _init(city: City) -> void:
+	func _init(city: City, manual: bool) -> void:
+		stage_staff = manual
 		live_buildings = city.buildings
 		live_stats = city.stats
 		live_goods = city.goods
@@ -1220,11 +1319,27 @@ class ComputeFrame:
 		city.stats = live_stats
 		city.goods = live_goods
 
+	func slice_due() -> bool:
+		return Time.get_ticks_usec() >= deadline
+
+	func next_frame(city: City, tree: SceneTree, revision: int, terrain: int) -> bool:
+		suspend(city)
+		var waiting := Time.get_ticks_usec()
+		await tree.process_frame
+		city.compute_wait_us += Time.get_ticks_usec() - waiting
+		if revision != city._compute_revision or terrain != city.land.gen or placement != city.place_gen:
+			return false
+		resume(city)
+		deadline = Time.get_ticks_usec() + 4500
+		return true
+
 	func publish(city: City) -> void:
 		suspend(city)
 		for id in working_buildings:
 			var result: Dictionary = working_buildings[id]
 			var live: Dictionary = live_buildings[id]
+			if stage_staff:
+				_copy_fields(live, result, STAFF)
 			match String(Defs.B[result["type"]]["kind"]):
 				"house":
 					_copy_fields(live, result, HOUSE)
@@ -1235,6 +1350,8 @@ class ComputeFrame:
 					_copy_fields(live, result, BUILDING)
 				_:
 					_copy_fields(live, result, BUILDING)
+		for assignment: Array in member_slots:
+			assignment[0]["job_class"] = assignment[1]
 		_copy_fields(live_stats, working_stats, SUMMARY)
 		city.goods = working_goods
 
@@ -1276,17 +1393,20 @@ func _geometry_for(h: Dictionary, houses: Array, decor: Array, hgrid: Dictionary
 
 ## same_place — постройки и земля те же: проверки места перестройки — из запаса.
 ## instant_homes — этаж или перестройка: этим домам сразу показываем новый результат.
-func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = null) -> void:
+func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = null, for_placement := false) -> bool:
 	var started := Perf13.begin()
 	_compute_revision += 1
 	var revision := _compute_revision
 	var terrain := land.gen
 	# Ручной найм пишет назначения прямо в записи членов семьи.
-	var staged: ComputeFrame = ComputeFrame.new(self) if tree != null and not manual_hiring() else null
+	var manual := manual_hiring()
+	var staged: ComputeFrame = ComputeFrame.new(self, manual) if tree != null and (for_placement or not manual) else null
 	if staged != null:
 		staged.resume(self)
 	if not same_place:
 		place_gen += 1
+	if staged != null:
+		staged.placement = place_gen
 	if cache_road_connectivity and (_road_cache_place != place_gen or _road_cache_land != land.gen):
 		_road_cache.clear()
 		_road_cache_place = place_gen
@@ -1296,7 +1416,26 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 		_home_geometry_version = geometry_version
 		_home_geometry.clear()
 		_shop_target_cache.clear()
-	var roster: Array = _staff_roster() if manual_hiring() else []
+	var roster := []
+	if manual and staged == null:
+		roster = _staff_roster()
+	elif manual:
+		for id in buildings:
+			if staged.slice_due():
+				Perf13.end(Perf13.CITY_STAFF, started)
+				if not await staged.next_frame(self, tree, revision, terrain):
+					return false
+				started = Perf13.begin()
+			var b: Dictionary = buildings[id]
+			_collect_workers(b, roster)
+			_reset_staff(b)
+		for worker: Dictionary in roster:
+			if staged.slice_due():
+				Perf13.end(Perf13.CITY_STAFF, started)
+				if not await staged.next_frame(self, tree, revision, terrain):
+					return false
+				started = Perf13.begin()
+			_assign_staff(worker, staged)
 	var houses := []
 	var residents := {}
 	var jobs := {}
@@ -1311,6 +1450,13 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	var stores := []
 	var oc := over_cap()                    # сверх предела уровня — не работают и не берут работников
 	for id in buildings:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				if for_placement:
+					return false
+				return await compute(true, instant_homes)
+			started = Perf13.begin()
 		var b: Dictionary = buildings[id]
 		var d := def(b)
 		match d["kind"]:
@@ -1354,6 +1500,13 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	goods = {}
 	var legacy_supply := {}
 	for id in buildings:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				if for_placement:
+					return false
+				return await compute(true, instant_homes)
+			started = Perf13.begin()
 		var b: Dictionary = buildings[id]
 		var d := def(b)
 		if d["kind"] == "decor" or d["kind"] == "house":
@@ -1377,6 +1530,13 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 		elif d["kind"] == "store" and b["active"]:
 			stores.append(b)
 	for id in buildings:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				if for_placement:
+					return false
+				return await compute(true, instant_homes)
+			started = Perf13.begin()
 		var b: Dictionary = buildings[id]
 		var d := def(b)
 		if d["kind"] == "shop":
@@ -1395,6 +1555,13 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 			monuments.append(b)
 	# лавки обслуживают ближайшие дома в своей дальности, сколько хватит сил
 	for h in houses:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				if for_placement:
+					return false
+				return await compute(true, instant_homes)
+			started = Perf13.begin()
 		h["score"] = {}            # тип лавки → бонус
 		h["needs"] = {}            # вид потребности → true
 		HouseNeeds.reset(h)
@@ -1412,6 +1579,13 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	var want_buildings: Array = buildings.values() if wants_v >= 1 else []
 	var want_grid := _grid(want_buildings) if wants_v >= 1 else {}
 	for s in shops:
+		if staged != null and staged.slice_due():
+			Perf13.end(Perf13.CITY_STAFF, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				if for_placement:
+					return false
+				return await compute(true, instant_homes)
+			started = Perf13.begin()
 		var d := def(s)
 		var r := shop_range(d)
 		var cap := _shop_capacity(d, s["staff"])
@@ -1438,14 +1612,10 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 		s["near_n"] = near.size()      # сколько домов в её дальности
 	Perf13.end(Perf13.CITY_STAFF, started)
 	if staged != null:
-		staged.suspend(self)
-		var waiting := Time.get_ticks_usec()
-		await tree.process_frame
-		compute_wait_us += Time.get_ticks_usec() - waiting
-		if revision != _compute_revision or terrain != land.gen:
-			compute(true, instant_homes)
-			return
-		staged.resume(self)
+		if not await staged.next_frame(self, tree, revision, terrain):
+			if for_placement:
+				return false
+			return await compute(true, instant_homes)
 	started = Perf13.begin()
 	# Счастье дома: основа, нужные классу лавки, украшения и памятники минус нехватка и теснота.
 	# Старые города сохраняют прежние бонусы; карточка показывает те же happy_parts.
@@ -1478,7 +1648,16 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	for b: Dictionary in stories["bonus"]:
 		if b.has("at"):                        # «памятник» скверика: пока скверик стоит (разобрали — бонуса нет)
 			b["_live"] = Stories.square_live_pct(self, b)
+	var slice_start := Time.get_ticks_usec()
 	for h in houses:
+		if staged != null and Time.get_ticks_usec() - slice_start >= 4500:
+			Perf13.end(Perf13.CITY_HOMES, started)
+			if not await staged.next_frame(self, tree, revision, terrain):
+				if for_placement:
+					return false
+				return await compute(true, instant_homes)
+			started = Perf13.begin()
+			slice_start = Time.get_ticks_usec()
 		var cls: String = def(h)["cls"]
 		var cd: Dictionary = Defs.CLASSES[cls]
 		var parts := []
@@ -1673,14 +1852,10 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	stats["class_happy"] = per_class
 	Perf13.end(Perf13.CITY_HOMES, started)
 	if staged != null:
-		staged.suspend(self)
-		var waiting := Time.get_ticks_usec()
-		await tree.process_frame
-		compute_wait_us += Time.get_ticks_usec() - waiting
-		if revision != _compute_revision or terrain != land.gen:
-			compute(true, instant_homes)
-			return
-		staged.resume(self)
+		if not await staged.next_frame(self, tree, revision, terrain):
+			if for_placement:
+				return false
+			return await compute(true, instant_homes)
 	started = Perf13.begin()
 	stats["happy_tips"] = _happy_tips(houses, stores, hgrid)
 	Perf13.end(Perf13.CITY_ADVICE, started)
@@ -1690,6 +1865,7 @@ func compute(same_place := false, instant_homes: Array = [], tree: SceneTree = n
 	if families_came() == 0 and has_connected_house():
 		_tick_arrivals()
 	_upg_ready = null                          # готовность к перестройке — заново (счастье, лавки, соседи могли поменяться)
+	return true
 
 
 ## «вторая лавка с едой — вполовину»: вид потребности в творительном падеже
@@ -3142,12 +3318,38 @@ func can_upgrade(b: Dictionary, check_money := true) -> String:
 
 ## Дома, которые можно перестроить прямо сейчас; check_money = false — и те, кому не хватает только денариев.
 ## Список без денариев считается раз на пересчёт города (compute сбрасывает): кнопка с числом и стрелки — без пересчёта мест
+func _upgrade_candidate(b: Dictionary) -> bool:
+	return is_house(b) and upgrade_to(b) != "" and can_upgrade(b, false) == ""
+
+
+## Значок перестройки потребует эти же проверки сразу после обновления города.
+func _prepare_upgrade_ready(tree: SceneTree, placing := true) -> bool:
+	var revision := _compute_revision
+	var placement := place_gen
+	var terrain := land.gen
+	var all := []
+	var deadline := Time.get_ticks_usec() + 4500
+	var started := Perf14.begin()
+	for id in buildings:
+		if _upgrade_candidate(buildings[id]):
+			all.append(id)
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.detail("placement_upgrade_badge" if placing else "load_upgrade_badge", started)
+			await tree.process_frame
+			if (placing and not place_compute_pending) or revision != _compute_revision or placement != place_gen or terrain != land.gen:
+				return false
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4500
+	Perf14.detail("placement_upgrade_badge" if placing else "load_upgrade_badge", started)
+	_upg_ready = all
+	return true
+
+
 func upgrade_ready(check_money := true) -> Array:
 	if _upg_ready == null:
 		var all := []
 		for id in buildings:
-			var b: Dictionary = buildings[id]
-			if is_house(b) and upgrade_to(b) != "" and can_upgrade(b, false) == "":
+			if _upgrade_candidate(buildings[id]):
 				all.append(id)
 		_upg_ready = all
 	var live := (_upg_ready as Array).filter(func(id): return buildings.has(id))     # снесли без пересчёта — не в счёт
@@ -3172,8 +3374,10 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 	flow("build", -float(price))
 	_apron_remove(h)
 	var old: PackedInt32Array = h["cells"]
+	var changes_walk := false
 	for k in old:
 		if land.occ[k] == int(h["id"]):
+			changes_walk = changes_walk or Land.walk_kind(land.kind[k])
 			land.occ[k] = 0
 	h["type"] = nt
 	h["variant"] = nv
@@ -3186,7 +3390,9 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 	land.blend_ring(cells, h["y"], 8)
 	for k in cells:
 		if land.occ[k] >= 0:
+			changes_walk = changes_walk or Land.walk_kind(land.kind[k])
 			land.occ[k] = h["id"]
+	land.walk_ver += int(changes_walk)
 	_apron_add(h)
 	if apron_of(h) == 2:
 		land.wear_block[int(h["id"])] = true
@@ -4832,7 +5038,7 @@ static func waiting_save(f: Dictionary) -> Dictionary:
 	return out
 
 
-func save_data() -> Dictionary:
+func save_data(raw_cells := false) -> Dictionary:
 	if manual_hiring():
 		_staff_roster()  # штат — по сохранённым назначениям жителей
 	var bl := []
@@ -4840,7 +5046,7 @@ func save_data() -> Dictionary:
 		var b: Dictionary = buildings[id]
 		var e := {"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
 			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": hired_of(b) if manual_hiring() else b.get("hire", -1),
-			"born": int(b.get("born", id)), "cells": _cells64(b["cells"])}
+			"born": int(b.get("born", id)), "cells": b["cells"] if raw_cells else _cells64(b["cells"])}
 		if wants_v >= 1 and is_house(b):
 			e["happy"] = b["happy"]
 			e["unhappy_h"] = int(b.get("unhappy_h", 0))
@@ -4873,7 +5079,8 @@ static func _cells64(cells: PackedInt32Array) -> String:
 	return "" if cells.is_empty() else Marshalls.raw_to_base64(cells.to_byte_array())
 
 
-func load_data(d: Dictionary) -> void:
+func load_data(d: Dictionary, tree: SceneTree = null) -> void:
+	var started := Perf14.begin()
 	# казна в минус не уходит (26.10): старое сохранение с долгом — с нуля
 	money = maxf(0.0, float(d.get("money", Defs.START_MONEY)))
 	unpaid_h = clampi(int(d.get("unpaid_h", 0)), 0, Defs.UNPAID_H)
@@ -4978,7 +5185,13 @@ func load_data(d: Dictionary) -> void:
 	next_id = int(d.get("next_id", 1))
 	buildings = {}
 	land.under.clear()
+	var deadline := Time.get_ticks_usec() + 4500
 	for bd in d.get("buildings", []):
+		if tree != null and Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.START_SAVE, started)
+			await tree.process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4500
 		var c64 := String(bd.get("cells", ""))
 		var cells := Marshalls.base64_to_raw(c64).to_int32_array() if c64 != "" else PackedInt32Array()
 		var b := {"id": int(bd["id"]), "type": bd["type"], "tier": int(bd["tier"]), "pos": Vector2(float(bd["x"]), float(bd["z"])),
@@ -5019,8 +5232,16 @@ func load_data(d: Dictionary) -> void:
 		_under_add(b)                          # полоса под арками акведука — заново (не сохраняется)
 		next_id = maxi(next_id, int(b["id"]) + 1)
 	_migrate_wonders(d)
-	apron_all()
-	compute()
+	Perf14.end(Perf14.START_SAVE, started)
+	if tree != null:
+		await tree.process_frame
+		await apron_all(tree)
+		await tree.process_frame
+		await compute(false, [], tree, true)
+	else:
+		apron_all()
+		compute()
+	started = Perf14.begin()
 	# летопись: старое сохранение без неё — счётчики из того, что стоит, заслуженные венки разом (одна строка)
 	chron = Chronicle.load_from(d.get("chron"))
 	if chron.is_empty():
@@ -5028,6 +5249,7 @@ func load_data(d: Dictionary) -> void:
 	# старое сохранение (до пометок «НОВОЕ»): всё, что уже открыто, — «видели», новым ничего не горит
 	if not tips.has("seen"):
 		seed_seen()
+	Perf14.end(Perf14.START_SAVE, started)
 
 
 # ---------- магистратуры ----------

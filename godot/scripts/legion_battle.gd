@@ -1,6 +1,8 @@
 class_name LegionBattle
 extends Node
 
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Рисованный бой Легиона: ход боя считает LegionSim фиксированным шагом.
 ## Город на паузе, его 3D-кадр скрыт. Поле, бойцы и эффекты рисуются в CanvasLayer.
@@ -57,7 +59,7 @@ var shots := {}                            # снаряд симуляции →
 # ход боя
 var speed := 1.0
 var paused := false
-var phase := "intro"                       # intro | fight | ending | result
+var phase := "loading"                     # loading | intro | fight | ending | result_loading | result
 var acc := 0.0
 var intro_t := 0.0
 var end_t := 0.0
@@ -165,16 +167,26 @@ func _ready() -> void:
 		legion.free_mode = true
 	speed = clampf(float(opts.get("speed", legion.flags.get("battle_speed", 1.0))), 1.0, 3.0)
 	zoom = clampf(float(opts.get("zoom", 1.0)), 0.75, 1.25)
+	var started := Perf14.begin()
 	_fonts()
-	battle_sound = BattleSound.new()
-	add_child(battle_sound)
-	_build_screen()
+	canvas = CanvasLayer.new()
+	canvas.layer = LAYER
+	add_child(canvas)
+	_build_fade()
 	_loading(setup)
+	Perf14.end(Perf14.BATTLE_OPEN, started)
 	# сначала экран с картой провинции, потом (пока он виден) собирается поле — без «замёрзшего» города
 	await get_tree().process_frame
 	await get_tree().process_frame
+	if is_queued_for_deletion():
+		return
 	_enter()
-	_start(setup)
+	await get_tree().process_frame
+	battle_sound = BattleSound.new()
+	add_child(battle_sound)
+	await _build_screen()
+	if not is_queued_for_deletion():
+		_start(setup)
 
 
 ## Город уходит в тень: интерфейс спрятан, камера города не слушает клавиш, 3D города не рисуется
@@ -227,9 +239,7 @@ func _release_music() -> void:
 # =====================================================================
 
 func _build_screen() -> void:
-	canvas = CanvasLayer.new()
-	canvas.layer = LAYER
-	add_child(canvas)
+	var started := Perf14.begin()
 	battle_view = BattleView.new()
 	battle_view.name = "LegionBattleView"
 	battle_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -251,8 +261,14 @@ func _build_screen() -> void:
 	bars.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bars.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui.add_child(bars)
+	Perf14.end(Perf14.BATTLE_UI, started)
+	await get_tree().process_frame
+	started = Perf14.begin()
 	_top_bar()
 	_boss_box()
+	Perf14.end(Perf14.BATTLE_UI, started)
+	await get_tree().process_frame
+	started = Perf14.begin()
 	_perk_bar()
 	_banner_box()
 	pause_lbl = _label("Пауза — пробел, чтобы продолжить", 22, true, C_CREAM)
@@ -278,8 +294,13 @@ func _build_screen() -> void:
 	tut_arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tut_arrow.visible = false
 	ui.add_child(tut_arrow)
-	# занавес между городом и боем: карта провинции (лист 40 владельца) и название боя
+	Perf14.end(Perf14.BATTLE_UI, started)
+
+
+func _build_fade() -> void:
+	# Занавес виден первым, пока собираются поле и интерфейс.
 	fade = ColorRect.new()
+	fade.z_index = 20
 	fade.color = Color(0.12, 0.08, 0.05, 1.0)
 	fade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -681,6 +702,8 @@ func _place_banner() -> void:
 # =====================================================================
 
 func _start(s: Dictionary) -> void:
+	phase = "loading"
+	var started := Perf14.begin()
 	setup = s
 	out = {}
 	pvp = String(s.get("kind", "campaign")) == "pvp"
@@ -693,7 +716,19 @@ func _start(s: Dictionary) -> void:
 	else:
 		var r := int(stage.get("r", 0))
 		biome = String(Legion.regions()[clampi(r, 0, Legion.regions().size() - 1)]["biome"])
+	var tree := get_tree()
+	var paths := BattleView.opening_art(biome)
+	Perf14.end(Perf14.BATTLE_OPEN, started)
+	var art := await CityWarmup.fetch(tree, paths)
+	if phase == "closing" or is_queued_for_deletion():
+		return
+	started = Perf14.begin()
 	battle_view.set_field(biome)
+	Perf14.end(Perf14.BATTLE_FIELD, started)
+	await tree.process_frame
+	if phase == "closing" or is_queued_for_deletion():
+		return
+	started = Perf14.begin()
 	battle_sound.reset(biome)
 	battle_view.pvp = pvp
 	battle_view.legion = legion
@@ -718,9 +753,22 @@ func _start(s: Dictionary) -> void:
 	auto_btn.tooltip_text = "Умения отряд жмёт сам — вовремя и с умом" if auto_ok else "Авто — для пройденных боёв: в первый раз ведите бой сами"
 	var want := bool(opts.get("auto", legion.flags.get("battle_auto", false)))
 	sim.set_auto(want and auto_ok and tut == "")   # запоминается: бой с городом повторит сервер
-	battle_view.prewarm(s.get("waves", []))
+	Perf14.end(Perf14.BATTLE_OPEN, started)
+	await battle_view.prewarm(s.get("waves", []))
+	if phase == "closing" or is_queued_for_deletion():
+		return
+	started = Perf14.begin()
+	art.clear()
+	var deadline := Time.get_ticks_usec() + 5000
 	for u in sim.units:
 		_view(u)
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.BATTLE_OPEN, started)
+			await tree.process_frame
+			if phase == "closing" or is_queued_for_deletion():
+				return
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 5000
 	_score_names()
 	ally_health.initialized = false
 	enemy_health.initialized = false
@@ -885,7 +933,7 @@ func _process(dt: float) -> void:
 
 
 func _process_profiled(dt: float) -> void:
-	if sim == null:
+	if sim == null or phase in ["loading", "closing", "result_loading"]:
 		return
 	dt = minf(dt, 0.1)
 	_fps(dt)
@@ -923,7 +971,8 @@ func _process_profiled(dt: float) -> void:
 		end_t += dt
 		slowmo = lerpf(0.4, 1.0, smoothstep(0.2, 1.6, end_t))
 		if end_t > 2.4:
-			_show_result()
+			_show_result(true)
+			return
 	_update_crowds(gdt)
 	var fighting := phase == "intro" or phase == "fight"
 	battle_sound.update_field(sim, dt, run and fighting, battle_view)
@@ -1174,6 +1223,12 @@ func _perk_fx(e: Dictionary) -> void:
 
 
 func _begin_end() -> void:
+	var started := Perf14.begin()
+	_begin_end_timed()
+	Perf14.end(Perf14.BATTLE_RESULT, started)
+
+
+func _begin_end_timed() -> void:
 	phase = "ending"
 	end_t = 0.0
 	tut_freeze = false                       # отступили, пока бой стоял на масле
@@ -1361,7 +1416,7 @@ func _input(e: InputEvent) -> void:
 		return
 	# клавиши боя не уходят в город (там ими ставят дома, крутят камеру и меняют скорость)
 	get_viewport().set_input_as_handled()
-	if sim == null:
+	if sim == null or phase in ["loading", "closing", "result_loading"]:
 		return
 	var k := e as InputEventKey
 	if not k.pressed or k.echo:
@@ -1454,11 +1509,14 @@ func _close_modal() -> void:
 
 
 ## Экран итога: победа или поражение, звёзды, добыча, рейтинг, что открылось; дальше — следующий бой, ещё раз, в лагерь
-func _show_result() -> void:
-	phase = "result"
+func _show_result(sliced := false) -> void:
+	var started := Perf14.begin()
+	phase = "result_loading" if sliced else "result"
 	var win := bool(out.get("win", false))
 	var first_lesson := bool(setup.get("fort_guide_first", false)) or bool(out.get("guide_finished", false))
 	var p := _modal_panel(610)
+	if sliced:
+		modal.hide()
 	var v: VBoxContainer = p.get_child(0)
 	v.add_theme_constant_override("separation", 10)
 	# лавровый венок со звездой — победа, сломанное копьё — поражение (лист 38 владельца; без него — значки игры)
@@ -1500,7 +1558,11 @@ func _show_result() -> void:
 	var al := _label("Вернулись %d из %d бойцов" % [int(out.get("alive", 0)), int(out.get("total", 0))], 18, false, C_INK)
 	al.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(al)
-	v.add_child(_squad_row())
+	if sliced:
+		Perf14.end(Perf14.BATTLE_RESULT, started)
+		await get_tree().process_frame
+	await _squad_row(v, sliced)
+	started = Perf14.begin() if sliced else started
 	var rw: Dictionary = out.get("reward", {})
 	if not rw.is_empty():
 		var rh := HBoxContainer.new()
@@ -1585,6 +1647,10 @@ func _show_result() -> void:
 		tl.custom_minimum_size = Vector2(480, 0)
 		tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(tl)
+	if sliced:
+		Perf14.end(Perf14.BATTLE_RESULT, started)
+		await get_tree().process_frame
+		started = Perf14.begin()
 	var bh := HBoxContainer.new()
 	bh.alignment = BoxContainer.ALIGNMENT_CENTER
 	bh.add_theme_constant_override("separation", 10)
@@ -1611,6 +1677,9 @@ func _show_result() -> void:
 	Kit.style_button(back)
 	back.name = "LegionBattleReturn"
 	bh.add_child(back)
+	modal.show()
+	phase = "result"
+	Perf14.end(Perf14.BATTLE_RESULT, started)
 
 
 ## Три условия звёзд под звёздами: добытые — золотые, недобытая — серая и почему («пали 1 из 3»)
@@ -1650,11 +1719,14 @@ func _star_lines() -> Control:
 
 
 ## Отряд после боя: павшие — серые.
-func _squad_row() -> Control:
+func _squad_row(parent: Control, sliced: bool) -> void:
 	var h := HBoxContainer.new()
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
 	h.add_theme_constant_override("separation", 6)
 	h.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	parent.add_child(h)
+	var started := Perf14.begin() if sliced else 0
+	var deadline := Time.get_ticks_usec() + 4000
 	for u in sim.units:
 		if u.side != "ally":
 			continue
@@ -1665,7 +1737,12 @@ func _squad_row() -> Control:
 		if not u.alive:
 			tr.modulate = Color(0.42, 0.38, 0.36, 0.75)
 		h.add_child(tr)
-	return h
+		if sliced and Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.BATTLE_RESULT, started)
+			await get_tree().process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4000
+	Perf14.end(Perf14.BATTLE_RESULT, started)
 
 
 ## Картинка с листа владельца (assets/ui/ai/legion/<лист>.png) по номеру; null — листа нет
@@ -1733,28 +1810,60 @@ func _close() -> void:
 	if phase == "closing":
 		return
 	phase = "closing"
+	fade.mouse_filter = Control.MOUSE_FILTER_STOP
 	fade_map.texture = null
 	fade_lbl.text = ""
 	fade.modulate.a = 0.0
 	var tw := create_tween()
 	tw.tween_property(fade, "modulate:a", 1.0, 0.3)
-	tw.tween_callback(func():
-		_clear_world()
-		_leave()
-		if game != null and is_instance_valid(game) and game.can_save and not out.is_empty():
-			game.save()                          # добыча и прогресс похода — сразу в сохранение (и в облако)
-		var o := out
-		if current == self:
-			current = null
-		legion.battle_closed.emit(o)
-		if on_done.is_valid():
-			on_done.call(o)
-		queue_free())
+	tw.tween_callback(_finish_close)
+
+
+func _finish_close() -> void:
+	await battle_view.clear_visible()
+	var tree := get_tree()
+	var started := Perf14.begin()
+	# Сначала освобождаем карточку итога, затем поле и его SubViewport.
+	_clear_world()
+	Perf14.end(Perf14.BATTLE_CLOSE, started)
+	Perf14.detail("battle_release_result", started)
+	await tree.process_frame
+	battle_view.hide()
+	battle_view.queue_free()
+	await tree.process_frame
+	ui.hide()
+	ui.queue_free()
+	await tree.process_frame
+	if is_instance_valid(game):
+		await game.prepare_city_return(self)
+	started = Perf14.begin()
+	_leave()
+	Perf14.end(Perf14.BATTLE_CLOSE, started)
+	Perf14.detail("battle_leave", started)
+	await tree.process_frame
+	if is_instance_valid(game) and game.can_save and not out.is_empty():
+		await game.save_battle_result()
+	var o := out
+	started = Perf14.begin()
+	legion.battle_closed.emit(o)
+	Perf14.end(Perf14.BATTLE_CLOSE, started)
+	Perf14.detail("battle_return_ui", started)
+	if is_instance_valid(game):
+		var legion_ui := LegionUi.of(game.hud)
+		while is_instance_valid(legion_ui) and legion_ui.battle_returning:
+			await tree.process_frame
+	if current == self:
+		current = null
+	if on_done.is_valid():
+		on_done.call(o)
+	queue_free()
 
 
 ## Бросить бой без итога (проверки, выход из игры)
 func abort() -> void:
-	_clear_world()
+	phase = "closing"
+	if is_instance_valid(banner):
+		_clear_world()
 	_leave()
 	if current == self:
 		current = null

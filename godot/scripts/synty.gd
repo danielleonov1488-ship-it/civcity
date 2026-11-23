@@ -1,5 +1,7 @@
 class_name Synty
 extends RefCounted
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Модели Synty POLYGON Ancient Empire (куплено владельцем; лежат только локально, в git не попадают).
 ## В файлах моделей пути к текстурам — с чужих компьютеров, поэтому материалы назначаем сами:
 ## по списку MaterialList (слот материала → картинка) из набора.
@@ -9,6 +11,7 @@ static var _paths := {}          # имя модели → путь к FBX
 static var _slots := {}          # слот материала → [albedo, normal]
 static var _mesh_slots := {}     # модель → [[слот, albedo, normal], …] по порядку материалов
 static var _tex := {}            # имя картинки → путь
+static var _texture_names := {}
 static var _mats := {}           # слот → материал
 static var _scenes := {}
 static var unknown := {}         # слоты без картинки (для отладки)
@@ -66,6 +69,8 @@ static func _scan(path: String, ext: String, out: Dictionary) -> void:
 static func _tex_path(name: String) -> String:
 	if name == "":
 		return ""
+	if _texture_names.has(name):
+		return _texture_names[name]
 	var cands := [name]
 	var m := RegEx.create_from_string("^PolygonAncientEmpire_([0-9][0-9])_([A-C])$").search(name)
 	if m:
@@ -75,10 +80,14 @@ static func _tex_path(name: String) -> String:
 		cands.append("PolygonAncientWorlds_Normal_%s" % m.get_string(1))
 		cands.append("PolygonAncientWorlds_Normal_01")
 	cands.append_array([name.replace("_01", "_Tex"), name.replace("_01", "_Texture_01"), name.trim_suffix("_01"), name.to_lower()])
-	for c in cands:
-		for k in _tex.keys():
-			if k == c or k.to_lower() == String(c).to_lower():
+	for c: String in cands:
+		var lower := c.to_lower()
+		for k: String in _tex:
+			if k.to_lower() == lower:
+				_texture_names[name] = _tex[k]
 				return _tex[k]
+	if not _tex.is_empty():
+		_texture_names[name] = ""
 	return ""
 
 
@@ -103,7 +112,41 @@ static func names(prefix: String) -> Array:
 
 ## remap — подмена картинок: {"Stucco_White_01": "Stucco_Orange_01"} перекрашивает штукатурку дома;
 ## remap["tint"] — оттенок (деревья чуть зеленее палитры, ближе к уютной зелени Town to City)
+static func texture_paths(name: String, remap: Dictionary, paths: Dictionary) -> void:
+	var slots: Array = _mesh_slots.get(name, _mesh_slots.get(name + "_LOD0", []))
+	for entry: Array in slots:
+		var slot: String = entry[0]
+		var pair: Array = _slots.get(slot, entry.slice(1))
+		var albedo: String = String(pair[0]).get_basename()
+		var path := _tex_path(String(remap.get(albedo, albedo)))
+		if path != "":
+			paths[path] = true
+		var normal: String = String(pair[1]).get_basename()
+		if not normal.begins_with("PolygonAncientEmpire_") and normal != "":
+			path = _tex_path(normal)
+			if path != "":
+				paths[path] = true
+
+
+static func _material_texture(path: String) -> Texture2D:
+	if not Gfx._tex_small:
+		var cached := ResourceLoader.get_cached_ref(path) as Texture2D
+		if cached != null:
+			return cached
+	var started := Perf14.begin()
+	var texture := Gfx.tex(path)
+	Perf14.loaded(path, started)
+	return texture
+
+
 static func material(slot: String, remap := {}) -> Material:
+	var started := Perf14.begin()
+	var value := material_profiled(slot, remap)
+	Perf14.end(Perf14.MATERIAL, started)
+	return value
+
+
+static func material_profiled(slot: String, remap := {}) -> Material:
 	var mkey := slot + "|" + str(remap)
 	if _mats.has(mkey):
 		return _mats[mkey]
@@ -125,14 +168,14 @@ static func material(slot: String, remap := {}) -> Material:
 			m.albedo_color = tints[albedo]
 		var ap := _tex_path(albedo)
 		if ap != "":
-			m.albedo_texture = Gfx.tex(ap)             # на «Очень низкой» — копия поменьше (scripts/gfx.gd)
+			m.albedo_texture = _material_texture(ap)             # на «Очень низкой» — копия поменьше (scripts/gfx.gd)
 		else:
 			unknown["tex:" + albedo] = true
 		# у общей палитры карта рельефа от другого набора — без неё палитра чище (как у Synty)
 		var np := "" if normal.begins_with("PolygonAncientEmpire_") else _tex_path(normal)
 		if np != "":
 			m.normal_enabled = true
-			m.normal_texture = Gfx.tex(np)
+			m.normal_texture = _material_texture(np)
 			m.normal_scale = 0.6
 		# решётки окон: просветы прозрачные — за ними тёмная комната, ночью у жилых домов тёплый свет
 		if albedo.begins_with("Window"):
@@ -182,7 +225,7 @@ static func set_season(v: Vector4) -> void:
 const GREEN := Color(0.9, 0.93, 0.72)
 
 
-static func make(name: String, remap := {}) -> Node3D:
+static func make(name: String, remap := {}, geometry_only := false) -> Node3D:
 	if name.begins_with("K:"):
 		return KitLib.make(name, remap)                  # свой набор деталей (дома из Blender)
 	if name.begins_with("M:"):
@@ -197,8 +240,12 @@ static func make(name: String, remap := {}) -> Node3D:
 		push_warning("Synty: нет модели " + name)
 		return Node3D.new()
 	if not _scenes.has(name):
+		var loading := Perf14.begin()
 		_scenes[name] = load(_paths[name])
+		Perf14.loaded(_paths[name], loading)
 	var n := (_scenes[name] as PackedScene).instantiate() as Node3D
+	if geometry_only:
+		return n
 	var open_bridge := bool(remap.get("open_bridge", false))
 	if open_bridge:
 		remap = remap.duplicate()
@@ -216,7 +263,7 @@ static func make(name: String, remap := {}) -> Node3D:
 				var src := mi.mesh.surface_get_material(i)
 				slot = src.resource_name if src else ""
 			var m := material(slot, remap)
-			if m is StandardMaterial3D and (m as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_DISABLED and _two_faced(mi.mesh, i):
+			if m is StandardMaterial3D and (m as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_DISABLED and _two_faced(mi.mesh, i, name + "|" + String(n.get_path_to(mi)) + "|" + str(open_bridge)):
 				m = _cull_back(m as StandardMaterial3D)
 			mi.set_surface_override_material(i, m)
 	return n
@@ -262,11 +309,13 @@ static func _open_bridge_arch(source: Mesh) -> ArrayMesh:
 ## лист, нормалью наружу. Поверхности, где лист один и нормаль по его лицу (Ivy_Flowers_01–03, лоза, ящики цветов),
 ## остаются двусторонними: у них Godot разворачивает нормаль правильно
 static var _faced := {}
-static func _two_faced(mesh: Mesh, s: int) -> bool:
-	var k := "%d|%d" % [mesh.get_instance_id(), s]
+static func _two_faced(mesh: Mesh, s: int, source: String) -> bool:
+	var k := "%s|%d" % [source, s]
 	if _faced.has(k):
 		return _faced[k]
+	var started := Perf14.begin()
 	var ia := mesh.surface_get_arrays(s)
+	Perf14.end(Perf14.MESH_READ, started)
 	var vs: PackedVector3Array = ia[Mesh.ARRAY_VERTEX]
 	var ns: PackedVector3Array = ia[Mesh.ARRAY_NORMAL]
 	var idx: PackedInt32Array = ia[Mesh.ARRAY_INDEX] if ia[Mesh.ARRAY_INDEX] != null else PackedInt32Array()

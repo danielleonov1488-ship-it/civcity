@@ -29,7 +29,7 @@ def launch(output: Path) -> int:
     if shell is None:
         raise RuntimeError("Git Bash не найден")
     profile = output / "profiles" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    env = dict(os.environ, GPU_TIMEOUT="2700", ONE_GODOT="1", CIVCITY_TESTWIN="hidden",
+    env = dict(os.environ, GPU_TIMEOUT=os.environ.get("GPU_TIMEOUT", "2700"), ONE_GODOT="1", CIVCITY_TESTWIN="hidden",
                CIVCITY_SAVEDIR=profile.as_posix(), CIVCITY_NOLOGIN="1")
     script = "/d/CivCity/.work/py/gpu_run.sh"
     args = [shell, "--noprofile", "--norc", script, "--resolution", "1920x1080", "--log-file",

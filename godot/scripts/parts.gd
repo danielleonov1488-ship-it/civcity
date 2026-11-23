@@ -1,5 +1,7 @@
 class_name Parts
 extends Node3D
+
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Пул деталей: все одинаковые детали Synty (одной раскраски) по всему городу рисуются одним MultiMesh.
 ## place(чертёж, где) возвращает ручку; remove(ручка) убирает детали этой постройки.
 ## Свободные места переиспользуются, буфер растёт удвоением.
@@ -7,6 +9,7 @@ extends Node3D
 var groups := {}          # ключ → {subs: [{mm, mmi, local}], free: [], used: int, cap: int}
 var alias := {}           # прежний ключ (с цветом оттенка) → группа без оттенка: подсветка (cover.gd) ищет по нему
 static var _special := {}
+var _initial_draw: Array[MultiMeshInstance3D] = []
 const WHEAT_BATCH := 24.0
 
 ## Оттенок — у экземпляра (12.11, владелец: «минимум 120 кадров»): одинаковые детали разных цветов (штукатурка
@@ -77,11 +80,15 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 	else:
 		var src := Synty.make(name, remap)
 		for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-			var mesh := mi.mesh.duplicate() as Mesh
-			for s in mesh.get_surface_count():
-				var m := mi.get_surface_override_material(s)
-				if m:
-					mesh.surface_set_material(s, m)
+			var mesh := mi.mesh
+			if not name.begins_with("K:") or not remap.is_empty() or tile.x >= 0:
+				var copy_started := Perf14.begin()
+				mesh = mesh.duplicate() as Mesh
+				Perf14.end(Perf14.MESH_COPY, copy_started)
+				for s in mesh.get_surface_count():
+					var m := mi.get_surface_override_material(s)
+					if m:
+						mesh.surface_set_material(s, m)
 			var sub := _sub(mesh, Citizen._rel(mi, src))
 			_small(name, sub, tile)
 			g["subs"].append(sub)
@@ -100,7 +107,9 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 	var subs := []
 	var ok := true
 	for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
+		var copy_started := Perf14.begin()
 		var mesh := mi.mesh.duplicate() as Mesh
+		Perf14.end(Perf14.MESH_COPY, copy_started)
 		for s in mesh.get_surface_count():
 			var m := mi.get_surface_override_material(s)
 			if m == null:
@@ -243,6 +252,13 @@ static func _far_fade(mesh: Mesh) -> void:
 
 
 func _sub(mesh: Mesh, local: Transform3D, colors := false) -> Dictionary:
+	var started := Perf14.begin()
+	var value := _sub_profiled(mesh, local, colors)
+	Perf14.end(Perf14.MULTIMESH, started)
+	return value
+
+
+func _sub_profiled(mesh: Mesh, local: Transform3D, colors := false) -> Dictionary:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = colors
@@ -252,6 +268,29 @@ func _sub(mesh: Mesh, local: Transform3D, colors := false) -> Dictionary:
 	mmi.multimesh = mm
 	add_child(mmi)
 	return {"mm": mm, "mmi": mmi, "local": local}
+
+
+## Отмечаем только детали, которые рисуются при выбранном качестве.
+func hide_initial_batches() -> void:
+	for child: Node in get_children():
+		if child is MultiMeshInstance3D and (child as MultiMeshInstance3D).visible:
+			var mmi := child as MultiMeshInstance3D
+			mmi.hide()
+			_initial_draw.append(mmi)
+	show()
+
+
+## После первого кадра камеры добавляем детали города и природу порциями.
+func show_initial_batches() -> void:
+	var tree := get_tree()
+	for start in range(0, _initial_draw.size(), 96):
+		var started := Perf14.begin()
+		for mmi: MultiMeshInstance3D in _initial_draw.slice(start, start + 96):
+			if is_instance_valid(mmi):
+				mmi.show()
+		Perf14.detail("load_city_draw_batch", started)
+		await tree.process_frame
+	_initial_draw.clear()
 
 
 static func _special_mesh(name: String) -> Mesh:
@@ -477,6 +516,7 @@ static func _bird_mesh(swan: bool) -> Mesh:
 
 
 func _grow(g: Dictionary) -> void:
+	var started := Perf14.begin()
 	var cap: int = maxi(16, int(g["cap"]) * 2)
 	for sub in g["subs"]:
 		var mm: MultiMesh = sub["mm"]
@@ -488,6 +528,7 @@ func _grow(g: Dictionary) -> void:
 			buffer.resize(cap * stride)
 			mm.buffer = buffer
 	g["cap"] = cap
+	Perf14.end(Perf14.BUFFER, started)
 
 
 func _alloc(g: Dictionary) -> int:
@@ -503,16 +544,41 @@ func _alloc(g: Dictionary) -> int:
 	return i
 
 
+static func _batch_tile(name: String, pos: Vector3) -> Vector2i:
+	if name == CatCivic.WHEAT or name == CatCivic.WHEAT_DENSE:
+		return Vector2i(Vector2(pos.x, pos.z) / WHEAT_BATCH)
+	return Vector2i(-1, -1)
+
+
+## Пока здание растёт, готовим те же группы, которые возьмёт готовая модель.
+func prepare_groups(bp: Bp, xf: Transform3D, subst: Dictionary, alive: Callable) -> void:
+	var tree := get_tree()
+	var deadline := Time.get_ticks_usec() + 3000
+	var started := Perf14.begin()
+	for p: Array in bp.parts:
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.detail("placement_parts_prepare", started)
+			await tree.process_frame
+			if not alive.call():
+				return
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 3000
+		var name: String = subst.get(p[0], p[0])
+		var local: Transform3D = p[1]
+		_group(name, p[2], _batch_tile(name, xf * local.origin))
+	Perf14.detail("placement_parts_prepare", started)
+
+
 ## Поставить чертёж; xf — где стоит постройка. Возвращает ручку [[группа, место], …]
 func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 	var handles := []
 	for p in bp.parts:
 		var name: String = subst.get(p[0], p[0])
 		var t: Transform3D = xf * (p[1] as Transform3D)
-		var tile := Vector2i(-1, -1)
-		if name == CatCivic.WHEAT or name == CatCivic.WHEAT_DENSE:
-			tile = Vector2i(Vector2(t.origin.x, t.origin.z) / WHEAT_BATCH)
+		var tile := _batch_tile(name, t.origin)
+		var started := Perf14.begin()
 		var g := _group(name, p[2], tile)
+		Perf14.end(Perf14.PARTS, started)
 		var col := _col
 		var slot := _alloc(g)
 		var tinted := g.has("tint")
@@ -622,8 +688,26 @@ static func outline_material(col := Color(1.0, 0.97, 0.88), width := 0.07) -> Sh
 ## "shell" — только цветная оболочка (подсветка существующей постройки); "outline" — обводка по силуэту
 static func ghost(bp: Bp, mode := "place", col := Color(0.4, 0.9, 0.4, 0.4)) -> Node3D:
 	var root := Node3D.new()
+	fill_ghost(root, bp, mode, col)
+	return root
+
+
+static func fill_ghost(root: Node3D, bp: Bp, mode: String, col: Color, tree: SceneTree = null) -> void:
 	var wheat := {CatCivic.WHEAT: [], CatCivic.WHEAT_DENSE: []}
-	for p in bp.parts:
+	var mat: Material
+	match mode:
+		"shell": mat = tint_material(col, 0.03)
+		"outline": mat = outline_material(col)
+		"thumbnail": pass
+		_: mat = tint_material(col, 0.005)
+	root.set_meta("mat", mat)
+	var deadline := Time.get_ticks_usec() + 2500
+	for p: Array in bp.parts:
+		if tree != null and Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			if not is_instance_valid(root) or root.is_queued_for_deletion():
+				return
+			deadline = Time.get_ticks_usec() + 2500
 		var name: String = p[0]
 		if wheat.has(name):
 			(wheat[name] as Array).append(p[1])
@@ -637,6 +721,7 @@ static func ghost(bp: Bp, mode := "place", col := Color(0.4, 0.9, 0.4, 0.4)) -> 
 			n = Synty.make(p[0], p[2])
 		n.transform = p[1]
 		root.add_child(n)
+		_ghost_material(n, mode, mat)
 	# Призрак поля и короткая анимация стройки тоже рисуют пучки пачками.
 	for name: String in wheat:
 		var transforms: Array = wheat[name]
@@ -651,19 +736,24 @@ static func ghost(bp: Bp, mode := "place", col := Color(0.4, 0.9, 0.4, 0.4)) -> 
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		root.add_child(mmi)
-	var mat: Material
-	match mode:
-		"shell": mat = tint_material(col, 0.03)
-		"outline": mat = outline_material(col)
-		_: mat = tint_material(col, 0.005)
-	for mi: GeometryInstance3D in root.find_children("*", "GeometryInstance3D", true, false):
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_ghost_material(mmi, mode, mat)
+
+
+static func _ghost_material(node: Node3D, mode: String, mat: Material) -> void:
+	if node is GeometryInstance3D:
+		var geometry := node as GeometryInstance3D
+		geometry.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if mode == "place":
-			mi.material_overlay = mat
+			geometry.material_overlay = mat
 		else:
-			mi.material_override = mat
-	root.set_meta("mat", mat)
-	return root
+			geometry.material_override = mat
+	for child: Node3D in node.find_children("*", "GeometryInstance3D", true, false):
+		var geometry := child as GeometryInstance3D
+		geometry.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if mode == "place":
+			geometry.material_overlay = mat
+		else:
+			geometry.material_override = mat
 
 
 static func ghost_color(g: Node3D, col: Color) -> void:

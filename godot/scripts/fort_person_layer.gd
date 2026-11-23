@@ -30,21 +30,26 @@ var _render_rect := Rect2()
 var _tilt := 0.0
 var _height_scale := 1.0
 var _units_per_pixel := 10.0
+var _auto_draw := true
+var _texture_ready := false
 static var _outline: ShaderMaterial
 static var _shadow: GradientTexture2D
 
 
-func setup(view_name: String, tilt: float, antialias := true) -> void:
+func setup(view_name: String, tilt: float, antialias := true, auto_draw := true) -> void:
+	_auto_draw = auto_draw
 	_tilt = tilt
 	_height_scale = 1.0 / (1.79 * cos(deg_to_rad(_tilt)))
 	viewport = SubViewport.new()
 	viewport.name = view_name
 	viewport.own_world_3d = true
+	viewport.positional_shadow_atlas_size = 0
 	viewport.transparent_bg = true
 	viewport.gui_disable_input = true
 	viewport.msaa_3d = Viewport.MSAA_2X if antialias else Viewport.MSAA_DISABLED
 	viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
-	viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
+	viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	add_child(viewport)
 	camera = Camera3D.new()
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
@@ -68,6 +73,7 @@ func setup(view_name: String, tilt: float, antialias := true) -> void:
 		_outline = ShaderMaterial.new()
 		_outline.shader = shader
 	overlay = TextureRect.new()
+	overlay.hide()
 	overlay.texture = viewport.get_texture()
 	overlay.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -84,11 +90,16 @@ func _light(color: Color, energy: float, angles: Vector3) -> void:
 	viewport.add_child(light)
 
 
-func fit(area: Vector2) -> void:
-	extent = area.max(Vector2.ONE)
+func fit(area: Vector2, bounds := Rect2()) -> void:
+	var next_extent := area.max(Vector2.ONE)
+	if extent != next_extent:
+		extent = next_extent
+		_render_rect = Rect2()
 	_units_per_pixel = 10.0 / extent.y
-	_render_rect = Rect2()
-	_view_rect(Rect2(Vector2.ZERO, extent))
+	if bounds.has_area():
+		crop_to(bounds)
+	else:
+		_view_rect(Rect2(Vector2.ZERO, extent))
 
 
 func crop_to(bounds: Rect2) -> void:
@@ -97,9 +108,13 @@ func crop_to(bounds: Rect2) -> void:
 	var start := (bounds.position / tile).floor() * tile
 	var end := (bounds.end / tile).ceil() * tile
 	var area := Rect2(start, end - start).intersection(Rect2(Vector2.ZERO, extent))
-	overlay.visible = area.has_area()
-	if overlay.visible:
+	if area.has_area():
 		_view_rect(area)
+	else:
+		_render_rect = Rect2()
+		overlay.hide()
+		_texture_ready = false
+		viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 
 
 func _view_rect(area: Rect2) -> void:
@@ -107,12 +122,34 @@ func _view_rect(area: Rect2) -> void:
 		return
 	_render_rect = area
 	var factor := minf(1.0, minf(1920.0 / area.size.x, 1080.0 / area.size.y))
-	viewport.size = Vector2i((area.size * factor).round()).max(Vector2i(2, 2))
+	var pixels := Vector2i((area.size * factor).round()).max(Vector2i(2, 2))
+	if viewport.size != pixels:
+		viewport.size = pixels
+		_texture_ready = false
 	var at := (area.get_center() - extent * 0.5) * (10.0 / extent.y)
 	camera.position = _frame * Vector3(at.x, -at.y, 0.0)
 	camera.size = 10.0 * area.size.y / extent.y
 	overlay.position = area.position
 	overlay.size = area.size
+	if _auto_draw and not _texture_ready:
+		render_first_frame()
+
+
+func render_first_frame() -> void:
+	# После создания или смены размера в текстуре ещё нет кадра персонажей.
+	overlay.hide()
+	viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	if not RenderingServer.frame_post_draw.is_connected(_show_rendered):
+		RenderingServer.frame_post_draw.connect(_show_rendered, CONNECT_ONE_SHOT)
+
+
+func _show_rendered() -> void:
+	if not _render_rect.has_area():
+		return
+	_texture_ready = true
+	overlay.show()
+	if _auto_draw:
+		viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
 
 
 func project(at: Vector3) -> Vector2:

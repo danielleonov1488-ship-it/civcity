@@ -9,12 +9,13 @@ extends Node3D
 const MIN_R := 10.0                      # пруд не меньше этого радиуса
 const HOURS := [7.0, 19.5]
 const SPEED := 0.022                     # радиан в секунду по кругу (×скорость игры) — лодка дрейфует
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 
 var game
 var boats: Array = []                    # [{n, rod, bob, c, r, a, w, ph}]
 
 
-func setup(g) -> void:
+func setup(g, tree: SceneTree = null) -> void:
 	game = g
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 77
@@ -22,7 +23,11 @@ func setup(g) -> void:
 		var c3: Vector3 = pd[0]
 		if c3.z < MIN_R:
 			continue
+		var started := Perf14.begin()
 		_make(c3, rng)
+		Perf14.detail("load_boats", started)
+		if tree != null:
+			await tree.process_frame
 
 
 ## Лодка с рыбаком на озере реки (15.11: озеро кладётся после ручьёв — Streams; MeadowNature._water_life)

@@ -513,8 +513,9 @@ func building_ids(id: String) -> Array[String]:
 
 func _update_picture(img: TextureRect, r: Dictionary) -> void:
 	for type: String in building_ids(String(r["id"])):
-		if hud.icons.get(type) != null:
-			img.texture = hud.icons[type]
+		var icon: Texture2D = hud.building_icon(type)
+		if icon:
+			img.texture = icon
 			img.modulate = Color.WHITE
 			return
 	img.texture = CityStyle.icon(String(r["icon"]))

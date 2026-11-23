@@ -67,6 +67,10 @@ func _run() -> void:
 	get_window().content_scale_size = Vector2i.ZERO
 	get_window().size = SIZE
 	get_tree().auto_accept_quit = false
+	log.viewport_rid = get_viewport().get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(log.viewport_rid, true)
+	RenderingServer.frame_pre_draw.connect(log.pre_draw)
+	RenderingServer.frame_post_draw.connect(log.post_draw)
 	Game.sandbox = false
 	Game.boot = {"new": "1", "nologin": "1"}
 	var main := MAIN.instantiate() as Game
@@ -154,8 +158,12 @@ func _finish() -> void:
 func _process(dt: float) -> void:
 	if not taking_measurements:
 		return
-	log.clock(dt, game.speed if is_instance_valid(game) and game.ready_done else 0.0)
 	var active := get_tree().current_scene as Game
+	var window := "loading"
+	if is_instance_valid(active) and active.ready_done:
+		window = "settings" if active.hud.settings_panel.visible else "play"
+	var load_step := "" if active == null else active.loading_step
+	log.clock(dt, game.speed if is_instance_valid(game) and game.ready_done else 0.0, window, load_step)
 	if active != null and active.ready_done and active != game:
 		_bind(active)
 		if allow_pause_on_load and game.mode == "play":
@@ -918,12 +926,11 @@ func _fort_route() -> bool:
 
 
 func _open_fort() -> bool:
-	if camp.visible:
-		return true
-	_press(hud.adv_ok)
-	if not _press(hud.top_btns.get("legion")):
-		return false
-	return await _wait("открытие форта", func(): return camp.visible, 8.0)
+	if not camp.visible:
+		_press(hud.adv_ok)
+		if not _press(hud.top_btns.get("legion")):
+			return false
+	return await _wait("открытие форта", func(): return camp.visible and not camp.opening, 8.0)
 
 
 func _fort_tutorial() -> bool:
@@ -998,10 +1005,12 @@ func _fight(index: int, fast := false) -> bool:
 	var win := bool(battle.out.get("win", false))
 	if not _press(_button(battle, "LegionBattleReturn")):
 		return _fail("Нет кнопки возврата в форт")
-	var returned := await _wait("возврат из боя", func(): return camp.visible or camp.lu.visible, 18, index >= 0)
+	var returned := await _wait("возврат из боя", func():
+		return ((camp.visible and not camp.opening) or (camp.lu.visible and not camp.lu.battle_returning)) \
+			and LegionBattle.current == null, 18, index >= 0)
 	if camp.lu.visible:
 		_key(KEY_ESCAPE)
-		returned = await _wait("закрытие карты похода", func(): return camp.visible and not camp.lu.visible, 8)
+		returned = await _wait("закрытие карты похода", func(): return camp.visible and not camp.opening and not camp.lu.visible, 8)
 	return returned and speed_ok and (index < 0 or _check(win, "Поражение в учебном бою %d" % (index + 1)))
 
 

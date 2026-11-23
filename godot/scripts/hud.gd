@@ -1,5 +1,8 @@
 class_name Hud
 extends CanvasLayer
+
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Интерфейс в римском духе — рисованный набор владельца (assets/ui/ai): резные рамки с меандром, свитки
 ## с валиками, бронзовые медальоны с цветными иконками, табличка с орлом и лентой названия города. Устроен как в Town to City:
 ## сверху слева — город, жители, счастье, время; рядом — три класса жителей; под ними — задания со стрелкой-подсказкой.
@@ -12,8 +15,12 @@ var font: Font
 var font_bold: Font
 var font_title: Font
 var theme_main: Theme
-var icons := {}                      # картинки построек для карточек
+var icons := {}                      # картинки построек в ОЗУ
+var _building_icon_textures: Dictionary = {}
+const BUILDING_ICON_CACHE := 24
 var _ico := {}
+static var _icon_pixels := {}
+const ICON_PIXELS_LIMIT := 256
 var _medals := {}
 var _grey_mat: ShaderMaterial
 
@@ -195,6 +202,7 @@ var _pointer_badge := {}
 var pointer_text: Label
 var _pointer_id := 0
 var _pointer_side := Vector2.ZERO
+var _pointer_hire_key := ""
 var _pointer_blocked := 0.0
 var _pointer_clear_frame := -1
 var _pointer_goal := Vector2.ZERO
@@ -230,6 +238,7 @@ var _cursor_px := 0
 
 
 func _ready() -> void:
+	set_process(false)
 	layer = 10
 	marble = str(game.settings.get("ui_style", "marble")) == "marble" and not OS.get_cmdline_user_args().has("--paui")
 	_fonts()
@@ -240,37 +249,30 @@ func _ready() -> void:
 	root.theme = theme_main
 	root.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	add_child(root)
-	_badge_layer()
-	_city_card()
-	_class_chips()
-	_families()
-	_tasks()
-	_rank_button()
-	_top_right()
-	MagisUI.attach(self)
-	_bottom_left()
-	_bottom_center()
-	_bottom_right()
-	_tool_panel()
-	_overlay_panel()
-	_info_panel()
-	_advisor()
-	_notes()
-	_events_panel()
-	_research_panel()
-	_finance_panel()
-	_stats_panel()
-	_pause_panel()
-	_settings_panel()
-	_credits_panel()
-	_buy_panel()
-	_pointer()
-	_hover_tip_panel()
-	LegionUi.attach(self)                      # окно «Легион» и его медальон сверху справа (scripts/legion_ui.gd)
-	CampUI.attach(self)                        # отдельный лагерь новой игры
-	_hero_button()                             # медальон «Герой» (Д11): лицо своего героя, щелчок — к нему
+
+
+## Заставка остаётся над интерфейсом, пока панели строятся по очереди.
+func prepare() -> void:
+	var panels: Array[Callable] = [_badge_layer, _city_card, _class_chips, _families, _tasks,
+		_rank_button, _top_right, MagisUI.attach.bind(self), _bottom_left, _bottom_center,
+		_bottom_right, _tool_panel, _overlay_panel, _info_panel, _advisor, _notes,
+		_events_panel, _research_panel, _finance_panel, _stats_panel, _pause_panel,
+		_settings_panel, _credits_panel, _buy_panel, _pointer, _hover_tip_panel,
+		LegionUi.attach.bind(self), CampUI.attach.bind(self), _hero_button]
+	var deadline := Time.get_ticks_usec() + 4500
+	for panel: Callable in panels:
+		var started := Perf14.begin()
+		if panel == _bottom_center:
+			await _bottom_center()
+		else:
+			panel.call()
+			Perf14.end(Perf14.START_HUD, started)
+			Perf14.detail("hud_" + String(panel.get_method()), started)
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 4500
 	if game != null and game.city != null:
-		game.city.rp_reward.connect(_fly_rp)      # просьба дала очки — «+25» летит к счётчику свитков (без звука и всплывашки)
+		game.city.rp_reward.connect(_fly_rp)
 	apply_scale(float(game.settings.get("ui_scale", 1.0)))
 	get_window().size_changed.connect(func():
 		apply_scale(float(game.settings.get("ui_scale", 1.0)))
@@ -278,12 +280,16 @@ func _ready() -> void:
 	get_tree().node_added.connect(_on_node_added)
 	_hook_buttons(self)
 	_make_icons()
+	set_process(true)
 
 
 ## Размер интерфейса из настроек, но не крупнее, чем помещается по ширине окна (MIN_W логических точек):
 ## иначе нижние полосы и кнопки наверху наезжают друг на друга
 func apply_scale(s: float) -> void:
-	get_window().content_scale_factor = clampf(s, 0.7, ui_cap())
+	var scale := clampf(s, 0.7, ui_cap())
+	if is_equal_approx(get_window().content_scale_factor, scale):
+		return
+	get_window().content_scale_factor = scale
 	var ws := Vector2(get_window().size)
 	if ws.x >= 64.0 and ws.y >= 64.0:
 		_fit_bottom.call_deferred()           # экран в точках стал уже — полосы внизу подогнать
@@ -534,10 +540,15 @@ func ico(name: String, size := 64) -> Texture2D:
 	var key := "%s:%d" % [name, size]
 	if _ico.has(key):
 		return _ico[key]
-	var tex: Texture2D = null
 	var png := ui_tex("icons/" + name)
-	if ResourceLoader.exists(png):
-		var img := src_image(png)
+	var svg := "res://assets/ui/icons/%s.svg" % name
+	var painted_icon := ResourceLoader.exists(png)
+	var pixel_key := "%s:%d" % [png if painted_icon else svg, size]
+	var img: Image = _icon_pixels.get(pixel_key)
+	if img != null:
+		_icon_pixels.erase(pixel_key)
+	elif painted_icon:
+		img = src_image(png)
 		if img.is_compressed():
 			img.decompress()
 		img.clear_mipmaps()
@@ -546,21 +557,21 @@ func ico(name: String, size := 64) -> Texture2D:
 		if px != img.get_width():
 			img.resize(px, px, Image.INTERPOLATE_LANCZOS)
 		img.generate_mipmaps()
+	elif FileAccess.file_exists(svg):
+		img = Image.new()
+		img.load_svg_from_string(FileAccess.get_file_as_string(svg), size / 512.0)
+	elif ResourceLoader.exists(svg):         # собранная игра: только импортированная картинка 512
+		img = (load(svg) as Texture2D).get_image()
+		if img.is_compressed():
+			img.decompress()
+		img.convert(Image.FORMAT_RGBA8)
+		img.resize(maxi(1, roundi(img.get_width() * size / 512.0)), maxi(1, roundi(img.get_height() * size / 512.0)), Image.INTERPOLATE_LANCZOS)
+	var tex: Texture2D
+	if img != null and not img.is_empty():
+		_icon_pixels[pixel_key] = img
+		if _icon_pixels.size() > ICON_PIXELS_LIMIT:
+			_icon_pixels.erase(_icon_pixels.keys()[0])
 		tex = ImageTexture.create_from_image(img)
-	else:
-		var path := "res://assets/ui/icons/%s.svg" % name
-		if FileAccess.file_exists(path):
-			var img := Image.new()
-			img.load_svg_from_string(FileAccess.get_file_as_string(path), size / 512.0)
-			tex = ImageTexture.create_from_image(img)
-		elif ResourceLoader.exists(path):         # собранная игра: исходных SVG нет, только импортированная картинка 512
-			var img := (load(path) as Texture2D).get_image()
-			if img.is_compressed():
-				img.decompress()
-			img.convert(Image.FORMAT_RGBA8)
-			img.resize(maxi(1, roundi(img.get_width() * size / 512.0)), maxi(1, roundi(img.get_height() * size / 512.0)), Image.INTERPOLATE_LANCZOS)
-			tex = ImageTexture.create_from_image(img)
-	if tex != null:
 		tex.set_meta("city_icon", name)
 	_ico[key] = tex
 	return tex
@@ -1850,6 +1861,7 @@ func _close_windows() -> void:
 
 ## Свиток стройки и карточка постройки не открыты вместе (как в Town to City): одно прячет другое
 func _close_tray() -> void:
+	_drop_category_models()
 	if tray and tray.visible:
 		open_cat = ""
 		tray.visible = false
@@ -2756,6 +2768,9 @@ func _refresh_brush() -> void:
 
 
 func _bottom_center() -> void:
+	var tree := get_tree()
+	var started := Perf14.begin()
+	var deadline := Time.get_ticks_usec() + 4500
 	var p := _panel(null, "bar", 0, 1)
 	_put(p, Control.PRESET_CENTER_BOTTOM, Vector2(0, -6))
 	bar_mid = p
@@ -2763,6 +2778,12 @@ func _bottom_center() -> void:
 	h.add_theme_constant_override("separation", 12)
 	p.add_child(h)
 	for c: Array in Defs.CATS:
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.START_HUD, started)
+			Perf14.detail("hud_build_menu", started)
+			await tree.process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4500
 		var cid: String = c[0]
 		var short: String = Defs.CAT_SHORT.get(cid, c[1])
 		var v := _round_lbl(c[2], short, c[1], 46, func(): _toggle_cat(cid))
@@ -2788,6 +2809,12 @@ func _bottom_center() -> void:
 	top.add_child(tray_tabs)
 	v.add_child(top)
 	for n in Defs.NEED_ORDER:
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.START_HUD, started)
+			Perf14.detail("hud_build_menu", started)
+			await tree.process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4500
 		if n == "faith":
 			continue
 		var nn: String = n
@@ -2809,6 +2836,12 @@ func _bottom_center() -> void:
 	tray_dtabs.add_theme_constant_override("separation", 4)
 	top.add_child(tray_dtabs)
 	for ds: Array in Defs.DECOR_SUBS:
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.START_HUD, started)
+			Perf14.detail("hud_build_menu", started)
+			await tree.process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4500
 		var dn: String = ds[0]
 		var b := _round(ds[2], ds[1], 40, func(): open_dsub = dn; decor_mode = ""; _clear_search(); _fill_cards())
 		b.set_meta("sub", dn)
@@ -2823,6 +2856,8 @@ func _bottom_center() -> void:
 	tray_grid = HBoxContainer.new()
 	tray_grid.add_theme_constant_override("separation", 10)
 	sc.add_child(tray_grid)
+	Perf14.end(Perf14.START_HUD, started)
+	Perf14.detail("hud_build_menu", started)
 
 
 ## Свиток стройки помещается между панелью кисти слева и окном инструмента справа.
@@ -2967,6 +3002,7 @@ func _fit_bottom() -> void:
 
 func _toggle_cat(cid: String) -> void:
 	if open_cat == cid and tray.visible:
+		_drop_category_models()
 		open_cat = ""
 		tray.visible = false
 		_refresh_cat_buttons()
@@ -3159,6 +3195,12 @@ func _decor_list() -> Array:
 
 
 func _fill_cards() -> void:
+	var started := Perf14.begin()
+	_fill_cards_profiled()
+	Perf14.end(Perf14.UI, started)
+
+
+func _fill_cards_profiled() -> void:
 	_sync_build_tabs()
 	for ch in tray_grid.get_children():
 		tray_grid.remove_child(ch)
@@ -3192,6 +3234,8 @@ func _fill_cards() -> void:
 					if ds[0] == open_dsub:
 						tray_title.text += " · " + String(ds[1])
 	var list := _decor_list() if open_cat == "decor" else _types_in(open_cat, open_ssub if open_cat == "special" else open_sub)
+	if tray.visible and game.ready_done:
+		_warm_category(list)
 	if list.is_empty() and open_cat == "decor":
 		var em := _label({"fav": "Здесь будут украшения со звёздочкой ★ — правая кнопка мыши по карточке.",
 			"recent": "Здесь будут украшения, что вы ставили последними.", "search": "Ничего не нашлось — попробуйте другое слово."}.get(decor_mode, "Здесь пока пусто."), 16, true, C_SOFT)
@@ -3235,7 +3279,7 @@ func _fill_cards() -> void:
 		img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		img.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		img.texture = icons.get(type)
+		img.texture = building_icon(type)
 		img.name = "img"
 		v.add_child(img)
 		var pr := HBoxContainer.new()
@@ -3433,7 +3477,7 @@ func _update_cards() -> void:
 				b.tooltip_text = tip
 		var img: TextureRect = b.find_child("img", true, false)
 		if img and img.texture == null:
-			img.texture = icons.get(type)
+			img.texture = building_icon(type)
 		var pr: HBoxContainer = b.find_child("price", true, false)
 		for x in pr.get_children():
 			x.queue_free()
@@ -4063,6 +4107,12 @@ func _card_or_cat(cat: String, type: String) -> Control:
 
 
 func _process(_dt: float) -> void:
+	var started := Perf14.begin()
+	_process_timed(_dt)
+	Perf14.end(Perf14.HUD, started)
+
+
+func _process_timed(_dt: float) -> void:
 	var city_visible: bool = game == null or not game.legion_city_hidden()
 	if not _ptr_shown.is_empty() and Time.get_ticks_msec() >= int(_ptr_shown["until"]):
 		_ptr_shown = {}
@@ -4167,7 +4217,10 @@ func _place_tutorial_pointer(target: Control, world: Vector2, dt: float) -> void
 		else:
 			obstacles.append(panel.get_global_rect())
 
-	var new_target := target.get_instance_id() != _pointer_id
+	var hire_key := ""
+	if tutorial_busy() and target.has_meta("hire_class"):
+		hire_key = "%d:%s" % [int(info_b.get("id", -1)), String(target.get_meta("hire_class"))]
+	var new_target := target.get_instance_id() != _pointer_id and (hire_key == "" or hire_key != _pointer_hire_key)
 	var side := _pointer_side
 	if not new_target:
 		var box := Rect2(_guidance_arrow_at(rect, side), pointer.size)
@@ -4214,6 +4267,7 @@ func _place_tutorial_pointer(target: Control, world: Vector2, dt: float) -> void
 		_pointer_glide = create_tween()
 		_pointer_glide.tween_property(self, "_pointer_progress", 1.0, POINTER_GLIDE_TIME).set_trans(Tween.TRANS_SINE)
 	_pointer_id = target.get_instance_id()
+	_pointer_hire_key = hire_key
 	_pointer_side = side
 	_pointer_goal = goal
 	pointer.rotation = Vector2.UP.angle_to(side)
@@ -4628,6 +4682,7 @@ var _thumb_vp: SubViewport
 var _thumb_cam: Camera3D
 var _thumb_holder: Node3D
 var _thumb_key := ""
+var _thumb_build: Node3D
 
 
 func _thumb_make() -> void:
@@ -4666,7 +4721,7 @@ func _thumb_make() -> void:
 ## Облик будущей постройки (тип, этаж, фасад, цвет) — как у призрака; картинка перерисовывается один раз, только
 ## когда облик поменялся (без чтения с видеокарты: ViewportTexture прямо в панели)
 func thumb_update() -> void:
-	if thumb_rect == null or not thumb_rect.visible or game == null or not Defs.B.has(game.tool):
+	if thumb_rect == null or not thumb_rect.visible or game == null or game._preview_pending or not Defs.B.has(game.tool):
 		return
 	var t: String = game.tool
 	var pl: Dictionary = game.place_info if String(game.place_info.get("_t", "")) == t else {}
@@ -4686,16 +4741,24 @@ func thumb_update() -> void:
 	_thumb_key = key
 	if _thumb_vp == null:
 		_thumb_make()
+	var bp := Catalog.make(t, tier, v, c)
+	var g := Node3D.new()
+	g.hide()
+	_thumb_holder.add_child(g)
+	_thumb_build = g
+	await Parts.fill_ghost(g, bp, "thumbnail", Color.TRANSPARENT, get_tree() if t in Game.SLICED_PREVIEWS else null)
+	if not is_instance_valid(g) or g != _thumb_build:
+		if is_instance_valid(g):
+			g.queue_free()
+		return
 	for ch in _thumb_holder.get_children():
-		ch.queue_free()
-	var g := Parts.ghost(Catalog.make(t, tier, v, c), "outline", Color(0, 0, 0, 0))
-	for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
-		gi.material_override = null
+		if ch != g:
+			ch.queue_free()
 	for ch in g.get_children():
 		if ch is MeshInstance3D and (ch as MeshInstance3D).mesh == Parts._special_mesh("#dark") and (ch as Node3D).position.y < -0.05:
 			g.remove_child(ch)
 			ch.free()
-	_thumb_holder.add_child(g)
+	g.show()
 	var box := Artisau.aabb(g)
 	var ctr := box.get_center()
 	var rad := maxf(0.3 if d["kind"] == "decor" else 0.6, box.size.length() * 0.5)
@@ -4703,11 +4766,23 @@ func thumb_update() -> void:
 	_thumb_cam.look_at_from_position(ctr + dir * rad / sin(deg_to_rad(15.0)) * 0.95, ctr, Vector3.UP)
 	_thumb_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
+func _refresh_money(c: City, show_cap := false) -> void:
+	var amount := fmt(c.money)
+	var full := "%s / %s" % [amount, fmt(c.money_cap())]
+	var text_now := full if show_cap else amount
+	if lbl_money.text != text_now:
+		lbl_money.text = text_now
+		# Мышь и замер текста могут прийти раньше отложенной раскладки.
+		lbl_money.size.x = maxf(lbl_money.size.x, lbl_money.get_minimum_size().x)
+		_fit_top.call_deferred()
+	lbl_money.tooltip_text = I18n.t("Денарии в казне") + ": " + full
+
+
 ## Пока ведут кисть: казна меняется сразу, у курсора — сколько стоит этот мазок (или что денег не хватило).
 ## done — мазок окончен, подпись мягко гаснет
 func stroke_live(cost: float, t: String, broke := false, done := false) -> void:
 	var c: City = game.city
-	lbl_money.text = "%s / %s" % [fmt(c.money), fmt(c.money_cap())]
+	_refresh_money(c, true)
 	if _stroke_lbl == null:
 		_stroke_lbl = _label("", 19, true, C_CREAM)
 		_stroke_lbl.add_theme_color_override("font_outline_color", Color("3a2412"))
@@ -5140,6 +5215,12 @@ func _row(icon: String, text: String, val: String, col := C_INK) -> HBoxContaine
 ## Карточку пересобирают при каждом обновлении города (раз в игровой час) — и каждый раз она должна
 ## сжаться ровно по содержимому: прикрепляем заново сразу и ещё раз через кадр (после переноса строк)
 func _fill_info() -> void:
+	var started := Perf14.begin()
+	_fill_info_profiled()
+	Perf14.end(Perf14.UI, started)
+
+
+func _fill_info_profiled() -> void:
 	_fill_info_body()
 	if info_p.is_empty() and not info_b.is_empty():
 		_compact_info_style()
@@ -7580,6 +7661,12 @@ func _set_lang(l: String) -> void:
 
 
 func _open_settings(stay := false) -> void:
+	var started := Perf14.begin()
+	_open_settings_profiled(stay)
+	Perf14.end(Perf14.SETTINGS, started)
+
+
+func _open_settings_profiled(stay := false) -> void:
 	_settings_more_refresh()
 	var adv := settings_panel.find_child("adv", true, false) as CheckBox
 	if adv != null:
@@ -7674,6 +7761,12 @@ func plot_cap_note() -> String:
 # ---------- обновление ----------
 
 func refresh(hour_part := 0) -> void:
+	var started := Perf14.begin()
+	refresh_profiled(hour_part)
+	Perf14.end(Perf14.UI, started)
+
+
+func refresh_profiled(hour_part := 0) -> void:
 	if game == null or game.city == null:
 		return
 	if hour_part == 0 or hour_part == 1:
@@ -7690,8 +7783,7 @@ func refresh(hour_part := 0) -> void:
 		if Renown.on(c):
 			lbl_day.text += " · " + Seasons.name_of(c.day)
 		show_city_name()
-		lbl_money.text = fmt(c.money)
-		lbl_money.tooltip_text = I18n.t("Денарии в казне") + ": %s / %s" % [fmt(c.money), fmt(c.money_cap())]
+		_refresh_money(c)
 		var net := c.projected_net()
 		lbl_income.text = ("+" if net >= 0 else "") + fmt(net) + "/ч"
 		lbl_income.tooltip_text = "Ожидаемый доход за час при нынешних жильцах и работниках. Прошедшие часы — в «Финансах»"
@@ -8483,7 +8575,8 @@ func toggle_pause() -> void:
 
 func set_speed(s: float) -> void:
 	game.speed = s
-	refresh()
+	for sb in speed_btns:
+		_set_on(sb[0], is_equal_approx(s, sb[1]))
 
 
 # ---------- значки над постройками (нет работников, нет склада, ждут жильё) ----------
@@ -9010,10 +9103,53 @@ func _menu_go(m: String) -> void:
 
 # ---------- картинки построек для карточек ----------
 
+var _category_serial := 0
+var _category_models := {}
+var icons_loading := false
+
+
+func _warm_category(types: Array) -> void:
+	_drop_category_models()
+	var serial := _category_serial
+	var tree := get_tree()
+	var seen := {}
+	for type: String in types:
+		if serial != _category_serial or not tray.visible:
+			return
+		var tier := 1 if Defs.B[type]["kind"] == "house" else 0
+		var paths := {}
+		CityWarmup.models(Catalog.make(type, tier), paths, true)
+		for path: String in paths.keys():
+			if seen.has(path):
+				paths.erase(path)
+			else:
+				seen[path] = true
+		if paths.is_empty():
+			continue
+		var models := await CityWarmup.fetch(tree, paths)
+		if serial != _category_serial or not tray.visible:
+			return
+		_category_models.merge(models, true)
+		while _category_models.size() > 12:
+			_category_models.erase(_category_models.keys()[0])
+
+
+func _drop_category_models() -> void:
+	_category_serial += 1
+	_category_models.clear()
+
+
+
 func _make_icons() -> void:
+	icons_loading = true
+	_icons_async()
+
+
+func _make_icon_view() -> Array:
 	var vp := SubViewport.new()
 	vp.size = Vector2i(200, 168)
 	vp.own_world_3d = true
+	vp.positional_shadow_atlas_size = 0
 	vp.transparent_bg = true
 	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	vp.msaa_3d = Viewport.MSAA_4X
@@ -9039,11 +9175,11 @@ func _make_icons() -> void:
 	vp.add_child(cam)
 	var holder := Node3D.new()
 	vp.add_child(holder)
-	_icons_async(vp, cam, holder)
+	return [vp, cam, holder]
 
 
 ## Папка готовых картинок построек (user://icons/…): своя у каждой сборки — поменялись файлы игры (код, модели), и
-## картинки рисуются заново; старые папки удаляются. В редакторе ключ — сами скрипты построек
+## картинки рисуются заново. В редакторе ключ — сами скрипты построек
 const ICON_V := 1                         # поменяли свет, камеру или размер картинок — увеличить
 const ICON_SRC := ["catalog.gd", "cat_houses.gd", "cat_shops.gd", "cat_civic.gd", "cat_monuments.gd", "cat_decor.gd", "cat_military.gd",
 	"parts.gd", "synty.gd", "kit.gd", "bp.gd", "artisau.gd", "entrance.gd", "hud.gd", "cat_decor2.gd", "cat_extra.gd", "cat_grand.gd", "cat_nature.gd", "cat_meadow.gd", "meadow.gd"]
@@ -9063,22 +9199,25 @@ func _icon_dir() -> String:
 	var root := "user://icons"
 	var name := key.md5_text().substr(0, 12)
 	DirAccess.make_dir_recursive_absolute(root.path_join(name))
-	for old in DirAccess.get_directories_at(root):
-		if old != name:
-			var od := root.path_join(old)
-			for f in DirAccess.get_files_at(od):
-				DirAccess.remove_absolute(od.path_join(f))
-			DirAccess.remove_absolute(od)
 	return root.path_join(name)
 
 
 ## Картинки построек для карточек: готовые берём из папки (имя — тип и отпечаток деталей облика), рисуем только
 ## недостающие — при запуске почти нет чтений картинки с видеокарты (на слабых видеокартах на них падала игра)
-func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
+func _icons_async() -> void:
+	var vp: SubViewport
+	var cam: Camera3D
+	var holder: Node3D
 	var col := 0
 	var idir := _icon_dir()
 	var drawn := 0
+	var deadline := Time.get_ticks_usec() + 4000
 	for type in Defs.B:
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			if not _icons_alive(vp):
+				return
+			deadline = Time.get_ticks_usec() + 4000
 		var d: Dictionary = Defs.B[type]
 		if bool(d.get("hidden", false)):
 			continue
@@ -9092,11 +9231,33 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		if FileAccess.file_exists(path):
 			var ci := Image.load_from_file(path)
 			if ci != null and not ci.is_empty():
-				icons[type] = ImageTexture.create_from_image(ci)
+				icons[type] = ci
 				_refresh_building_pictures(type)
 				continue
+		if vp == null:
+			var view := _make_icon_view()
+			vp = view[0]
+			cam = view[1]
+			holder = view[2]
 		drawn += 1
+		var paths := {}
+		CityWarmup.models(bp, paths)
+		var models := await CityWarmup.fetch(get_tree(), paths)
+		if not _icons_alive(vp):
+			return
+		var kit_before := KitLib._meshes.size()
+		var special_before := Parts._special.size()
+		var art_before := Artisau._cache.size()
+		var materials_before := Synty._mats.size()
+		var seasonal_before := Synty.season_mats.size()
 		var g := Parts.ghost(bp, "outline", Color(0, 0, 0, 0))
+		# Модели значка живут до снимка. Сохраняем только сетки и материалы города.
+		for name: String in KitLib._meshes.keys().slice(kit_before):
+			KitLib._meshes.erase(name)
+		for name: String in Synty._mats.keys().slice(materials_before):
+			if not name.begins_with("meadow|"):
+				Synty._mats.erase(name)
+		Synty.season_mats.resize(seasonal_before)
 		for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
 			gi.material_override = null
 		# тёмная плашка под землёй (ровняет землю под клумбой, лужком, перголой) — на картинке не нужна
@@ -9105,6 +9266,10 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 				g.remove_child(ch)
 				ch.free()
 		add_pets(g, type)                         # корова, лошадь, кошки приюта — и на картинке карточки
+		for name: String in Parts._special.keys().slice(special_before):
+			Parts._special.erase(name)
+		for name: String in Artisau._cache.keys().slice(art_before):
+			Artisau._cache.erase(name)
 		holder.add_child(g)
 		var box := Artisau.aabb(g)
 		var c := box.get_center()
@@ -9123,14 +9288,17 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 			if r.size.x > 8 and r.size.y > 8:
 				r = r.grow(int(maxf(r.size.x, r.size.y) * 0.05)).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
 				img = img.get_region(r)
-		icons[type] = ImageTexture.create_from_image(img)
+		icons[type] = img
 		_refresh_building_pictures(type)
 		img.save_png(path)
 		g.queue_free()
+		models.clear()
 		await get_tree().process_frame
 		if not _icons_alive(vp):
 			return
-	vp.queue_free()
+	if is_instance_valid(vp):
+		vp.queue_free()
+	icons_loading = false
 	if drawn > 0:
 		print("Картинки построек: нарисовано %d, остальные — из %s" % [drawn, idir])
 	if tray.visible:
@@ -9191,7 +9359,7 @@ static func shop_prop(e: Array) -> Node3D:
 
 ## Картинки карточек ещё можно рисовать: игра не закрывается, интерфейс и его окошко для картинок на месте
 func _icons_alive(vp: SubViewport) -> bool:
-	return _quitting == false and is_inside_tree() and not is_queued_for_deletion() and is_instance_valid(vp) 		and vp.is_inside_tree() and get_tree() != null
+	return _quitting == false and is_inside_tree() and not is_queued_for_deletion() and (vp == null or vp.is_inside_tree()) and get_tree() != null
 
 
 var _quitting := false
@@ -9292,9 +9460,25 @@ func _building_picture(type: String, size: Vector2) -> TextureRect:
 	return picture
 
 
+func building_icon(type: String) -> Texture2D:
+	var tex: Texture2D = _building_icon_textures.get(type)
+	if tex:
+		_building_icon_textures.erase(type)
+	else:
+		var image: Image = icons.get(type)
+		if image == null:
+			return null
+		tex = ImageTexture.create_from_image(image)
+	_building_icon_textures[type] = tex
+	if _building_icon_textures.size() > BUILDING_ICON_CACHE:
+		_building_icon_textures.erase(_building_icon_textures.keys()[0])
+	return tex
+
+
 func _update_building_picture(picture: TextureRect, type: String) -> void:
-	if icons.has(type):
-		picture.texture = icons[type]
+	var icon := building_icon(type)
+	if icon:
+		picture.texture = icon
 		picture.modulate = Color.WHITE
 	else:
 		picture.texture = CityStyle.icon(String(Defs.B[type].get("icon", "housing")))

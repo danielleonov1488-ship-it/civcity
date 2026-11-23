@@ -1,5 +1,7 @@
 extends Node
 
+const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
+
 const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Этап 1 (1.12): замеры скорости и проверка «Средняя и Высокая — ни пикселя не изменилось» (против эталона GOLDEN).
 ##   bash .work/py/gpu_run.sh res://test_perf.tscn -- mode=regress          — для regress.sh: в конце «PERF DONE fails=0»
@@ -180,7 +182,7 @@ func _run(mode: String) -> void:
 	if A.has("legion"):
 		await _perf13_legion()
 	print("PERF DONE fails=%d" % fails)
-	get_tree().quit(1 if fails > 0 else 0)
+	TestSuite.finish(self, 1 if fails > 0 else 0)
 
 
 # ---------- замеры ----------
@@ -1361,6 +1363,7 @@ func _grp_vis(pred: Callable, v: bool) -> void:
 var _hidden: Array = []
 var _frozen_anims: Array = []
 var _people_frozen := false
+const POOL_SHOT_TIME := 40.0
 
 
 func _freeze(citizens := false) -> void:
@@ -1368,6 +1371,15 @@ func _freeze(citizens := false) -> void:
 	game.hud.visible = false
 	game.rig.cine = true                      # камера стоит, подсветки инструмента и участка под мышью нет
 	_hidden = [] if citizens else [game.people, game.actors_root]
+	if not citizens:
+		# Двери возвращаются из позы проходящего жителя к состоянию на выбранный час.
+		for door: Dictionary in game.life._doors.values():
+			door["k"] = 0.0
+			door["hold"] = 0.0
+		game.life._door_tick(0.0)
+		for id: int in game.shutters._knock:
+			game.shutters._pose(id, float(game.shutters._k.get(id, 1.0)))
+		game.shutters._knock.clear()
 	if citizens:
 		_people_frozen = game.people.is_processing()
 		game.people.set_process(false)
@@ -1391,6 +1403,7 @@ func _freeze(citizens := false) -> void:
 	Engine.time_scale = 0.0
 	MeadowNature.freeze(true)                 # листва, мельницы и течение ручьёв качаются по TIME шейдера — замирают
 	_freeze_wheat(true)
+	_freeze_pools(true)
 
 
 func _unfreeze() -> void:
@@ -1404,6 +1417,7 @@ func _unfreeze() -> void:
 	Engine.time_scale = 1.0
 	MeadowNature.freeze(false)
 	_freeze_wheat(false)
+	_freeze_pools(false)
 	for n in _hidden:
 		if is_instance_valid(n):
 			(n as Node3D).visible = true
@@ -1414,6 +1428,11 @@ func _unfreeze() -> void:
 
 
 # TIME шейдера не останавливается вместе с городом.
+func _freeze_pools(on: bool) -> void:
+	var material := Parts._special_mesh("#water").surface_get_material(0) as ShaderMaterial
+	material.set_shader_parameter("frozen_time", POOL_SHOT_TIME if on else -1.0)
+
+
 func _freeze_wheat(on: bool) -> void:
 	for key: String in [CatCivic.WHEAT, CatCivic.WHEAT_DENSE]:
 		var mesh := Parts._special_mesh(key)
@@ -1546,6 +1565,8 @@ func _shots_mode() -> void:
 ## Эталон города, переход через лёгкие пресеты и замеры центра.
 func _regress() -> void:
 	await _settle()
+	while game._clock_busy or game._placement_running:
+		await frames(1)
 	var owner := city_src == OWNER
 	var views := _views(VIEWS_REGRESS if owner else VIEWS_NEW if city_src.is_empty() else VIEWS_OWNER)
 	_freeze()

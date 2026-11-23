@@ -1,6 +1,7 @@
 extends Node
 ## Один стенд на игру. Читаем кадр один раз и храним маленькие снимки.
 
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const Actor = preload("res://scripts/charpilot_actor.gd")
 const PersonLayer = preload("res://scripts/fort_person_layer.gd")
 const PIXELS := 128
@@ -110,7 +111,7 @@ func _setup() -> void:
 	_canvas.add_child(paper)
 	_layer = PersonLayer.new()
 	_canvas.add_child(_layer)
-	_layer.setup("FortPortraitStudio", 4.0, false)
+	_layer.setup("FortPortraitStudio", 4.0, false, false)
 	_layer.fit(Vector2(PIXELS, PIXELS))
 	_layer.viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 
@@ -125,7 +126,9 @@ func _render_step() -> void:
 	var frame := Engine.get_process_frames()
 	if _job != "":
 		if _draw_frame >= 0 and frame > _draw_frame:
+			var started := Perf14.begin()
 			_collect()
+			Perf14.detail("fort_portrait_readback", started)
 		return
 	if _pending.is_empty():
 		set_process(false)
@@ -137,13 +140,20 @@ func _render_step() -> void:
 	if not entry["waiters"].any(func(ref: WeakRef): return _waiting(ref, key)):
 		_pending.erase(key)
 		return
+	var started := Perf14.begin()
 	if _canvas == null:
 		_setup()
 	_job = key
-	if not _stage(entry["spec"]):
+	var ready := _stage(entry["spec"])
+	Perf14.detail("fort_portrait_stage", started)
+	if not ready:
 		_discard()
 		return
-	_layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_layer.render_first_frame()
+	RenderingServer.frame_post_draw.connect(_draw_portrait, CONNECT_ONE_SHOT)
+
+
+func _draw_portrait() -> void:
 	_canvas.render_target_update_mode = SubViewport.UPDATE_ONCE
 	RenderingServer.frame_post_draw.connect(_drawn, CONNECT_ONE_SHOT)
 
