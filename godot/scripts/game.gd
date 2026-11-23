@@ -302,6 +302,9 @@ var _startup_started := 0
 var _startup_last := 0
 var _startup_counts := PackedInt64Array()
 var _chunk_task := -1
+var _research_prepared := false
+var _construction_prepared := false
+var _portrait_prepared := false
 
 
 func _startup_mark(label: String) -> void:
@@ -314,10 +317,16 @@ func _startup_mark(label: String) -> void:
 	var diff := PackedInt64Array()
 	for i in counts.size():
 		diff.append(counts[i] - _startup_counts[i] if not _startup_counts.is_empty() else 0)
-	print("STARTUP %s total_ms=%.1f stage_ms=%.1f pipelines=%s" % [
-		label, (now - _startup_started) / 1000.0, (now - _startup_last) / 1000.0, diff])
+	print("STARTUP %s total_ms=%.1f stage_ms=%.1f pipelines=%s process_ms=%.1f" % [
+		label, (now - _startup_started) / 1000.0, (now - _startup_last) / 1000.0, diff, now / 1000.0])
 	_startup_counts = counts
 	_startup_last = now
+
+
+func _startup_warmup(label: String, started: int, skipped := false) -> void:
+	if _startup_started != 0:
+		var ms := 0.0 if skipped else (Time.get_ticks_usec() - started) / 1000.0
+		print("STARTUP_WARMUP %s ms=%.2f skipped=%d" % [label, ms, int(skipped)])
 
 
 func _ready() -> void:
@@ -351,6 +360,10 @@ func _ready() -> void:
 		mode = "demo"
 	elif args.has("new"):
 		mode = "new"
+	var windowed := DisplayServer.get_name() != "headless"
+	var warmup_city := windowed and mode in ["play", "new"]
+	var warmup_construction := windowed and mode in ["play", "new", "demo"]
+	var disk_cache := warmup_city and CityWarmup.has_disk_pipeline_cache()
 	# листва с временами года (scripts/seasons.gd) — только в настоящей игре: меню, витрина и проверки с готовым городом
 	# рисуют деревья прежним материалом (на «Очень низкой» он дешевле); seasons=1 — проверки и снимки времён года
 	Synty.season_on = mode in ["play", "new"] or args.get("seasons", "") == "1"
@@ -665,6 +678,16 @@ func _ready() -> void:
 	_make_markers()
 	Perf14.detail("load_camera_markers", startup)
 	_apply_quality()
+	var pipeline_key := ""
+	if warmup_city and stage_draw and shadow_depth != null:
+		pipeline_key = CityWarmup.pipeline_key(_applied_quality, Gfx.depth_prepass(),
+			[loaded, get_viewport().msaa_3d, sun.shadow_enabled, perf14_land, perf14_baked_ground,
+				perf14_ground_specular, perf14_foliage, perf14_parts])
+	var warm_pipeline_cache := disk_cache and CityWarmup.pipeline_marker_matches(pipeline_key)
+	if _startup_started != 0:
+		print("STARTUP_CACHE hit=%d disk=%d key=%s" % [int(warm_pipeline_cache), int(disk_cache), pipeline_key])
+	if warmup_construction:
+		_prepare_construction_sources()
 	if shadow_depth != null:
 		RenderingServer.frame_pre_draw.connect(_update_shadow_depth)
 	if stage_draw:
@@ -679,6 +702,8 @@ func _ready() -> void:
 	add_child(hud)
 	Perf14.end(Perf14.START_HUD, startup)
 	await hud.prepare()
+	if warmup_city:
+		_prepare_research()
 	await get_tree().process_frame
 	gfx = Gfx.new()
 	gfx.game = self
@@ -744,29 +769,39 @@ func _ready() -> void:
 			await get_tree().process_frame
 			actor_deadline = Time.get_ticks_usec() + 4500
 	await _step("Жители", 0.97)
-	if mode in ["new", "play"] and DisplayServer.get_name() != "headless":
+	if warmup_city:
 		_startup_mark("hud_actors")
-		while hud.icons_loading:
-			await get_tree().process_frame
-		_startup_mark("icons_wait")
-		await hud.research_tree.prepare()
-		_startup_mark("research")
-		Perf14.memory("icons_ready")
+		var started := Time.get_ticks_usec()
+		_prepare_portrait()
 		await spectacle.finish_loading_crowds()
-		_startup_mark("crowds_wait")
-		await PersonCard.prewarm(hud)
-		_startup_mark("portrait")
+		_startup_warmup("crowds_wait", started)
+		while not _portrait_prepared:
+			await get_tree().process_frame
 		Perf14.memory("portrait_released")
 	CityWarmup.release_sources()
-	if mode in ["new", "play", "demo"] and DisplayServer.get_name() != "headless":
+	if warmup_construction:
+		var started := Time.get_ticks_usec()
+		while not _construction_prepared:
+			await get_tree().process_frame
+		_startup_warmup("construction_wait", started)
+		started = Time.get_ticks_usec()
 		await _warm_construction()
+		_startup_warmup("construction_pipelines", started)
 	Perf14.memory("sources_released")
 	if perf14_baked_ground and mode in ["play", "new", "demo"]:
 		var baker := prepare_ground_bake()
 		if baker != null:
 			await baker.prime()
-	if stage_draw and shadow_depth != null and mode in ["play", "new"]:
-		await _warm_city_view(br.ffly)
+	if warmup_city and stage_draw and shadow_depth != null:
+		await _warm_city_view(br.ffly, warm_pipeline_cache)
+		if not warm_pipeline_cache:
+			CityWarmup.save_pipeline_marker(pipeline_key)
+	if warmup_city:
+		var started := Time.get_ticks_usec()
+		while hud.icons_loading or not _research_prepared:
+			await get_tree().process_frame
+		_startup_warmup("icons_and_research_wait", started)
+		Perf14.memory("icons_ready")
 	_startup_mark("first_view")
 	ready_done = true
 	_startup_mark("ready_done")
@@ -801,6 +836,20 @@ func _ready() -> void:
 	LegionNet.me().attach_city()              # бои с городами по сети: отряд обороны на сервер, отчёты о нападениях; имя города с сервера (scripts/legion_net.gd)
 	QaDrive.attach(self)                      # автопроверка собранной игры, только с аргументом --qa=… (scripts/qa_drive.gd)
 	_hero_offer(loaded)                       # экран «Ваш герой»: начало новой игры, старый город — один раз (Д11)
+
+
+func _prepare_research() -> void:
+	var started := Time.get_ticks_usec()
+	await hud.research_tree.prepare()
+	_research_prepared = true
+	_startup_warmup("research", started)
+
+
+func _prepare_portrait() -> void:
+	var started := Time.get_ticks_usec()
+	await PersonCard.prewarm(hud)
+	_portrait_prepared = true
+	_startup_warmup("portrait", started)
 
 
 static func _make_land(result: Array[Land]) -> void:
@@ -1085,8 +1134,9 @@ func _update_shadow_depth() -> void:
 	shadow_depth.update(get_viewport().get_camera_3d(), sun)
 
 
-func _warm_city_view(fireflies: GPUParticles3D) -> void:
+func _warm_city_view(fireflies: GPUParticles3D, warm_cache: bool) -> void:
 	# Те же параметры проходов и сетки, что в игре, пока город закрыт заставкой.
+	var started := Time.get_ticks_usec()
 	var view := rig.capture_view()
 	var was_cine: bool = rig.cine
 	var grass_processing := grass.is_processing()
@@ -1099,11 +1149,15 @@ func _warm_city_view(fireflies: GPUParticles3D) -> void:
 			[Vector3(edge, Land.BASE_Y, 24.0), 155.0, 50.0, 130.0],
 			[Vector3(24.0, Land.BASE_Y, edge), -25.0, 50.0, 130.0]]:
 		rig.set_view(view_angle[0], view_angle[1], view_angle[2], view_angle[3])
-		await RenderingServer.frame_post_draw
-		await RenderingServer.frame_post_draw
+		await _warm_view_frames(warm_cache)
 	rig.restore_view(view)
-	if _applied_quality in ["high", "medium"]:
-		await _warm_verylow_view()
+	_startup_warmup("far_views", started)
+	started = Time.get_ticks_usec()
+	var verylow_pass := _applied_quality in ["high", "medium"]
+	if verylow_pass:
+		await _warm_verylow_view(warm_cache)
+	_startup_warmup("verylow_view", started, not verylow_pass)
+	started = Time.get_ticks_usec()
 	_set_hour(23.0)
 	await RenderingServer.frame_post_draw
 	# Широкий ночной кадр покрывает фонари и материалы за границей стартового вида.
@@ -1117,10 +1171,19 @@ func _warm_city_view(fireflies: GPUParticles3D) -> void:
 	grass.set_process(grass_processing)
 	rig.cine = was_cine
 	await RenderingServer.frame_post_draw
+	_startup_warmup("night_weather", started)
 	_startup_mark("city_pipelines")
 
 
-func _warm_verylow_view() -> void:
+func _warm_view_frames(warm_cache: bool) -> void:
+	# Кэш на диске не заменяет первый проход в новом процессе.
+	var before := Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW)
+	await RenderingServer.frame_post_draw
+	if not warm_cache or Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW) != before:
+		await RenderingServer.frame_post_draw
+
+
+func _warm_verylow_view(warm_cache: bool) -> void:
 	# Первый переход убирает MSAA и меняет сетки лугов. Рисуем этот проход за заставкой.
 	var vp := get_viewport()
 	var msaa := vp.msaa_3d
@@ -1139,8 +1202,7 @@ func _warm_verylow_view() -> void:
 	vp.msaa_3d = Viewport.MSAA_DISABLED
 	Gfx._set_scale(vp, "verylow", Gfx.BASE_SCALE["verylow"], Gfx.hidpi_scale())
 	MeadowNature.quality(self, true)
-	await RenderingServer.frame_post_draw
-	await RenderingServer.frame_post_draw
+	await _warm_view_frames(warm_cache)
 	MeadowNature.quality(self, false)
 	CityWarmup.release_sources()
 	vp.msaa_3d = msaa
@@ -2321,7 +2383,8 @@ var _scaffold_sources: Dictionary     # держим сцены лесов, ко
 var _first_house_sources: Dictionary  # держим до первой анимации
 
 
-func _warm_construction() -> void:
+func _prepare_construction_sources() -> void:
+	var started := Time.get_ticks_usec()
 	var tree := get_tree()
 	var paths := {}
 	for model: String in SCAFFOLD_MODELS:
@@ -2335,12 +2398,16 @@ func _warm_construction() -> void:
 	var bp := Catalog.make("house_pleb", 1, 0, 0)
 	CityWarmup.models(bp, paths, true)
 	_first_house_sources = await CityWarmup.fetch(tree, paths)
-	var started := Perf14.begin()
+	var detail := Perf14.begin()
 	_reveal_shader()
 	_construction_brick()
 	_puff_quad()
-	Perf14.detail("load_construction", started)
-	await tree.process_frame
+	Perf14.detail("load_construction", detail)
+	_construction_prepared = true
+	_startup_warmup("construction_sources", started)
+
+
+func _warm_construction() -> void:
 	# Первый выброс пыли готовим за заставкой в том же вьюпорте, что и стройку.
 	var camera := get_viewport().get_camera_3d()
 	if camera != null:
@@ -2351,7 +2418,7 @@ func _warm_construction() -> void:
 		await RenderingServer.frame_post_draw
 		dust.hide()
 		dust.queue_free()
-		await tree.process_frame
+		await get_tree().process_frame
 
 func _grow_anim(b: Dictionary) -> void:
 	var started := Perf14.begin()

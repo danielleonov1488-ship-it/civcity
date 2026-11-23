@@ -5,6 +5,76 @@ const EFFECTS := ["citizen_cloth", "foliage", "meadow_foliage", "wheat", "field_
 	"cover", "tint", "outline", "outline_hull", "kit_reveal", "meadow_rock", "meadow_spin"]
 static var _rendered := {}
 static var _materials := {}
+const SHADER_CACHE := "user://shader_cache"
+const MARKER_PREFIX := "civcity_warmup_v1_"
+
+
+static func pipeline_key(quality: String, depth_prepass: bool, variant: Array) -> String:
+	var device := RenderingServer.get_rendering_device()
+	if device == null:
+		return ""
+	# UUID кэша меняется вместе с моделью GPU и версией драйвера.
+	var driver_version := device.get_device_pipeline_cache_uuid()
+	if driver_version.is_empty():
+		return ""
+	return JSON.stringify([_build_key(), Engine.get_version_info().get("hash", ""),
+		RenderingServer.get_video_adapter_name(), RenderingServer.get_video_adapter_vendor(), driver_version,
+		RenderingServer.get_current_rendering_method(), RenderingServer.get_current_rendering_driver_name(),
+		quality, depth_prepass, variant]).sha256_text()
+
+
+static func _build_key() -> String:
+	var files: PackedStringArray = [str(ProjectSettings.get_setting("application/config/version", ""))]
+	if OS.has_feature("editor"):
+		# В рабочей копии номер релиза не меняется при правках скриптов и шейдеров.
+		for dir: String in ["res://scripts", "res://shaders"]:
+			for name: String in DirAccess.get_files_at(dir):
+				if name.begins_with("test_") or name.ends_with(".uid"):
+					continue
+				files.append(name + FileAccess.get_sha256(dir.path_join(name)))
+		for path: String in ["res://project.godot", "res://main.tscn"]:
+			files.append(FileAccess.get_sha256(path))
+	else:
+		var exe := OS.get_executable_path()
+		var dir := exe.get_base_dir()
+		for path: String in [exe, dir.path_join(exe.get_file().get_basename() + ".pck"),
+				dir.path_join("CivCity_models.pck"), dir.path_join("CivCity_kit.pck"), dir.path_join("CivCity_ui.pck"),
+				dir.path_join("../Resources/CivCity.pck")]:
+			if FileAccess.file_exists(path):
+				files.append("%d:%d" % [FileAccess.get_modified_time(path), FileAccess.get_size(path)])
+		for path: String in ["res://mac_build.txt", dir.path_join("version.json")]:
+			if FileAccess.file_exists(path):
+				files.append(FileAccess.get_sha256(path))
+	return "|".join(files).sha256_text()
+
+
+static func has_disk_pipeline_cache() -> bool:
+	if not DirAccess.dir_exists_absolute(SHADER_CACHE):
+		return false
+	var driver := "user://" + RenderingServer.get_current_rendering_driver_name()
+	var prefix := "pipelines.%s." % RenderingServer.get_current_rendering_method()
+	for name: String in DirAccess.get_files_at(driver):
+		if name.begins_with(prefix) and name.ends_with(".cache") and FileAccess.get_size(driver.path_join(name)) > 0:
+			return true
+	return false
+
+
+static func pipeline_marker_matches(key: String) -> bool:
+	return not key.is_empty() and FileAccess.get_file_as_string(_pipeline_marker(key)) == key
+
+
+static func save_pipeline_marker(key: String) -> void:
+	if key.is_empty() or not DirAccess.dir_exists_absolute(SHADER_CACHE):
+		return
+	var file := FileAccess.open(_pipeline_marker(key), FileAccess.WRITE)
+	if file != null:
+		# Полный ключ в файле защищает от незавершённой записи.
+		file.store_string(key)
+		file.close()
+
+
+static func _pipeline_marker(key: String) -> String:
+	return SHADER_CACHE.path_join(MARKER_PREFIX + key + ".ok")
 
 
 ## Ссылки принадлежат только тому, кто ждёт загрузку: городу, карточке или переходу.

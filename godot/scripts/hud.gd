@@ -9332,6 +9332,7 @@ const PREBUILT_ICONS := "res://icons_prebuilt/v%d.zip"
 
 
 func _icons_async(bake_dir := "") -> Error:
+	var started := Time.get_ticks_usec()
 	var vp: SubViewport
 	var cam: Camera3D
 	var holder: Node3D
@@ -9385,6 +9386,7 @@ func _icons_async(bake_dir := "") -> Error:
 	if bake_dir == "":
 		if OS.get_environment("CIVCITY_STARTUP_TRACE") == "1":
 			print("STARTUP_ICONS ready=%d missing=%d" % [icons.size(), missing.size()])
+			game._startup_warmup("icons_preload", started)
 		if not missing.is_empty():
 			while not game.ready_done:
 				await get_tree().process_frame

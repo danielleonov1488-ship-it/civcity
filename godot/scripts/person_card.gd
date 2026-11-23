@@ -1140,10 +1140,15 @@ static func prewarm(hud: Hud) -> void:
 	layout.theme = hud.theme_main
 	layout.hide()
 	hud.add_child(layout)
+	var details: Array[Callable] = []
 	if ppl.residents.is_empty():
 		layout.add_child(_portrait_box(hud, "warm", func(vp: SubViewport): _person_subject(vp, ppl, who)))
 	else:
-		_fill_person(hud, layout, who)
+		_fill_person(hud, layout, who, details)
+	_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	if not details.is_empty():
+		await hud.get_tree().process_frame
+		details[0].call()
 	CityStyle.apply(layout)
 	layout.get_combined_minimum_size()
 	await RenderingServer.frame_post_draw
