@@ -5308,7 +5308,6 @@ func _make_cat(home: Dictionary, opts := {}) -> Dictionary:
 		"snd": snd, "meow_t": rg.randf_range(10, 60)}
 	_cat_place(cat)
 	_cat_anim(cat)
-	ap.seek(float(cat["ph"]) / TAU * ap.current_animation_length, true)     # кошки дышат и машут хвостом не в лад
 	return cat
 
 
@@ -5368,6 +5367,8 @@ func _cat_anim(c: Dictionary) -> void:
 	var cl: Array = CAT_CLIP.get(c["state"], CAT_CLIP["sit"])
 	if c["clip"] != cl[0]:
 		ap.play("cat/" + String(cl[0]), 0.0 if c["clip"] == "" else 0.35)
+		if c["clip"] == "":
+			ap.seek(float(c["ph"]) / TAU * ap.current_animation_length, true)     # кошки дышат и машут хвостом не в лад
 		c["clip"] = cl[0]
 		if c.has("mat"):
 			(c["mat"] as ShaderMaterial).set_shader_parameter("sleep", 1.0 if cl[0] == "Sleep" else 0.0)   # спит — глаза закрыты
