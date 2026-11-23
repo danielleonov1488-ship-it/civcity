@@ -42,7 +42,14 @@ var clouds: Clouds                    # тени облаков по город�
 static var perf14_land := false
 static var perf14_foliage := false
 static var perf14_parts := false
+static var perf14_baked_ground := false
+static var perf14_ground_specular := false
+static var perf14_share_meshes := true
 static var _perf14_land_shader: Shader
+static var _ground_shaders := {}
+const LandBake = preload("res://scripts/land_bake.gd")
+var land_bake: LandBake
+var _horizon_ground: MeshInstance3D
 
 var land_mat: ShaderMaterial
 var surf_img: Image
@@ -328,6 +335,7 @@ func _ready() -> void:
 			parts.detail.lods = true
 			parts.detail.shadows = 1
 			parts.detail.prepare_c2 = true
+		parts.share_perf_meshes = perf14_share_meshes and (perf14_foliage or perf14_parts)
 	add_child(parts)
 	cover = Cover.new()
 	add_child(cover)
@@ -335,7 +343,7 @@ func _ready() -> void:
 	actors_root = Node3D.new()
 	add_child(actors_root)
 	land_mat = ShaderMaterial.new()
-	land_mat.shader = land_shader(perf14_land)
+	land_mat.shader = ground_shader(perf14_land, perf14_baked_ground, perf14_ground_specular)
 	Synty._index()
 	var tex := func(n: String) -> Texture2D: return load(Synty._tex_path(n))
 	land_mat.set_shader_parameter("tile_road", tex.call("Floor_Tiles_04"))
@@ -526,6 +534,10 @@ func _ready() -> void:
 	_set_hour(hour)
 	hud.refresh()
 	_sync_all_actors()
+	if perf14_baked_ground and mode in ["play", "new", "demo"]:
+		var baker := prepare_ground_bake()
+		if baker != null:
+			await baker.prime()
 	ready_done = true
 	_loading_hide()
 	if args.has("noui"):
@@ -703,6 +715,30 @@ func apply_settings() -> void:
 ## Уровни графики «Высокая / Средняя / Низкая / Очень низкая» — scripts/gfx.gd (Средняя и Высокая — как были)
 func _apply_quality() -> void:
 	Gfx.apply(self)
+
+
+func prepare_ground_bake() -> LandBake:
+	if land_bake == null and RenderingServer.get_current_rendering_method() == "forward_plus" and DisplayServer.get_name() != "headless":
+		land_bake = LandBake.new()
+		land_bake.game = self
+		add_child(land_bake)
+	return land_bake
+
+
+static func ground_shader(distance_lod: bool, baked: bool, no_specular: bool) -> Shader:
+	if not baked and not no_specular:
+		return land_shader(distance_lod)
+	var id := Vector3i(int(distance_lod), int(baked), int(no_specular))
+	if not _ground_shaders.has(id):
+		var code := land_shader(distance_lod).code
+		if baked:
+			code = "#define PERF14_BAKE\n" + code
+		if no_specular:
+			code = code.replace("specular_schlick_ggx", "specular_disabled")
+		var shader := Shader.new()
+		shader.code = code
+		_ground_shaders[id] = shader
+	return _ground_shaders[id]
 
 
 static func land_shader(distance_lod: bool) -> Shader:
@@ -1048,6 +1084,7 @@ func _horizon() -> void:
 	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	var mi := MeshInstance3D.new()
 	mi.mesh = am
+	_horizon_ground = mi
 	mi.material_override = land_mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
@@ -1172,11 +1209,10 @@ func _batch_mm(batches: Dictionary) -> Array:
 			var subs := []
 			for smi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
 				var original := Parts.Detail.with_missing_lods(smi.mesh) if use_foliage_lod else smi.mesh
-				var mesh := original.duplicate() as Mesh
-				for si in mesh.get_surface_count():
-					var sm := smi.get_surface_override_material(si)
-					if sm:
-						mesh.surface_set_material(si, sm)
+				var overrides: Array[Material] = []
+				for si in original.get_surface_count():
+					overrides.append(smi.get_surface_override_material(si))
+				var mesh := Parts.mesh_with_materials(parts._shared_meshes, original, overrides, false, parts.share_perf_meshes)
 				subs.append([mesh, Citizen._rel(smi, src)])
 			src.free()
 			srcs[nm] = subs
@@ -1625,6 +1661,9 @@ func _build_chunk(ch: Vector2i) -> void:
 		add_child(mi)
 		chunk_nodes[ch] = mi
 	mi.mesh = land.smooth_mesh(ch.x, ch.y) if Land.smooth_on else land.chunk_mesh(ch.x, ch.y)   # 14.11: плавная земля
+	if land_bake != null:
+		var span := Land.CH * Land.CELL
+		land_bake.invalidate(Rect2(Vector2(ch) * span, Vector2.ONE * span))
 	if grass != null:
 		grass.invalidate_chunk(ch)            # трава-ковёр на этом куске — заново (постройка, дорога, ручей)
 
@@ -1662,6 +1701,9 @@ func _deco_tiles() -> void:
 ## куска за кадр; куски, где поменялось одно покрытие, и сетка ходьбы — когда мазок кончен
 func _rebuild_land(limit := 6, busy := false) -> void:
 	var stroke_on := painting and is_road_tool(tool)
+	if land_bake != null:
+		land_bake.invalidate_mask(land.mask_lo, land.mask_hi)
+		land_bake.invalidate_mask(land.deco_lo, land.deco_hi)
 	if surf_img and surf_tex and land.update_surface_rect(surf_img):
 		surf_img.generate_mipmaps()
 		surf_tex.update(surf_img)
@@ -2587,6 +2629,8 @@ func _plot_hover(p: Vector2i) -> void:
 
 
 func _update_plot_signs() -> void:
+	if land_bake != null:
+		land_bake.invalidate(Rect2(Vector2.ZERO, Vector2.ONE * Land.SIZE))
 	MeadowNature.plots_tex(self)              # трава своей и чужой земли — плавной границей (13.11)
 	if hud == null:
 		return

@@ -19,6 +19,8 @@ const Detail = preload("res://scripts/parts_detail.gd")
 static var detail_config: Detail
 var detail: Detail
 var foliage_lod := false
+var share_perf_meshes := false
+var _shared_meshes := {}
 const FOLIAGE_LOD_BIAS := 0.65
 static var profile_place := false
 var place_usec := 0
@@ -89,11 +91,7 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 	else:
 		var src := Synty.make(name, remap)
 		for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-			var mesh := _copy_mesh(mi.mesh, tile, name)
-			for s in mesh.get_surface_count():
-				var m := mi.get_surface_override_material(s)
-				if m:
-					mesh.surface_set_material(s, m)
+			var mesh := _group_mesh(mi, tile, name)
 			var sub := _sub(mesh, Citizen._rel(mi, src))
 			_small(name, sub, tile)
 			_set_foliage_lod(sub, tile, name)
@@ -116,10 +114,50 @@ static func is_foliage(name: String) -> bool:
 	return false
 
 
-func _copy_mesh(source: Mesh, tile: Vector2i, name: String) -> Mesh:
+func _lod_mesh(source: Mesh, tile: Vector2i, name: String) -> Mesh:
 	if foliage_lod and tile.x >= 0 and is_foliage(name):
-		return Detail.with_missing_lods(source).duplicate() as Mesh
-	return detail.copy_mesh(source, tile, name) if detail != null else source.duplicate() as Mesh
+		return Detail.with_missing_lods(source)
+	return detail.lod_mesh(source, tile, name) if detail != null else source
+
+
+func _group_mesh(mi: MeshInstance3D, tile: Vector2i, name: String) -> Mesh:
+	var source := _lod_mesh(mi.mesh, tile, name)
+	var overrides: Array[Material] = []
+	for s in source.get_surface_count():
+		overrides.append(mi.get_surface_override_material(s))
+	return mesh_with_materials(_shared_meshes, source, overrides,
+		tile.x >= 0 and _fading_detail(name), share_perf_meshes)
+
+
+static func mesh_with_materials(cache: Dictionary, source: Mesh, overrides: Array[Material], faded: bool, share: bool) -> Mesh:
+	var key := PackedInt64Array()
+	if share:
+		key.append(source.get_instance_id())
+		key.append(int(faded))
+		var copy_needed := faded
+		for s in overrides.size():
+			var m := overrides[s]
+			key.append(m.get_instance_id() if m != null else 0)
+			copy_needed = copy_needed or (m != null and m != source.surface_get_material(s))
+		if not copy_needed:
+			return source
+		if cache.has(key):
+			return cache[key]
+	var mesh := source.duplicate() as Mesh
+	for s in overrides.size():
+		if overrides[s] != null:
+			mesh.surface_set_material(s, overrides[s])
+	if share:
+		if faded:
+			_far_fade(mesh)
+			mesh.set_meta("parts_faded", true)
+		cache[key] = mesh
+	return mesh
+
+
+static func _fading_detail(name: String) -> bool:
+	return name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") \
+		or name.contains("Pebbles") or name.contains("Garden_Plants") or Meadow.small(name)
 
 
 func _set_foliage_lod(sub: Dictionary, tile: Vector2i, name: String) -> void:
@@ -138,22 +176,24 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 	var subs := []
 	var ok := true
 	for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-		var mesh := _copy_mesh(mi.mesh, tile, name)
-		for s in mesh.get_surface_count():
+		var source := _lod_mesh(mi.mesh, tile, name)
+		var overrides: Array[Material] = []
+		for s in source.get_surface_count():
 			var m := mi.get_surface_override_material(s)
-			if m == null:
-				continue
-			var hit: bool = sp[1] == "*" or (m.has_meta("alb") and marks.has(str(m.get_meta("alb"))))
-			if hit:
-				if not m is StandardMaterial3D or (mesh is ArrayMesh and (mesh as ArrayMesh).surface_get_format(s) & Mesh.ARRAY_FORMAT_COLOR):
-					ok = false
-					break
-				# «tint» ставит и прозрачность (как Synty.material: albedo_color = tint), «tints» — нет
-				var a: float = (sp[0] as Color).a if sp[1] == "*" else (m as StandardMaterial3D).albedo_color.a
-				m = _tint_mat(m as StandardMaterial3D, a)
-			mesh.surface_set_material(s, m)
+			if m != null:
+				var hit: bool = sp[1] == "*" or (m.has_meta("alb") and marks.has(str(m.get_meta("alb"))))
+				if hit:
+					if not m is StandardMaterial3D or (source is ArrayMesh and (source as ArrayMesh).surface_get_format(s) & Mesh.ARRAY_FORMAT_COLOR):
+						ok = false
+						break
+					# «tint» меняет прозрачность, «tints» — нет.
+					var a: float = (sp[0] as Color).a if sp[1] == "*" else (m as StandardMaterial3D).albedo_color.a
+					m = _tint_mat(m as StandardMaterial3D, a)
+			overrides.append(m)
 		if not ok:
 			break
+		var mesh := mesh_with_materials(_shared_meshes, source, overrides,
+			tile.x >= 0 and _fading_detail(name), share_perf_meshes)
 		subs.append([mesh, Citizen._rel(mi, src), mi.mesh])
 	src.free()
 	if not ok:
@@ -206,7 +246,7 @@ static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
 		var sz := mesh.get_aabb().size
 		if maxf(sz.x, maxf(sz.y, sz.z)) < SMALL_SHADOW:
 			(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	if name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") or name.contains("Pebbles") or name.contains("Garden_Plants") or Meadow.small(name):
+	if _fading_detail(name):
 		var mmi: MultiMeshInstance3D = sub["mmi"]
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if tile.x >= 0:
@@ -214,7 +254,8 @@ static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			_small_mmis.append(mmi)
 			_apply_range(mmi)
-			_far_fade(mesh)
+			if not mesh.has_meta("parts_faded"):
+				_far_fade(mesh)
 	elif Meadow.field(name):
 		(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # поля набора Meadow — без тени
 

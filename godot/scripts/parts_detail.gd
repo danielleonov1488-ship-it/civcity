@@ -69,15 +69,15 @@ static func small_end(diameter: float, radius: float) -> float:
 	return radius + diameter * REF_HEIGHT / (2.0 * tan_y * PROP_PIXELS) * (1.0 + tan_x * tan_x + tan_y * tan_y)
 
 
-func copy_mesh(source: Mesh, tile: Vector2i, name := "") -> Mesh:
+func lod_mesh(source: Mesh, tile: Vector2i, name := "") -> Mesh:
 	if lods and tile.x < 0:
 		if prepare_c2 and name in C2_LOD:
-			return with_missing_lods(source).duplicate() as Mesh
+			return with_missing_lods(source)
 		var entry: Dictionary = prepared.get(source.get_instance_id(), {})
 		var ready: ArrayMesh = entry.get("lod")
 		if ready != null:
-			return ready.duplicate() as Mesh
-	return source.duplicate() as Mesh
+			return ready
+	return source
 
 
 func add_shadow(pool: Node3D, g: Dictionary, sub: Dictionary, name: String, source: Mesh) -> void:

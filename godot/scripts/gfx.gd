@@ -34,6 +34,7 @@ static var earlier_verylow_lod := true     # PERF13: дальние модели
 
 static var perf14_ssao := false
 static var perf14_shadows := false
+static var perf14_soft_shadows := false
 static var _ssao_reduced := false
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
@@ -290,12 +291,12 @@ static func apply(g) -> void:
 	# средняя мягкость, «Средняя» и ниже — 4096 и низкая; прежняя «Средняя» (переключатель medium_light выключен) — как было
 	var full := q == "medium" and not ml
 	var smaller_atlas := perf14_shadows and q != "verylow"
-	var sl := (2 if full else (0 if q == "high" else 1)) + (3 if smaller_atlas else 0)
+	var sl := (2 if full else (0 if q == "high" else 1)) + (3 if smaller_atlas else 0) + (6 if perf14_soft_shadows and q == "high" else 0)
 	if sl != _sun_low:
 		var atlas := (4096 if full else 2048) if smaller_atlas else (8192 if full else 4096)
 		RenderingServer.directional_shadow_atlas_set_size(atlas, true)
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH if full else
-			(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if q == "high" else RenderingServer.SHADOW_QUALITY_SOFT_LOW))
+			(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if q == "high" and not perf14_soft_shadows else RenderingServer.SHADOW_QUALITY_SOFT_LOW))
 		_sun_low = sl
 	var vp: Viewport = g.get_viewport()
 	if vp:

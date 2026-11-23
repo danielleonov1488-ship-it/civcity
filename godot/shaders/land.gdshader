@@ -60,6 +60,17 @@ uniform sampler2D own_tex : filter_linear, repeat_disable;
 uniform bool own_on = false;
 uniform vec3 road_tint = vec3(1.0);   // мостовая из набора — теплее (травертин), в тон терракотовому городу
 
+#ifdef PERF14_BAKE_CAPTURE
+uniform vec2 bake_center;
+uniform float bake_span;
+instance uniform float bake_shift = 0.0;
+#endif
+#ifdef PERF14_BAKE
+uniform sampler2DArray baked_land : filter_linear_mipmap, repeat_disable;
+uniform sampler2D baked_ready : filter_nearest, repeat_disable;
+uniform bool bake_enabled = false;
+#endif
+
 varying vec3 wpos;
 varying vec3 wnrm;
 varying float kind;
@@ -68,6 +79,9 @@ varying vec2 sm2;                       // плавная земля (Land.smoot
 
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+#ifdef PERF14_BAKE_CAPTURE
+	wpos.x -= bake_shift;
+#endif
 	wnrm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	kind = UV.x;
 	top_y = UV.y;
@@ -214,21 +228,83 @@ float detail_noise(vec2 p, float detail) {
 }
 #endif
 
+#ifdef PERF14_BAKE
+vec3 bake_linear(vec3 c) {
+	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+vec4 read_baked(vec2 p, bool far, float footprint, inout float weight) {
+	float tile_m = far ? 384.0 : 64.0;
+	float extent = far ? 9.0 : 6.0;
+	vec2 grid = (p + (far ? vec2(1536.0) : vec2(0.0))) / tile_m;
+	vec2 cell = floor(grid);
+	if (any(lessThan(cell, vec2(0.0))) || any(greaterThanEqual(cell, vec2(extent)))) {
+		weight = 0.0;
+		return vec4(0.0);
+	}
+	int id = (far ? 36 : 0) + int(cell.y * extent + cell.x);
+	if (texelFetch(baked_ready, ivec2(id % 16, id / 16), 0).r < 0.5) {
+		weight = 0.0;
+		return vec4(0.0);
+	}
+	// Поля в 8 пикселей скрывают стыки при фильтрации.
+	vec2 uv = (fract(grid) * 128.0 + 8.0) / 144.0;
+	float mip = clamp(log2(max(footprint * 128.0 / tile_m, 1.0)), 0.0, 3.0);
+	vec4 baked = textureLod(baked_land, vec3(uv, float(id)), mip);
+	return vec4(bake_linear(baked.rgb), baked.a);
+}
+#endif
+
 void fragment() {
+#ifdef PERF14_BAKE_CAPTURE
+	if (any(greaterThan(abs(wpos.xz - bake_center), vec2(bake_span * 0.5)))) discard;
+#endif
 #ifdef PERF14_LAND
 	float detail = 1.0 - smoothstep(60.0, 90.0, distance(wpos, INV_VIEW_MATRIX[3].xyz));
 #endif
 	vec3 base = COLOR.rgb;               // вершинный цвет: оттенок клетки (у чужой земли приглушён)
 	float k = sm2.y > 1.5 ? 3.0 : floor(kind + 0.5);
 	bool far = k > 7.5;
+#ifdef PERF14_BAKE
+	float footprint = max(length(dFdx(wpos.xz)), length(dFdy(wpos.xz)));
+	float bw = 0.0;
+	vec4 baked = vec4(0.0);
+	if (bake_enabled && map_size == 384.0 && prev_mode == 0 && wnrm.y > 0.65) {
+		float d = distance(wpos, INV_VIEW_MATRIX[3].xyz);
+		vec2 p = wpos.xz;
+		float edge = min(min(p.x, p.y), min(map_size - p.x, map_size - p.y));
+		float edge_blend = smoothstep(4.0, 12.0, edge);
+		if (far) {
+			edge_blend = smoothstep(12.0, 32.0, length(max(max(-p, p - vec2(map_size)), vec2(0.0))));
+			if (p.y < 0.0) edge_blend *= smoothstep(far_road_half + 1.0, far_road_half + 6.0, abs(p.x - far_road_x));
+		}
+		bw = (rich ? smoothstep(110.0, 155.0, d) : smoothstep(76.0, 112.0, d))
+			* edge_blend * smoothstep(0.65, 0.83, wnrm.y);
+		if (bw > 0.0 && !far) {
+			// Рисунок мостовых, площадей и троп сохраняем на исходных текстурах.
+			vec3 cover = textureLod(surf, p / map_size, 0.7).rgb;
+			bw *= 1.0 - smoothstep(0.06, 0.28, max(cover.r, max(cover.g, cover.b)));
+		}
+		if (bw > 0.0) baked = read_baked(p, far, footprint, bw);
+	}
+#endif
 	float fv = wpos.y / 0.125 + 0.5;          // для горизонталей за краем карты (производная — вне ветвлений)
 	float fw = max(fwidth(fv), 1e-4);
+	float rough = 0.95;
+	vec3 c;
+#ifdef PERF14_BAKE
+	if (bw < 1.0) {
+#endif
 	float dmap = 0.0;
 	if (far) {
 		// за краем карты: вблизи — пятна клетками, как на карте; вдали — крупные пятна из вершинного цвета
 		vec2 dd = max(max(-wpos.xz, wpos.xz - vec2(map_size)), vec2(0.0));
 		dmap = length(dd);
+#ifndef PERF14_E4_CONTROL
+		if (dmap < 420.0) base = mix(far_grass(wpos), base, smoothstep(90.0, 420.0, dmap));
+#else
 		base = mix(far_grass(wpos), base, smoothstep(90.0, 420.0, dmap));
+#endif
 		k = 0.0;
 	}
 	vec3 an = abs(wnrm);
@@ -240,7 +316,6 @@ void fragment() {
 #else
 	float r = h31(cube);
 #endif
-	float rough = 0.95;
 	bool mg = meadow_on && (k == 0.0 || k == 1.0 || k == 4.0 || k == 5.0);
 	if (mg) {
 		// чужая земля: вершинный цвет приглушён к Land.LOCK — синего к зелёному у него больше (≥ 0,26 против ≤ 0,18 у травы)
@@ -255,7 +330,7 @@ void fragment() {
 		);
 		base = far ? mix(mgc, base, smoothstep(90.0, 420.0, dmap)) : mgc;
 	}
-	vec3 c = base;
+	c = base;
 	if (top) {
 		if (k == 6.0) {
 			// утоптанная земля под домами и во дворах
@@ -340,12 +415,23 @@ void fragment() {
 		}
 		if (k == 0.0 || k == 1.0 || k == 4.0 || k == 5.0 || k == 6.0) {
 			// покрытия по маске с плавной выборкой — края скруглены, а не ступеньками по клеткам
+#ifdef PERF14_E4_CONTROL
 			vec4 m = textureLod(surf, wpos.xz / map_size, 0.7);   // размытая маска: плавные края без ступенек
 			if (far) {
 				// за краем карты маски нет: большая дорога уходит на север прямо за горизонт (края — как у маски)
 				float rd = abs(wpos.x - far_road_x);
 				m = vec4(wpos.z < 0.0 ? clamp(0.5 + (far_road_half - rd) / 1.6, 0.0, 1.0) : 0.0, 0.0, 0.0, 1.0);
 			}
+#else
+			vec4 m;
+			if (far) {
+				// за краем карты маски нет: большая дорога уходит на север прямо за горизонт (края — как у маски)
+				float rd = abs(wpos.x - far_road_x);
+				m = vec4(wpos.z < 0.0 ? clamp(0.5 + (far_road_half - rd) / 1.6, 0.0, 1.0) : 0.0, 0.0, 0.0, 1.0);
+			} else {
+				m = textureLod(surf, wpos.xz / map_size, 0.7);   // размытая маска: плавные края без ступенек
+			}
+#endif
 			float wob = vn(wpos.xz * 2.3) - 0.5;
 			vec4 g2 = vec4(0.0);
 			vec4 g3 = vec4(0.0);
@@ -632,6 +718,19 @@ void fragment() {
 		c = mix(c, vec3(0.11, 0.12, 0.065), (1.0 - smoothstep(0.96, 1.03, wpos.y)) * 0.75);
 		rough = 0.9;
 	}
+#ifdef PERF14_BAKE
+		if (bw > 0.0) {
+			c = mix(c, baked.rgb, bw);
+			rough = mix(rough, baked.a, bw);
+		}
+	} else {
+		c = baked.rgb;
+		rough = baked.a;
+	}
+#endif
+#ifdef PERF14_BAKE_CAPTURE
+	ALBEDO = bake_shift > 0.0 ? vec3(rough) : c;
+#else
 	if (season != vec4(0.0)) {
 		// трава по временам года: осенью золотится, зимой бледнеет, весной сочнее; мостовые и камни — как были
 		float gr = smoothstep(0.004, 0.03, c.g - max(c.r, c.b));
@@ -642,6 +741,7 @@ void fragment() {
 		c = mix(c, t, gr);
 	}
 	ALBEDO = c * (1.0 - 0.28 * wet);
+#endif
 	ROUGHNESS = mix(rough, 0.32, wet);
 	SPECULAR = mix(0.3, 0.55, wet);
 }
