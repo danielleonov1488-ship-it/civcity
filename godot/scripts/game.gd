@@ -7877,7 +7877,7 @@ func restart(m: String) -> void:
 
 ## В гости к другому игроку: его город (ответ SocialNet.visit) — в файл, свой город сохранить, перезапуск в режиме гостя
 func visit_city(v: Dictionary) -> void:
-	var path := "user://visit_city.json"
+	var path := GamePaths.save_dir().path_join("visit_city.json")
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
 		hud.notify("Не получилось открыть город друга", "info")

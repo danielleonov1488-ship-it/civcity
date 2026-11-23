@@ -258,7 +258,7 @@ func open(tab_id := "", sliced := false) -> void:
 	hud._close_tray()
 	hud._hide_info()
 	camp_window = ""
-	win.visible = not lg.v3()
+	win.visible = not lg.v3() or tab_id in ["pvp", "events"]
 	visible = true
 	move_to_front()
 	lg.flags["seen"] = true
@@ -275,7 +275,7 @@ func open(tab_id := "", sliced := false) -> void:
 		sel = {"c": 0, "r": 0, "s": lg.fort_guide_stage_index()}
 		fort_map_zoom = 1.0
 		fort_map_focus = Vector2(0.5, 0.5)
-	if lg.flags.has("turn_page") and tab_id != "pvp":
+	if lg.flags.has("turn_page") and not tab_id in ["pvp", "events"]:
 		# босс побеждён (в 3D-бою или пока окно было закрыто) — карта перелистывается на новую провинцию
 		lg.flags.erase("turn_page")
 		_turn_page()
@@ -678,7 +678,8 @@ func _rebuild(sliced := false) -> void:
 		return
 	_live = []
 	hud._clear(content)
-	if lg.v3() and camp_window == "":
+	var fort_campaign := lg.v3() and camp_window == "" and not tab in ["pvp", "events"]
+	if fort_campaign:
 		if _map_rebuild_waiting:
 			_dirty = true
 			return
@@ -699,7 +700,7 @@ func _rebuild(sliced := false) -> void:
 	guide_region_button = null
 	_front_btn = null
 	_upg_btn = null
-	if lg.v3() and camp_window == "":
+	if fort_campaign:
 		win.hide()
 		await _build_fort_map(sliced)
 		_last_sig = _sig()
@@ -719,8 +720,7 @@ func _rebuild(sliced := false) -> void:
 			(tabs[k] as Button).custom_minimum_size.x = 200.0 if army else 214.0
 	if lg.v3():
 		for k in tabs:
-			(tabs[k] as Button).visible = k == "campaign"
-		tab = "campaign"
+			(tabs[k] as Button).visible = k in ["pvp", "events"]
 	if (tab == "soldiers" or tab == "events") and not army:
 		tab = "campaign"
 	var body: Control
@@ -2670,10 +2670,11 @@ func _on_battle_closed(out: Dictionary) -> void:
 		if n != null and n.has_method("pvp_report"):
 			n.pvp_report(_pending, out)
 	var was_pvp := out.has("delta") or (out.is_empty() and String(_pending.get("kind", "")) == "pvp")
+	var was_event := out.has("event")
 	_pending = {}
 	if was_pvp:
 		_pvp_state = "idle"
-	elif lg.fort_guide_step() in [Legion.FortGuide.RESCUED, Legion.FortGuide.FINISH]:
+	elif not was_event and lg.fort_guide_step() in [Legion.FortGuide.RESCUED, Legion.FortGuide.FINISH]:
 		CampUI.attach(hud).open()
 		return
 	if bool(out.get("win", false)) and out.has("next") and not (out["next"] as Dictionary).is_empty() and not lg.flags.has("turn_page"):
@@ -2683,7 +2684,8 @@ func _on_battle_closed(out: Dictionary) -> void:
 		view_c = int(nx["cycle"])
 	battle_returning = true
 	_dirty = false
-	await open("pvp" if was_pvp else "campaign", battle_returning)
+	var next_tab := "events" if was_event else ("pvp" if was_pvp else "campaign")
+	await open(next_tab, battle_returning)
 	battle_returning = false
 
 
@@ -4237,7 +4239,7 @@ func _attack(opp: Dictionary) -> void:
 			_attack(o2))
 		return
 	if _has_battle_scene():
-		close()
+		close(false)
 		_pending = lg.start_pvp_battle(opp)
 		# бой мог и не открыться (уже идёт другой — тот, что у LegionBattle.current) — тогда и ждать нечего
 		var b = LegionBattle.current

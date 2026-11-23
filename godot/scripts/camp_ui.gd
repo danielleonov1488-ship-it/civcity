@@ -443,10 +443,10 @@ func _build_screen() -> void:
 	campaign_button = _screen_button("Карта", "map", _campaign, Look.WINE)
 	campaign_button.name = "FortMap"
 	_badge(campaign_button)
-	var arena := _nav("Арена", "trophy", func(): pass)
-	arena.disabled = true
-	arena.add_theme_stylebox_override("disabled", Look.box(Look.DARK, Look.BRONZE, 40, 6))
-	arena.tooltip_text = I18n.t("Бои с другими игроками откроются позже.")
+	var arena := _nav("Арена", "trophy", func():
+		close()
+		lu.open("pvp"))
+	arena.name = "FortArena"
 	squad_button = _nav("Отряд", "squad", show_squad)
 	daily_button = _nav("Задания дня", "quests", func(): _aux("daily"))
 	chest_button = _screen_button("", "", show_storage, Look.DARK, Vector2(65, 52))
