@@ -65,6 +65,10 @@ die() { echo "ОШИБКА: $*" >&2; exit 1; }
 [ -f "$TEMPLATES/windows_release_x86_64.exe" ] || die "нет шаблонов экспорта в $TEMPLATES (tools/godot-dl/Godot_v4.7.2-stable_export_templates.tpz)"
 [ $MAC -eq 0 ] || [ -f "$TEMPLATES/macos.zip" ] || die "нет шаблона для Mac $TEMPLATES/macos.zip (он в том же tools/godot-dl/Godot_v4.7.2-stable_export_templates.tpz)"
 mkdir -p "$LOGS"
+# 23.11: модели, которых нет в git (куплены/собраны локально), — без них игра собирается, но луга и фигуры Легиона пустые
+for f in assets/synty/FBX assets/synty_meadow/FBX assets/legion_chars/base_m.glb assets/legion_enemies/local_body_m.glb; do
+  [ -e "$ROOT/godot/$f" ] || die "нет локальных моделей godot/$f (не в git) — скопируйте из рабочей копии .work/lanes/c"
+done
 
 # никаких файлов Godot на диске C: кэш/журналы редактора уже в tools/godot/editor_data (._sc_), а user:// игры —
 # в .work (на случай, если экспорт что-то туда пишет)
@@ -95,7 +99,9 @@ fi
 if [ $need_icons -eq 1 ]; then
   echo "== 0/4 значки построек (рисование, замок видеокарты)"
   bake=$(mktemp -d /d/CivCity/.work/icon_bake.XXXXXX)
-  CIVCITY_PROJ="$ROOT" ONE_GODOT=1 GPU_TIMEOUT=3600 CIVCITY_NOLOGIN=1 CIVCITY_SAVEDIR="$(cygpath -m "$bake")/profile"     bash /d/CivCity/.work/py/gpu_run.sh res://test_bake_building_icons.tscn -- "out=$(cygpath -m "$bake")/out" > "$LOGS/icons.log" 2>&1
+  # сначала импорт: без него в свежей копии нет списка новых классов (CityStyle, Meadow…) и рисование падает
+  godot --import > "$LOGS/icons_import.log" 2>&1 || die "импорт перед значками упал, см. $LOGS/icons_import.log"
+  CIVCITY_PROJ="$ROOT" ONE_GODOT=1 GPU_TIMEOUT=1200 CIVCITY_NOLOGIN=1 CIVCITY_SAVEDIR="$(cygpath -m "$bake")/profile"     bash /d/CivCity/.work/py/gpu_run.sh res://test_bake_building_icons.tscn -- "out=$(cygpath -m "$bake")/out" > "$LOGS/icons.log" 2>&1
   [ -f "$bake/out/v$ICON_V.zip" ] || die "значки не нарисовались, см. $LOGS/icons.log"
   mkdir -p "$ROOT/godot/icons_prebuilt"
   [ -f "$ICONS" ] && mv -f "$ICONS" "$bake/previous_v$ICON_V.zip"     # прежний архив — в папку рисования, не удаляем
