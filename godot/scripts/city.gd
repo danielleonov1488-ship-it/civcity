@@ -170,13 +170,13 @@ func apron_of(b: Dictionary) -> int:
 	return 1 if d["kind"] in APRON_KINDS else 0
 
 
-func _apron_add(b: Dictionary) -> void:
-	match apron_of(b):
-		1:
-			land.wear_stamp(b["cells"], door_point(b))
-		3:
-			land.pave_under(b["cells"], true, Land.Kind.SAND if String(b["type"]) == "circus_fl" else Land.Kind.PLAZA)
-			land.wear_stamp(b["cells"], door_point(b))   # и утоптанная кайма: щели между круглой стеной и улицей не зелёные
+func _apron_add(b: Dictionary, door := Vector2.INF) -> void:
+	var kind := apron_of(b)
+	if kind not in [1, 3]:
+		return
+	if kind == 3:
+		land.pave_under(b["cells"], true, Land.Kind.SAND if String(b["type"]) == "circus_fl" else Land.Kind.PLAZA)
+	land.wear_stamp(b["cells"], door_point(b) if door == Vector2.INF else door)
 
 
 ## Все окантовки заново (загрузка сохранения: окантовка не сохраняется — старые города получают её сами).
@@ -187,16 +187,27 @@ func apron_all(tree: SceneTree = null) -> void:
 	for id in buildings:
 		if apron_of(buildings[id]) == 2:
 			land.wear_block[int(id)] = true
-	var started := Perf14.begin()
-	var deadline := Time.get_ticks_usec() + 4500
-	for id in buildings:
-		_apron_add(buildings[id])
-		if tree != null and Time.get_ticks_usec() >= deadline:
-			Perf14.detail("load_aprons", started)
+	if tree == null:
+		for b: Dictionary in buildings.values():
+			_apron_add(b)
+		return
+	var deadline := Time.get_ticks_usec() + 4000
+	for b: Dictionary in buildings.values():
+		var kind := apron_of(b)
+		if kind not in [1, 3]:
+			continue
+		var started := Perf14.begin()
+		var door := door_point(b)
+		Perf14.detail("load_apron_blueprint", started)
+		if Time.get_ticks_usec() >= deadline:
 			await tree.process_frame
-			started = Perf14.begin()
-			deadline = Time.get_ticks_usec() + 4500
-	Perf14.detail("load_aprons", started)
+			deadline = Time.get_ticks_usec() + 4000
+		started = Perf14.begin()
+		_apron_add(b, door)
+		Perf14.detail("load_aprons", started)
+		if Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			deadline = Time.get_ticks_usec() + 4000
 
 
 ## Постройку убрали: её окантовку стереть, кольца соседей в том месте — записать заново (снесли домус — глина
@@ -320,13 +331,13 @@ func unlock_id(type: String) -> String:
 	return Defs.unlock_of(type, decor_v >= 1)
 
 
-func blueprint(b: Dictionary) -> Bp:
+func blueprint(b: Dictionary, pending = null) -> Bp:
 	# дом без "kw" — из старого сохранения: стоит на прежнем следе, новый облик ужимается по нему (KitHouses)
 	# постройка из старого сохранения, чей тип потом поменял размер (SizeLadder), — новый облик на её прежних клетках
 	var size := field_size(b)
 	if size != Vector2i.ZERO:
 		return Catalog.field_bp(b["type"], size)
-	return Catalog.make(b["type"], int(b["tier"]), int(b.get("variant", 0)), int(b.get("color", 0)), not b.has("kw"), SizeLadder.old_lot(b))
+	return Catalog.make(b["type"], int(b["tier"]), int(b.get("variant", 0)), int(b.get("color", 0)), not b.has("kw"), SizeLadder.old_lot(b), pending)
 
 
 func xf(b: Dictionary) -> Transform3D:
@@ -5246,6 +5257,17 @@ func load_data(d: Dictionary, tree: SceneTree = null) -> void:
 	Perf14.end(Perf14.START_SAVE, started)
 	if tree != null:
 		await tree.process_frame
+		var prep_deadline := Time.get_ticks_usec() + 4000
+		for b: Dictionary in buildings.values():
+			var pending := []
+			var bp_started := Perf14.begin()
+			blueprint(b, pending)
+			Perf14.detail("load_blueprint_base_" + String(b["type"]), bp_started)
+			if not pending.is_empty():
+				await Catalog.finish_loading(pending[0], tree, prep_deadline)
+			if Time.get_ticks_usec() >= prep_deadline:
+				await tree.process_frame
+				prep_deadline = Time.get_ticks_usec() + 4000
 		await apron_all(tree)
 		await tree.process_frame
 		await compute(false, [], tree, true)

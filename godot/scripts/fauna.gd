@@ -17,6 +17,10 @@ const WATER := {"duck": 0.29, "duck_f": 0.29, "swan": 0.2}   # водная ли
 ## Уточка: материал селезня (имя — его цвет) → пёстро-бурые перья, клюв оранжевый
 const HEN := {"455A64": "5b4430", "4CAF50": "86663f", "FFFFFF": "86663f", "795548": "785637", "78909C": "9a7550", "FFEB3B": "d98b2b"}
 
+const BIRDS := ["duck", "duck_f", "swan"]
+const Perf14 = preload("res://scripts/perf14_timers.gd")
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+
 static var _birds := {}
 static var _sheep: PackedScene
 static var _sheep_lib: AnimationLibrary
@@ -32,17 +36,58 @@ static func bird_mesh(kind: String) -> Mesh:
 		var ps := load(path) as PackedScene
 		if ps:
 			var n := ps.instantiate() as Node3D
-			m = _bake(n, kind)
+			var surfaces := _bird_surfaces(n)
 			n.free()
+			m = _bird_resource(_bake(surfaces, kind))
 	_birds[kind] = m
 	return m
 
 
-## Все сетки модели — в одну: цвет материала (и его картинки) — в вершины, поворот клювом к +Z, размер, вода
-static func _bake(n: Node3D, kind: String) -> Mesh:
-	var V := PackedVector3Array()
-	var Nn := PackedVector3Array()
-	var C := PackedColorArray()
+## Читаем сетки до создания города. Поток получает только массивы и картинки.
+static func warm_birds(tree: SceneTree) -> void:
+	if _birds.size() >= BIRDS.size():
+		return
+	var sources := await CityWarmup.fetch(tree, {DUCK: true, SWAN: true})
+	var surfaces := {}
+	for path: String in [DUCK, SWAN]:
+		var scene: PackedScene = sources.get(path)
+		if scene == null:
+			continue
+		var started := Perf14.begin()
+		var node := scene.instantiate() as Node3D
+		surfaces[path] = _bird_surfaces(node)
+		node.free()
+		Perf14.detail("load_bird_surfaces", started)
+		await tree.process_frame
+	var result := {}
+	var task := WorkerThreadPool.add_task(_bake_birds.bind(surfaces, result), false, "Сетки птиц")
+	while not WorkerThreadPool.is_task_completed(task):
+		await tree.process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	for kind: String in BIRDS:
+		if not _birds.has(kind):
+			var started := Perf14.begin()
+			_birds[kind] = _bird_resource(result[kind])
+			Perf14.detail("load_bird_mesh_" + kind, started)
+			await tree.process_frame
+
+
+static func _bake_birds(surfaces: Dictionary, result: Dictionary) -> void:
+	for kind: String in BIRDS:
+		result[kind] = _bake(surfaces.get(SWAN if kind == "swan" else DUCK, []), kind)
+
+
+static func _bird_resource(arrays: Array) -> Mesh:
+	if arrays.is_empty():
+		return null
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, Kit.material(0.65))
+	return mesh
+
+
+static func _bird_surfaces(n: Node3D) -> Array:
+	var surfaces := []
 	for mi: MeshInstance3D in n.find_children("*", "MeshInstance3D", true, false):
 		var xf := Citizen._rel(mi, n)
 		for s in mi.mesh.get_surface_count():
@@ -59,23 +104,39 @@ static func _bake(n: Node3D, kind: String) -> Mesh:
 					img = tex.get_image()
 					if img and img.is_compressed():
 						img.decompress()
-			if kind == "duck_f" and HEN.has(mname):
-				base = Color(HEN[mname])
-			var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
-			var nr: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
-			var uv = arr[Mesh.ARRAY_TEX_UV]
-			var ix = arr[Mesh.ARRAY_INDEX]
-			var order: PackedInt32Array = ix if ix != null else PackedInt32Array(range(v.size()))
-			for k in order:
-				V.append(xf * v[k])
-				Nn.append((xf.basis * nr[k]).normalized())
-				var c := base
-				if img and uv != null:
-					var q: Vector2 = (uv as PackedVector2Array)[k]
-					c = base * img.get_pixel(clampi(int(fposmod(q.x, 1.0) * img.get_width()), 0, img.get_width() - 1), clampi(int(fposmod(q.y, 1.0) * img.get_height()), 0, img.get_height() - 1))
-				C.append(c)
+			surfaces.append([xf, arr, base, mname, img])
+	return surfaces
+
+
+## Цвет материала и его картинки — в вершины, поворот клювом к +Z, размер и ватерлиния.
+static func _bake(surfaces: Array, kind: String) -> Array:
+	var V := PackedVector3Array()
+	var Nn := PackedVector3Array()
+	var C := PackedColorArray()
+	for surface: Array in surfaces:
+		var xf: Transform3D = surface[0]
+		var arr: Array = surface[1]
+		var base: Color = surface[2]
+		var img: Image = surface[4]
+		if kind == "duck_f" and HEN.has(surface[3]):
+			base = Color(HEN[surface[3]])
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var nr: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var uv = arr[Mesh.ARRAY_TEX_UV]
+		var ix = arr[Mesh.ARRAY_INDEX]
+		var order: PackedInt32Array = ix if ix != null else PackedInt32Array(range(v.size()))
+		var w := img.get_width() if img else 0
+		var h := img.get_height() if img else 0
+		for k in order:
+			V.append(xf * v[k])
+			Nn.append((xf.basis * nr[k]).normalized())
+			var c := base
+			if img and uv != null:
+				var q: Vector2 = (uv as PackedVector2Array)[k]
+				c = base * img.get_pixel(clampi(int(fposmod(q.x, 1.0) * w), 0, w - 1), clampi(int(fposmod(q.y, 1.0) * h), 0, h - 1))
+			C.append(c)
 	if V.is_empty():
-		return null
+		return []
 	# куда смотрит: голова — самые высокие точки, от середины к ним (по земле) — вперёд
 	var lo := Vector3(INF, INF, INF)
 	var hi := -lo
@@ -129,9 +190,14 @@ static func _bake(n: Node3D, kind: String) -> Mesh:
 		out.verts.append_array([a * s, b * s, c * s])
 		out.norms.append_array([Nn[t], Nn[t + 1], Nn[t + 2]])
 		out.cols.append_array([col, C[t + 1] if kind != "swan" else col, C[t + 2] if kind != "swan" else col])
-	var am := out.mesh()
-	am.surface_set_material(0, Kit.material(0.65))
-	return am
+	if out.verts.is_empty():
+		return []
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = out.verts
+	arrays[Mesh.ARRAY_NORMAL] = out.norms
+	arrays[Mesh.ARRAY_COLOR] = out.cols
+	return arrays
 
 
 # ---------- овцы ----------

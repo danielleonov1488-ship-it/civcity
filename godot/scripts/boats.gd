@@ -10,6 +10,7 @@ const MIN_R := 10.0                      # пруд не меньше этого
 const HOURS := [7.0, 19.5]
 const SPEED := 0.022                     # радиан в секунду по кругу (×скорость игры) — лодка дрейфует
 const Perf14 = preload("res://scripts/perf14_timers.gd")
+const CityWarmup = preload("res://scripts/city_warmup.gd")
 
 var game
 var boats: Array = []                    # [{n, rod, bob, c, r, a, w, ph}]
@@ -23,21 +24,31 @@ func setup(g, tree: SceneTree = null) -> void:
 		var c3: Vector3 = pd[0]
 		if c3.z < MIN_R:
 			continue
-		var started := Perf14.begin()
-		_make(c3, rng)
-		Perf14.detail("load_boats", started)
+		await _make(c3, rng, tree)
 		if tree != null:
 			await tree.process_frame
 
 
 ## Лодка с рыбаком на озере реки (15.11: озеро кладётся после ручьёв — Streams; MeadowNature._water_life)
-func add_lake(c3: Vector3) -> void:
+func add_lake(c3: Vector3, tree: SceneTree = null) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 78
-	_make(c3, rng)
+	await _make(c3, rng, tree)
 
 
-func _make(c3: Vector3, rng: RandomNumberGenerator) -> void:
+func _make(c3: Vector3, rng: RandomNumberGenerator, tree: SceneTree) -> void:
+	var female := rng.randf() < 0.3
+	var look := Citizen.roll_look(rng, female)
+	var speed := rng.randf_range(0.92, 1.08)
+	var sources := {}
+	if tree != null:
+		var paths := {Citizen.DIR + String(look["mdl"]) + ".fbx": true}
+		if not Gfx._tex_small:
+			var skin := Synty._tex_path("PolygonAncientEmpire_01_" + String(look["skin"]))
+			if skin != "":
+				paths[skin] = true
+		sources = await CityWarmup.fetch(tree, paths)
+	var started := Perf14.begin()
 	var n := Node3D.new()
 	n.name = "Boat"
 	add_child(n)
@@ -53,12 +64,25 @@ func _make(c3: Vector3, rng: RandomNumberGenerator) -> void:
 		oar.position = Vector3(sd * 0.36, 0.34, -0.1)
 		oar.material_override = _wood(Color("8a6238"))
 		n.add_child(oar)
-	var rower := Citizen.create(rng, rng.randf() < 0.3)
+	Perf14.detail("load_boat_hull", started)
+	if tree != null:
+		await tree.process_frame
+	started = Perf14.begin()
+	var rower := Citizen.build(look)
+	rower.anim.speed_scale = speed
 	rower.scale = Vector3.ONE * Citizen.SIZE
 	rower.position = Vector3(0, 0.12, 0.1)
 	rower.rotation.y = 0.0                   # лицом к носу — смотрит на поплавок
 	n.add_child(rower)
+	Perf14.detail("load_boat_fisher", started)
+	if tree != null:
+		await tree.process_frame
+	started = Perf14.begin()
 	rower.play("Sitting_Idle", 0.0, rng.randf())
+	Perf14.detail("load_boat_pose", started)
+	if tree != null:
+		await tree.process_frame
+	started = Perf14.begin()
 	# удочка: от рук вперёд и вверх, леска с поплавком — в воду
 	var rod_base := Vector3(0.12, 0.62, 0.3)
 	var rod_dir := Vector3(0.22, 0.5, 0.84).normalized()
@@ -97,6 +121,8 @@ func _make(c3: Vector3, rng: RandomNumberGenerator) -> void:
 	n.add_child(bob)
 	boats.append({"n": n, "rod": rod, "bob": bob, "c": Vector2(c3.x, c3.y), "r": c3.z * rng.randf_range(0.45, 0.6), "a": rng.randf() * TAU,
 		"w": SPEED * (1.0 if rng.randf() < 0.5 else -1.0), "ph": rng.randf() * TAU})
+	Perf14.detail("load_boat_tackle", started)
+	sources.clear()
 
 
 func _process(dt: float) -> void:

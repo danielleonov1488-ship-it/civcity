@@ -36,8 +36,8 @@ func setup(g, tree: SceneTree) -> void:
 	for make: Callable in effects:
 		var started := Perf14.begin()
 		var particles: GPUParticles3D = make.call()
-		add_child(particles)
 		particles.emitting = false
+		add_child(particles)
 		nodes.append(particles)
 		Perf14.detail("load_breathe_" + String(make.get_method()), started)
 		await tree.process_frame
@@ -45,10 +45,15 @@ func setup(g, tree: SceneTree) -> void:
 	ffly = nodes[1]
 	birds = nodes[2]
 	mist = nodes[3]
+	var started := Perf14.begin()
 	source.clear()
+	Perf14.detail("load_breathe_sources_release", started)
+	await tree.process_frame
+	started = Perf14.begin()
 	roof = RoofBirds.new()
 	add_child(roof)
 	roof.setup(g)
+	Perf14.detail("load_breathe_roof", started)
 
 
 func _process(dt: float) -> void:
@@ -470,11 +475,11 @@ func _mist() -> GPUParticles3D:
 	var ft := GradientTexture1D.new()
 	ft.gradient = fade
 	pm.color_ramp = ft
-	p.process_material = pm
 	pm.angle_min = 0.0                          # плоские пласты лежат над водой под разными углами
 	pm.angle_max = 360.0
 	pm.particle_flag_rotate_y = true
-	var q: QuadMesh = (Game._puff_quad() as QuadMesh).duplicate()
+	p.process_material = pm
+	var q: QuadMesh = Game._puff_quad().duplicate()
 	q.orientation = PlaneMesh.FACE_Y            # плоско над водой: не врезается в неё прямой кромкой
 	var m := (q.material as StandardMaterial3D).duplicate() as StandardMaterial3D
 	m.billboard_mode = BaseMaterial3D.BILLBOARD_DISABLED

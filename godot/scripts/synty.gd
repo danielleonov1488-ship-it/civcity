@@ -20,9 +20,23 @@ static var unknown := {}         # слоты без картинки (для о
 static func _index() -> void:
 	if not _paths.is_empty():
 		return
-	_scan(DIR + "FBX", ".fbx", _paths)
-	_scan(DIR + "Textures", ".png", _tex)
-	_scan(DIR + "Textures", ".tga", _tex)
+	_install_index(_read_index())
+
+
+## Собираем индекс в своих словарях. Общий индекс отдаём целиком.
+static func _read_index() -> Array[Dictionary]:
+	var paths := {}
+	var textures := {}
+	var slots := {}
+	var mesh_slots := {}
+	_scan(DIR + "FBX", ".fbx", paths)
+	_scan(DIR + "Textures", ".png", textures)
+	_scan(DIR + "Textures", ".tga", textures)
+	var tex := {}
+	for name: String in textures:
+		var lower := name.to_lower()
+		if not tex.has(lower):
+			tex[lower] = textures[name]
 	var f := FileAccess.open(DIR + "MaterialList_PolygonAncientEmpire.txt", FileAccess.READ)
 	var slot := ""
 	var mesh := ""
@@ -31,25 +45,35 @@ static func _index() -> void:
 		var line := f.get_line().strip_edges()
 		if line.begins_with("Mesh Name:"):
 			mesh = line.trim_prefix("Mesh Name:").strip_edges()
-			if not _mesh_slots.has(mesh):
-				_mesh_slots[mesh] = []
+			if not mesh_slots.has(mesh):
+				mesh_slots[mesh] = []
 		elif line.begins_with("Slot:"):
 			slot = line.trim_prefix("Slot:").strip_edges()
-			if not _slots.has(slot):
-				_slots[slot] = ["", ""]
+			if not slots.has(slot):
+				slots[slot] = ["", ""]
 			cur = [slot, "", ""]
 			if mesh != "":
-				_mesh_slots[mesh].append(cur)
+				mesh_slots[mesh].append(cur)
 		elif line.begins_with("Albedo:") and slot != "":
 			var a := line.trim_prefix("Albedo:").strip_edges().split(" ")[0]
 			cur[1] = a
-			if _slots[slot][0] == "":
-				_slots[slot][0] = a
+			if slots[slot][0] == "":
+				slots[slot][0] = a
 		elif line.begins_with("Normal:") and slot != "":
 			var nn := line.trim_prefix("Normal:").strip_edges().split(" ")[0]
 			cur[2] = nn
-			if _slots[slot][1] == "":
-				_slots[slot][1] = nn
+			if slots[slot][1] == "":
+				slots[slot][1] = nn
+	return [paths, tex, slots, mesh_slots]
+
+
+static func _install_index(index: Array[Dictionary]) -> void:
+	if not _paths.is_empty():
+		return
+	_paths = index[0]
+	_tex = index[1]
+	_slots = index[2]
+	_mesh_slots = index[3]
 
 
 ## ResourceLoader.list_directory, а не DirAccess: в собранной игре исходных .fbx/.png в файлах нет (только .import),
@@ -82,10 +106,9 @@ static func _tex_path(name: String) -> String:
 	cands.append_array([name.replace("_01", "_Tex"), name.replace("_01", "_Texture_01"), name.trim_suffix("_01"), name.to_lower()])
 	for c: String in cands:
 		var lower := c.to_lower()
-		for k: String in _tex:
-			if k.to_lower() == lower:
-				_texture_names[name] = _tex[k]
-				return _tex[k]
+		if _tex.has(lower):
+			_texture_names[name] = _tex[lower]
+			return _tex[lower]
 	if not _tex.is_empty():
 		_texture_names[name] = ""
 	return ""

@@ -116,6 +116,7 @@ var _place_refresh_frame := -1
 var _placement_running := false
 var _placement_pops: Array[Array] = []
 var _terrain_task := -1
+var _synty_index_task := -1
 var _autosave_task := -1
 var _save_gen := 0                    # номер сохранения: автосохранение по кадрам не пишет поверх более нового
 var settings := {"fullscreen": false, "quality": "high", "ui_scale": 1.0, "autosave": true, "music": 0.55, "sfx": 0.7}
@@ -366,8 +367,16 @@ func _ready() -> void:
 	_loading_show()
 	var terrain: Array[Land] = []
 	_terrain_task = WorkerThreadPool.add_task(_make_land.bind(terrain), true, "Генерация земли")
+	var synty_index: Array[Array] = []
+	if Synty._paths.is_empty():
+		_synty_index_task = WorkerThreadPool.add_task(func() -> void:
+			synty_index.append(Synty._read_index()), false, "Индекс моделей и текстур")
 	await _step("Земля и холмы", 0.05)
 	var startup := Perf14.begin()
+	_puff_quad()                             # радиальный градиент пригодится туману и дыму
+	Perf14.detail("load_puff_gradient", startup)
+	await get_tree().process_frame
+	startup = Perf14.begin()
 	sound = Sound.new()
 	sound.game = self
 	add_child(sound)
@@ -384,6 +393,12 @@ func _ready() -> void:
 	WorkerThreadPool.wait_for_task_completion(_terrain_task)
 	_terrain_task = -1
 	land = terrain[0]
+	if _synty_index_task >= 0:
+		while not WorkerThreadPool.is_task_completed(_synty_index_task):
+			await get_tree().process_frame
+		WorkerThreadPool.wait_for_task_completion(_synty_index_task)
+		_synty_index_task = -1
+		Synty._install_index(synty_index[0])
 	startup = Perf14.begin()
 	MeadowNature.prepare(land)                # ложбины ручьёв считаются в фоне, пока грузится город
 	city = City.new(land)
@@ -413,7 +428,10 @@ func _ready() -> void:
 	land_mat.shader = ground_shader(perf14_land, perf14_baked_ground, perf14_ground_specular)
 	if mode in ["play", "new", "demo"] and DisplayServer.get_name() != "headless" and RenderingServer.get_current_rendering_method() == "forward_plus":
 		shadow_depth = ShadowDepth.new()
-	Synty._index()
+	Perf14.end(Perf14.START_GROUND, startup)
+	Perf14.detail("load_ground_setup", startup)
+	await get_tree().process_frame
+	startup = Perf14.begin()
 	var tiles := {"tile_road": "Floor_Tiles_04", "tile_plaza_a": "Floor_Tiles_03",
 		"tile_plaza_b": "Floor_Tiles_05", "tile_plaza_c": "Floor_Tiles_01", "tile_plaza_d": "Floor_Tiles_02"}
 	var tile_paths := {}
@@ -422,7 +440,7 @@ func _ready() -> void:
 		tiles[param] = path
 		tile_paths[path] = true
 	Perf14.end(Perf14.START_GROUND, startup)
-	Perf14.detail("load_ground_index", startup)
+	Perf14.detail("load_ground_tile_paths", startup)
 	var tile_textures := await CityWarmup.fetch(get_tree(), tile_paths)
 	startup = Perf14.begin()
 	for param: String in tiles:
@@ -437,6 +455,10 @@ func _ready() -> void:
 	await get_tree().process_frame
 	var gate_paths := {}
 	CityWarmup.models(Entrance.gate_bp(), gate_paths, true)
+	if not Gfx._tex_small:
+		var marble := Synty._tex_path("Building_Marble_01")
+		if marble != "":
+			gate_paths[marble] = true
 	var gate_resources := await CityWarmup.fetch(get_tree(), gate_paths)
 	var g := Land.GATE
 	var xf := Transform3D(Basis.IDENTITY, Vector3(g.x, land.height_at(g.x, g.y), g.y))
@@ -521,6 +543,7 @@ func _ready() -> void:
 	br.name = "Breathe"
 	add_child(br)
 	await br.setup(self, get_tree())
+	await Fauna.warm_birds(get_tree())
 	_startup_mark("ground_setup")
 	await _step("Город", 0.25)
 	var loaded := false
@@ -572,9 +595,7 @@ func _ready() -> void:
 	_ponds_life()
 	Perf14.detail("load_ponds", startup)
 	await get_tree().process_frame
-	var fauna := await CityWarmup.fetch(get_tree(), {Fauna.SWAN: true, Fauna.DUCK: true})
 	await MeadowNature.life(self)                   # у ручьёв, мосты, луга в цветах, поля с оградами, мельницы (scripts/meadow_nature.gd)
-	fauna.clear()
 	startup = Perf14.begin()
 	_cliff_rocks()
 	Perf14.end(Perf14.START_GROUND, startup)
@@ -1800,6 +1821,9 @@ func _light(at: Vector3, k := 1.0) -> OmniLight3D:
 ## Рощи пятнами, луга с цветами и травой, кусты. Каждое дерево и камень — отдельные: их можно снести или перенести
 func _nature(sliced := false) -> void:
 	var deadline := Time.get_ticks_usec() + 5000
+	var placements: Array[Array] = []
+	var models := {}
+	var paths := {}
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5
 	var fn := FastNoiseLite.new()
@@ -1879,10 +1903,27 @@ func _nature(sliced := false) -> void:
 			s = mp[1]
 			rm = mp[2]
 		var xf := Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(x, y - (0.1 if name.contains("Rock") else 0.0), z))
-		_add_nature(name, xf, p, rm)
-		if sliced and Time.get_ticks_usec() >= deadline:
+		if sliced:
+			placements.append([name, xf, p, rm])
+			if not models.has(name):
+				models[name] = true
+				var path := CityWarmup.model_path(name)
+				if path != "":
+					paths[path] = true
+				if not name.begins_with("M:") and not Gfx._tex_small:
+					Synty.texture_paths(name, rm, paths)
+		else:
+			_add_nature(name, xf, p, rm)
+	if not sliced:
+		return
+	var sources := await CityWarmup.fetch(get_tree(), paths)
+	deadline = Time.get_ticks_usec() + 5000
+	for item: Array in placements:
+		_add_nature(item[0], item[1], item[2], item[3])
+		if Time.get_ticks_usec() >= deadline:
 			await get_tree().process_frame
 			deadline = Time.get_ticks_usec() + 5000
+	sources.clear()
 
 
 func _add_nature(name: String, xf: Transform3D, p: Vector2, rm := {}) -> void:
@@ -7571,6 +7612,9 @@ static func _prepare_autosave(data: Dictionary, path: String, result: Dictionary
 
 
 func _exit_tree() -> void:
+	if _synty_index_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_synty_index_task)
+		_synty_index_task = -1
 	if _chunk_task >= 0:
 		WorkerThreadPool.wait_for_group_task_completion(_chunk_task)
 		_chunk_task = -1
@@ -7718,16 +7762,34 @@ static func _read_city_save(path: String, terrain: Land, result: Array[Dictionar
 func _show_loaded(batch: Array) -> void:
 	if batch.is_empty():
 		return
+	var tree := get_tree()
 	var paths := {}
+	var deadline := Time.get_ticks_usec() + 5000
 	for b: Dictionary in batch:
 		CityWarmup.models(city.blueprint(b), paths, true)
-	var models := await CityWarmup.fetch(get_tree(), paths)
-	var deadline := Time.get_ticks_usec() + 5000
+		if Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			deadline = Time.get_ticks_usec() + 5000
+	var models := await CityWarmup.fetch(tree, paths)
+	var alive := func(): return is_inside_tree()
+	deadline = Time.get_ticks_usec() + 5000
 	for b: Dictionary in batch:
 		if Time.get_ticks_usec() >= deadline:
 			await get_tree().process_frame
 			deadline = Time.get_ticks_usec() + 5000
+		var bp := city.blueprint(b)
+		var xf := city.xf(b)
+		await parts.prepare_groups(bp, xf, _show_substitutions(b, bp), alive)
+		if city.apron_of(b) == 2:
+			await parts.prepare_groups(Kerb.blueprint(bp), xf, {}, alive)
+		if spectacle and Spectacle.is_venue(b["type"]):
+			await spectacle.prepare_saved_layout(b)
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
+		var started := Perf14.begin()
 		_show(b)
+		Perf14.detail("load_building_" + String(b["type"]), started)
 	models.clear()
 
 
