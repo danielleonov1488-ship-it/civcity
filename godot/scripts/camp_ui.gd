@@ -1780,6 +1780,8 @@ func _campaign() -> void:
 	_close_modal()
 	_hide_card()
 	lu.open("campaign")
+	if lu.visible:
+		_layout_guide()
 
 
 func _aux(kind: String, sid := 0) -> void:
@@ -2446,10 +2448,14 @@ func _place_guide_pointer(dt: float) -> void:
 	if _guide_arrow_id != "" and retarget:
 		if _guide_arrow_glide != null:
 			_guide_arrow_glide.kill()
-		_guide_arrow_from = guide_pointer.position
-		_guide_arrow_progress = 0.0
-		_guide_arrow_glide = create_tween()
-		_guide_arrow_glide.tween_property(self, "_guide_arrow_progress", 1.0, 0.2).set_trans(Tween.TRANS_SINE)
+		# Кнопка форта уже закрыта картой.
+		if new_target and lu.visible and _guide_arrow_id == str(campaign_button.get_instance_id()):
+			_guide_arrow_progress = 1.0
+		else:
+			_guide_arrow_from = guide_pointer.position
+			_guide_arrow_progress = 0.0
+			_guide_arrow_glide = create_tween()
+			_guide_arrow_glide.tween_property(self, "_guide_arrow_progress", 1.0, 0.2).set_trans(Tween.TRANS_SINE)
 	_guide_arrow_id = target_id
 	_guide_arrow_goal = goal
 	guide_pointer.flip_v = not _guide_arrow_above
