@@ -92,6 +92,7 @@ var minimized_test := false           # проверки: «окно свёрн�
 ## окно автопроверки (gpu_run.sh задаёт CIVCITY_NOMINPAUSE=1): свёрнутое окно паузу не ставит
 var real_min_pause := OS.get_environment("CIVCITY_NOMINPAUSE") != "1"
 var day_t := 0.0
+var _test_city_elapsed := 0.0
 var hour := 8.0
 var look_hour := -1.0                 # ≥ 0 — свет как в этот час (свадебный ролик вечером); часы игры идут как шли
 var clock_hours := true
@@ -321,6 +322,7 @@ func _startup_mark(label: String) -> void:
 
 
 func _ready() -> void:
+	Legion.restore_timer_clock(0.0)
 	if OS.get_environment("CIVCITY_STARTUP_TRACE") == "1":
 		_startup_started = Time.get_ticks_usec()
 		_startup_last = _startup_started
@@ -335,6 +337,8 @@ func _ready() -> void:
 	if not boot.is_empty():
 		args = boot.duplicate()
 	boot = {}
+	if Legion.test_time_factor > 1:
+		OS.set_environment("CIVCITY_NOLOGIN", "1")
 	if not (args.has("menu") or args.has("play") or args.has("new") or args.has("demo") or args.has("promo")):
 		args["menu"] = "1"
 	promo = args.has("promo")
@@ -2386,7 +2390,7 @@ func _grow_anim_profiled(b: Dictionary) -> void:
 	var scaf: Node3D = _scaffold(bp, xf) if full else null
 	if full:
 		_grows += 1
-	var tw := create_tween()
+	var tw := create_tween().set_speed_scale(Legion.test_time_factor)
 	_grow_live[id] = [tw, g, scaf]
 	var large: bool = full and String(b["type"]) in SLICED_PREVIEWS
 	if large:
@@ -2409,7 +2413,7 @@ func _grow_anim_profiled(b: Dictionary) -> void:
 	var puffs := int(dur / 0.8) if full else 3
 	for k in puffs:
 		var at := xf * Vector3(randf_range(float(bb[0]), float(bb[1])), 0.2, randf_range(float(bb[2]), float(bb[3])))
-		get_tree().create_timer(dur / puffs * k).timeout.connect(func(): _puff(at, Color("e8dcc4")))
+		get_tree().create_timer(dur / puffs * k / Legion.test_time_factor).timeout.connect(func(): _puff(at, Color("e8dcc4")))
 
 
 func _tween_grow(g: Node3D, bp: Bp, tw: Tween, duration: float) -> void:
@@ -3507,7 +3511,12 @@ func _process_profiled(dt: float) -> void:
 	if not _placement_running and _place_refresh_frame != Engine.get_process_frames():
 		land.save_warm()                      # отличия земли для сохранения — заранее, понемногу
 	var sdt := dt * speed
-	if speed > 0.0 and mode != "menu":
+	if Legion.test_time_factor > 1 and speed > 0.0 and mode != "menu":
+		# Город считает часы по очереди, даже после долгого кадра.
+		_test_city_elapsed += sdt * Legion.test_time_factor
+		sdt = 0.0 if _clock_busy or _placement_running else minf(_test_city_elapsed, DAY_LEN / 24.0)
+		_test_city_elapsed -= sdt
+	if sdt > 0.0 and mode != "menu":
 		var h0 := hour
 		var nh := hour + sdt * 24.0 / DAY_LEN
 		if not clock_hours:
@@ -7617,6 +7626,9 @@ func _save_data(raw_cells := false) -> Dictionary:
 	data["land"] = land.save_changes()
 	data["hour"] = hour
 	data["version"] = 2
+	var bonus := Legion.timer_bonus()
+	if bonus > 0.0:
+		data["legion_test_elapsed"] = bonus
 	return data
 
 
@@ -7803,6 +7815,7 @@ func _load(path := "") -> bool:
 			if texture_path != "":
 				paths[texture_path] = true
 		apron_textures = await CityWarmup.fetch(get_tree(), paths)
+	Legion.restore_timer_clock(float(data.get("legion_test_elapsed", 0.0)))
 	await city.load_data(data, get_tree())
 	apron_textures.clear()
 	await get_tree().process_frame
