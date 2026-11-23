@@ -354,6 +354,8 @@ func _press(button: BaseButton) -> bool:
 
 func _guided() -> bool:
 	var target := hud.pointer_target
+	if not _shown(target) or target.is_queued_for_deletion():
+		return false
 	if target is BaseButton:
 		return _press(target)
 	if target is MapBadge and _shown(target):
@@ -694,21 +696,28 @@ func _settle(guided: bool) -> bool:
 
 func _guided_hire(step: String) -> bool:
 	var started := Time.get_ticks_msec()
+	var hired := false
 	while tut.cur_id() == step and Time.get_ticks_msec() - started < 110000:
-		var plus := hud.pointer_target as Button
-		if is_instance_valid(plus) and plus.has_meta("hire_class") and _press(plus):
-			counts["hire"] += 1
-			log.progress("нажат «+»")
-			await _frames(6)
-			if tut.cur_id() != step:
-				break
-		if not city.arrivals.is_empty() and _shown(hud.pointer_target):
-			if await _settle(true):
+		var target := hud.pointer_target
+		if _shown(target) and not target.is_queued_for_deletion():
+			if target is Button and target.has_meta("hire_class") and not target.disabled:
+				var building_id := int(hud.info_b.get("id", -1))
+				var before := city.hired_of(hud.info_b)
+				_click(target.get_global_transform_with_canvas() * (target.size * 0.5))
+				await _frames(6)
+				var building: Dictionary = city.buildings.get(building_id, {})
+				if not building.is_empty() and city.hired_of(building) > before:
+					hired = true
+					counts["hire"] += 1
+					log.progress("нанят работник через «+»")
+			elif not city.arrivals.is_empty() and await _settle(true):
 				_hire_wait(step, started)
 				started = Time.get_ticks_msec()
 		await _pause(0.25)
 	_hire_wait(step, started)
-	return _check(tut.cur_id() != step, "Шаг найма не завершился: " + step)
+	var passed := hired and tut.cur_id() != step
+	log.metric("tutorial.hire_" + step, passed)
+	return _check(passed, "Шаг найма не завершился после щелчка «+»: " + step)
 
 
 func _hire_wait(step: String, started: int) -> void:

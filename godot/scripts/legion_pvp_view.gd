@@ -12,7 +12,7 @@ const C_GOLD := Color("a8740f")
 
 
 ## Отряд соперника: его герой и отдельный портрет для каждого места.
-static func squad_strip(_ui: LegionUi, parent: Control, snap, opponent: Dictionary = {}) -> void:
+static func squad_strip(ui: LegionUi, parent: Control, snap, opponent: Dictionary = {}) -> void:
 	if not snap is Dictionary:
 		return
 	var people := HBoxContainer.new()
@@ -24,19 +24,26 @@ static func squad_strip(_ui: LegionUi, parent: Control, snap, opponent: Dictiona
 	if not he.is_empty():
 		var hc: PanelContainer = portraits.rival_portrait(Legion.pvp_rival_look(snap, opponent), 40)
 		hc.name = "rival_hero"
+		var face := hc.get_node("FortPortraitArt") as TextureRect
+		var fallback := UiKitA.texture(portraits.portrait_path({"hero": true}))
+		if fallback != null:
+			face.texture = fallback
 		var hs := Legion.snap_hero(he, clampf(float(snap.get("atk_b", 0.0)), 0.0, 0.6), clampf(float(snap.get("hp_b", 0.0)), 0.0, 0.6))
 		hc.tooltip_text = "Их герой — %s, ур. %d: здоровье %d, урон %d" % [String(hs["name"]), int(hs["level"]), int(hs["hp"]), int(hs["atk"])]
 		people.add_child(hc)
-	var index := 0
 	for entry in snap.get("squad", []):
 		if not entry is Dictionary or not Legion.UNITS.has(String(entry.get("type", ""))):
 			continue
 		var key := String(entry["type"])
-		var person := {"look_seed": hash([opponent.get("name", ""), key, index])}
-		var face: PanelContainer = portraits.portrait(person, 40, [], key)
+		# Сервер передаёт личный облик только для героя.
+		var art: Texture2D = null
+		if key in portraits.CLASSES:
+			art = UiKitA.texture(portraits.portrait_path({"cls": key}, "barracks"))
+		var face: Control = UiKitA.slot(art, true, 40) if art != null else ui._portrait("unit", key, 40)
+		face.name = "RivalClassPortrait_%d" % people.get_child_count()
+		face.mouse_filter = Control.MOUSE_FILTER_PASS
 		face.tooltip_text = "%s, ур. %d" % [Legion.UNITS[key]["name"], int(entry.get("level", 1))]
 		people.add_child(face)
-		index += 1
 	if people.get_child_count() > 0:
 		parent.add_child(people)
 	else:

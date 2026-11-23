@@ -320,7 +320,8 @@ func _pvp() -> void:
 	battle.ui.add_child(strip)
 	LegionPvpView.squad_strip(camp.lu, strip, snap, opponent)
 	var frame := strip.find_child("rival_hero", true, false)
-	await _verify_art(strip, 2, "PvP squad")
+	await _verify_art(strip, 1, "PvP hero")
+	check(strip.find_child("RivalClassPortrait_*", true, false) != null, "PvP class portrait")
 	if check(frame != null, "rival hero medallion"):
 		check(_art(frame)[0].get_meta("portrait_look") == chosen, "PvP picture uses the battle look")
 	strip.position = Vector2(1430, 178)

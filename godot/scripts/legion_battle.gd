@@ -23,6 +23,7 @@ const Look = preload("res://scripts/legion_look.gd")
 const BattleView = preload("res://scripts/legion_battle_view.gd")
 const BattleSound = preload("res://scripts/legion_battle_sound.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
+const FortPerson = preload("res://scripts/fort_person.gd")
 const LAYER := 30
 const AI := "res://assets/ui/ai/"
 const C_INK := Color("4a2c17")
@@ -1530,12 +1531,15 @@ func _close_modal() -> void:
 ## Экран итога: победа или поражение, звёзды, добыча, рейтинг, что открылось; дальше — следующий бой, ещё раз, в лагерь
 func _show_result(sliced := false) -> void:
 	var started := Perf14.begin()
-	phase = "result_loading" if sliced else "result"
+	var rescued: Array = out.get("rescued", [])
+	var wait_for_faces := not rescued.is_empty() and DisplayServer.get_name() != "headless"
+	phase = "result_loading" if sliced or wait_for_faces else "result"
 	var win := bool(out.get("win", false))
 	var first_lesson := bool(setup.get("fort_guide_first", false)) or bool(out.get("guide_finished", false))
 	var p := _modal_panel(610)
-	if sliced:
-		modal.hide()
+	var result_modal := modal
+	if phase == "result_loading":
+		result_modal.hide()
 	var v: VBoxContainer = p.get_child(0)
 	v.add_theme_constant_override("separation", 10)
 	# лавровый венок со звездой — победа, сломанное копьё — поражение (лист 38 владельца; без него — значки игры)
@@ -1583,18 +1587,23 @@ func _show_result(sliced := false) -> void:
 	await _squad_row(v, sliced)
 	started = Perf14.begin() if sliced else started
 	var rw: Dictionary = out.get("reward", {})
-	if not rw.is_empty():
+	var reward_faces: Array[TextureRect] = []
+	if not rw.is_empty() or not rescued.is_empty():
 		var rh := HBoxContainer.new()
 		rh.alignment = BoxContainer.ALIGNMENT_CENTER
 		rh.add_theme_constant_override("separation", 18)
 		for key: String in ["money", "glory", "rp", "rations", "wood", "iron", "leather"]:
 			if rw.has(key):
 				rh.add_child(_reward_chip(key, int(rw[key])))
-		var rescued: Array = out.get("rescued", [])
 		if not rescued.is_empty():
 			rh.name = "FortRescuedRewards"
 			for person: Dictionary in rescued:
-				var portrait := preload("res://scripts/fort_person.gd").portrait(person, 58)
+				var portrait := FortPerson.portrait(person, 58)
+				var face := portrait.get_node("FortPortraitArt") as TextureRect
+				var fallback := Kit.texture(FortPerson.portrait_path(person, "", true))
+				if fallback != null:
+					face.texture = fallback
+				reward_faces.append(face)
 				portrait.tooltip_text = I18n.t("Спасённые жители") + " · " + String(person["name"])
 				rh.add_child(portrait)
 		v.add_child(rh)
@@ -1696,9 +1705,17 @@ func _show_result(sliced := false) -> void:
 	Kit.style_button(back)
 	back.name = "LegionBattleReturn"
 	bh.add_child(back)
-	modal.show()
-	phase = "result"
 	Perf14.end(Perf14.BATTLE_RESULT, started)
+	if wait_for_faces:
+		# Даём стенду дорисовать лица. При задержке остаётся портрет жителя.
+		var deadline := Time.get_ticks_msec() + 1000
+		while not reward_faces.all(func(face: TextureRect): return bool(face.get_meta("portrait_ready", false))) \
+				and Time.get_ticks_msec() < deadline:
+			await get_tree().process_frame
+			if not is_instance_valid(result_modal) or modal != result_modal or phase == "closing":
+				return
+	result_modal.show()
+	phase = "result"
 
 
 ## Три условия звёзд под звёздами: добытые — золотые, недобытая — серая и почему («пали 1 из 3»)
