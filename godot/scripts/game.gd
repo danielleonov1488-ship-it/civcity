@@ -743,6 +743,8 @@ func _ready() -> void:
 		var baker := prepare_ground_bake()
 		if baker != null:
 			await baker.prime()
+	if stage_draw and shadow_depth != null and mode in ["play", "new"]:
+		await _warm_city_view()
 	_startup_mark("first_view")
 	ready_done = true
 	_startup_mark("ready_done")
@@ -1059,6 +1061,39 @@ static func land_shader(distance_lod: bool) -> Shader:
 func _update_shadow_depth() -> void:
 	# Солнце — единственный источник теней в мире города; свет Легиона в другом Viewport.
 	shadow_depth.update(get_viewport().get_camera_3d(), sun)
+
+
+func _warm_city_view() -> void:
+	# Те же параметры проходов и сетки, что в игре, пока город закрыт заставкой.
+	var view := rig.capture_view()
+	var was_cine: bool = rig.cine
+	var grass_processing := grass.is_processing()
+	var saved_hour := hour
+	rig.cine = true
+	grass.set_process(false)
+	var mid := Vector3(Land.SIZE * 0.5, Land.BASE_Y, Land.SIZE * 5.0 / 12.0)
+	var edge := Land.SIZE - 24.0
+	for view_angle: Array in [[mid, 15.0, 55.0, 240.0],
+			[Vector3(edge, Land.BASE_Y, 24.0), 155.0, 50.0, 130.0],
+			[Vector3(24.0, Land.BASE_Y, edge), -25.0, 50.0, 130.0]]:
+		rig.set_view(view_angle[0], view_angle[1], view_angle[2], view_angle[3])
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+	rig.restore_view(view)
+	_set_hour(23.0)
+	await RenderingServer.frame_post_draw
+	# Широкий ночной кадр покрывает фонари и материалы за границей стартового вида.
+	rig.set_view(Vector3(Land.START.x, Land.BASE_Y, Land.START.y), 15.0, 42.0, 100.0)
+	if _applied_quality == "verylow":
+		await RenderingServer.frame_post_draw
+	else:
+		await CityWarmup.render_weather(self, weather, seasons, rig.cam)
+	rig.restore_view(view)
+	_set_hour(saved_hour)
+	grass.set_process(grass_processing)
+	rig.cine = was_cine
+	await RenderingServer.frame_post_draw
+	_startup_mark("city_pipelines")
 
 
 # ---------- небо, солнце, свет, цвет ----------

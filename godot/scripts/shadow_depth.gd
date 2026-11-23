@@ -8,14 +8,16 @@ class Materials:
 	var distant: ShaderMaterial
 	var shader: Shader
 	var params: Array[StringName] = []
+	var values: Dictionary[StringName, Variant] = {}
 	var active := 0
 	var compatible := true
 
 	func sync() -> void:
 		for param in params:
 			var value: Variant = regular.get_shader_parameter(param)
-			if value != distant.get_shader_parameter(param):
+			if value != values.get(param):
 				distant.set_shader_parameter(param, value)
+				values[param] = value
 
 
 class Receiver:
@@ -72,20 +74,6 @@ func add(node: GeometryInstance3D, material: ShaderMaterial, padding := 0.0) -> 
 	_dirty = true
 
 
-func warm_up() -> void:
-	# Forward+ предкомпилирует варианты всех поверхностей, даже за границей кадра.
-	for pair: Materials in _materials.values():
-		pair.sync()
-	for receiver: Receiver in receivers.values():
-		receiver.node.material_override = receiver.materials.distant
-
-
-
-func finish_warm_up() -> void:
-	for receiver: Receiver in receivers.values():
-		receiver.node.material_override = receiver.original_override
-
-
 func set_priority(material: ShaderMaterial, priority: int) -> void:
 	material.render_priority = priority
 	var pair: Materials = _materials.get(material)
@@ -106,14 +94,16 @@ func update(camera: Camera3D, sun: DirectionalLight3D) -> void:
 		var shadow_max := sun.directional_shadow_max_distance
 		if shadow_max > 0.0:
 			depth_limit = maxf(camera.near + 0.001, minf(camera.far, shadow_max)) + SAFETY
-	for pair: Materials in _materials.values():
+	for material: ShaderMaterial in _materials:
+		var pair: Materials = _materials[material]
 		var compatible := pair.regular.shader == pair.shader
 		if compatible != pair.compatible:
 			pair.compatible = compatible
 			_dirty = true
 	if _dirty or forward != _forward or origin_depth != _origin_depth or depth_limit != _limit:
 		var abs_forward := forward.abs()
-		for receiver: Receiver in receivers.values():
+		for node: GeometryInstance3D in receivers:
+			var receiver: Receiver = receivers[node]
 			var nearest := forward.dot(receiver.center) - abs_forward.dot(receiver.half_size) - origin_depth
 			var threshold := depth_limit if receiver.distant else depth_limit + HYSTERESIS
 			var distant := nearest > threshold and receiver.materials.compatible
@@ -129,7 +119,8 @@ func update(camera: Camera3D, sun: DirectionalLight3D) -> void:
 		_limit = depth_limit
 		_dirty = false
 	if swapped > 0:
-		for pair: Materials in _materials.values():
+		for material: ShaderMaterial in _materials:
+			var pair: Materials = _materials[material]
 			if pair.active > 0:
 				pair.sync()
 	if profile:

@@ -66,6 +66,20 @@ static func model_path(name: String) -> String:
 	return Synty._paths.get(name, "")
 
 
+static func render_weather(game: Node3D, weather: Weather, seasons: Seasons, camera: Camera3D) -> void:
+	var effects := Node3D.new()
+	game.add_child(effects)
+	effects.global_position = camera.global_position - camera.global_basis.z * 12.0
+	for particle: GPUParticles3D in [weather._rain(), seasons._leaves()]:
+		particle.amount = 8
+		particle.emitting = true
+		effects.add_child(particle)
+	for i in 3:
+		await RenderingServer.frame_post_draw
+	effects.queue_free()
+	await game.get_tree().process_frame
+
+
 ## У картинок построек свой SubViewport. Здесь запускаем проходы городских шейдеров
 ## с текущим MSAA и тенями, пока над городом ещё виден экран загрузки.
 static func render_effects(game: Node3D) -> void:
