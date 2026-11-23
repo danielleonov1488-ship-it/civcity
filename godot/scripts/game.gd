@@ -52,6 +52,8 @@ var plot_signs := {}
 var plot_fill: MeshInstance3D            # подсветка участка под курсором (его можно купить)
 var plot_fill_key := Vector2i(-1, -1)
 var night_lights: Array[OmniLight3D] = []
+var _lamp := -1.0
+var _lamp_deep := false
 var actors_root: Node3D
 var swimmers := []                    # утки и лебеди на прудах
 var _actor_speed := 1.0
@@ -250,9 +252,16 @@ var _rmb_armed := false               # правую кнопку нажали �
 var _rmb_moved := 0.0                 # насколько ушла мышь с зажатой правой: тянули карту — не «щелчок»
 var _paint_broke := false             # в этом мазке кончились деньги — дальше не рисуем до отпускания кнопки
 var _mouse_pos := Vector2(-1, -1)
+var _ground_rev := -1
+var _ground_origin := Vector3.ZERO
+var _ground_dir := Vector3.ZERO
+var _ground_hit := Vector2.INF
 ## Выбор мышью: луч из камеры по коробкам деталей построек (кэш на постройку)
 var _pick_cache := {}                 # id → {b, id, tier, pos, yaw, y, inv, box, boxes}
-var _pick_sig := []
+var _pick_point := Vector2.INF
+var _pick_transform := Transform3D.IDENTITY
+var _pick_count := -1
+var _pick_next_id := -1
 var _pick_t := 0
 var _pick_hit := {}                   # {id, t, p} — во что попал луч
 static var _bp_boxes := {}            # чертёж → коробки его деталей (в осях постройки)
@@ -768,7 +777,7 @@ func _grading() -> void:
 ## Свет суток — как в Town to City: солнце не поднимается высоко (тени всегда видны), светит из-за домов
 ## сбоку; долгое золотое утро и вечер, короткая сиреневая ночь, при которой всё видно; фонари и окна
 ## загораются постепенно в сумерках. Цвет кадра — тёплые света и прохладные тени (grade.gdshader).
-func _set_hour(h: float) -> void:
+func _set_hour(h: float, refresh_lamps := true) -> void:
 	hour = fposmod(h, 24.0)
 	var lh := look_hour if look_hour >= 0.0 else hour   # свет: часы игры или час ролика
 	# день: 0 — ночь, 1 — полный день; рассвет 4.6–7.2, закат 18.6–21.6
@@ -830,21 +839,29 @@ func _set_hour(h: float) -> void:
 	# окна и фонари: разгораются в сумерках. Окна домов и лавок — еле тёплый огонёк, как от спички
 	# (улицу освещают фонари и жаровни, а не дома); к полуночи и он почти гаснет
 	var lamp := 1.0 - smoothstep(0.15, 0.7, day)
-	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
-	if lm:
-		lm.emission_energy_multiplier = lamp * (0.018 if lh > 23.0 or lh < 4.0 else 0.045)
-	Interiors.set_light(lamp, lh > 23.0 or lh < 4.0)          # комнаты за окнами и дверями (interiors.gd)
-	KitLib.lit_material().emission_energy_multiplier = lamp * (0.12 if lh > 23.0 or lh < 4.0 else 0.3)
-	var em := (Parts._special_mesh("#ember") as PrimitiveMesh).material as StandardMaterial3D
-	if em:
-		em.emission_energy_multiplier = lamp * 1.6
-	Parts._glass_material().emission_energy_multiplier = lamp * 3.0
-	Parts._glass_dim_material().emission_energy_multiplier = lamp * 3.0 * HOUSE_LIGHT
-	for l in night_lights:
-		var k: float = l.get_meta("k", 1.0)
-		l.visible = lamp * k > 0.02
-		# фонари, жаровни и огни арки — заметные тёплые пятна; огонёк у жилого дома остаётся еле видным
-		l.light_energy = lamp * k * (2.6 if k >= 1.0 else 1.6)
+	var deep := lh > 23.0 or lh < 4.0
+	if refresh_lamps or lamp != _lamp or deep != _lamp_deep:
+		var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
+		if lm:
+			lm.emission_energy_multiplier = lamp * (0.018 if deep else 0.045)
+		Interiors.set_light(lamp, deep)
+		KitLib.lit_material().emission_energy_multiplier = lamp * (0.12 if deep else 0.3)
+		var em := (Parts._special_mesh("#ember") as PrimitiveMesh).material as StandardMaterial3D
+		if em:
+			em.emission_energy_multiplier = lamp * 1.6
+		Parts._glass_material().emission_energy_multiplier = lamp * 3.0
+		Parts._glass_dim_material().emission_energy_multiplier = lamp * 3.0 * HOUSE_LIGHT
+	if refresh_lamps or lamp != _lamp:
+		for l: OmniLight3D in night_lights:
+			_update_lamp(l, lamp, float(l.get_meta("k", 1.0)))
+	_lamp = lamp
+	_lamp_deep = deep
+
+
+static func _update_lamp(l: OmniLight3D, lamp: float, k: float) -> void:
+	l.visible = lamp * k > 0.02
+	# Фонари и жаровни ярче огоньков домов.
+	l.light_energy = lamp * k * (2.6 if k >= 1.0 else 1.6)
 
 
 # ---------- вода, въезд, пейзаж до горизонта, природа ----------
@@ -1311,6 +1328,8 @@ func _light(at: Vector3, k := 1.0) -> OmniLight3D:
 	l.omni_attenuation = 1.4
 	l.light_energy = 1.4
 	l.shadow_enabled = false
+	if _lamp >= 0.0:
+		_update_lamp(l, _lamp, k)
 	add_child(l)
 	night_lights.append(l)
 	return l
@@ -2711,9 +2730,9 @@ func _process_profiled(dt: float) -> void:
 			if hidden:
 				hour = fposmod(nh, 24.0)
 			else:
-				_set_hour(nh)
+				_set_hour(nh, false)
 	elif mode == "menu" and clock_hours:
-		_set_hour(hour + dt * 0.5 * 24.0 / DAY_LEN)
+		_set_hour(hour + dt * 0.5 * 24.0 / DAY_LEN, false)
 	if not hidden and speed != _actor_speed:
 		_actor_speed = speed
 		for a in actors_root.get_children():
@@ -2802,11 +2821,20 @@ func _input(e: InputEvent) -> void:
 
 func ground_at_mouse() -> Vector2:
 	var cam := get_viewport().get_camera_3d()
-	if cam == null:
+	if cam == null or land == null:
 		return Vector2.INF
 	var mp := _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
 	var o := cam.project_ray_origin(mp)
 	var d := cam.project_ray_normal(mp)
+	if _ground_rev != land.gen or _ground_origin != o or _ground_dir != d:
+		_ground_rev = land.gen
+		_ground_origin = o
+		_ground_dir = d
+		_ground_hit = _ground_from_ray(o, d)
+	return _ground_hit
+
+
+func _ground_from_ray(o: Vector3, d: Vector3) -> Vector2:
 	if d.y > -0.001:
 		return Vector2.INF
 	var top := 20.0
@@ -2938,10 +2966,15 @@ func pick_building() -> Dictionary:
 	if cam == null or city == null:
 		return {}
 	var mp := _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
-	var sig := [mp, cam.global_transform, city.buildings.size(), city.next_id]
+	var xf := cam.global_transform
+	var count := city.buildings.size()
+	var next := city.next_id
 	var now := Time.get_ticks_msec()
-	if sig != _pick_sig or now - _pick_t > 300:
-		_pick_sig = sig
+	if mp != _pick_point or xf != _pick_transform or count != _pick_count or next != _pick_next_id or now - _pick_t > 300:
+		_pick_point = mp
+		_pick_transform = xf
+		_pick_count = count
+		_pick_next_id = next
 		_pick_t = now
 		_pick_hit = _ray_pick(cam.project_ray_origin(mp), cam.project_ray_normal(mp))
 	var id := int(_pick_hit.get("id", -1))

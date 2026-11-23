@@ -304,8 +304,11 @@ func layout() -> void:
 				break
 		if found:
 			break
-	hud._put(card, Control.PRESET_TOP_LEFT, pos)
-	camera_keys.position = pos + Vector2(10, card.size.y + 10)
+	if card.position != pos:
+		hud._put(card, Control.PRESET_TOP_LEFT, pos)
+	var keys_pos := pos + Vector2(10, card.size.y + 10)
+	if camera_keys.position != keys_pos:
+		camera_keys.position = keys_pos
 
 
 ## Та же цель, что у единственной стрелки: открываем нужный раздел и подводим камеру.

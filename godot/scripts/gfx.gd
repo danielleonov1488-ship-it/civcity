@@ -54,6 +54,7 @@ var _vp: RID
 var _measure := false
 var _check_n := 0
 var _check_t := 0.0
+var _check_sample_t := 0.0
 var _check_ms := PackedFloat32Array()
 var _check_frame := PackedFloat32Array()   # длина кадров за проверку (Mac на Metal — вместо времени видеокарты)
 var _watch_t := 0.0
@@ -919,12 +920,14 @@ func _check_step(dt: float) -> void:
 	_check_n += 1
 	if _check_n <= CHECK_SKIP:
 		return
-	var ms := RenderingServer.viewport_get_measured_render_time_gpu(_vp)
-	if ms > 0.0:
-		_check_ms.append(ms)
 	_check_frame.append(dt * 1000.0)
 	_check_t += dt
+	_check_sample_t -= dt
 	if _check_t < CHECK_SEC:
+		if _check_sample_t <= 0.0 and not RenderingServer.frame_pre_draw.is_connected(_sample_check_gpu):
+			_check_sample_t = 0.125
+			# К этому сигналу движок уже дождался предыдущего кадра.
+			RenderingServer.frame_pre_draw.connect(_sample_check_gpu, CONNECT_ONE_SHOT)
 		return
 	var st: Dictionary = game.settings
 	var q: String = st.get("quality", "high")
@@ -949,6 +952,12 @@ func _check_step(dt: float) -> void:
 	_set_measure(_dbg != null and _dbg.visible)
 	if not bool(st.get("tip_q_auto", false)):
 		_pending.push_front(_tip_auto(q))
+
+
+func _sample_check_gpu() -> void:
+	var ms := RenderingServer.viewport_get_measured_render_time_gpu(_vp)
+	if ms > 0.0:
+		_check_ms.append(ms)
 
 
 ## Совет один раз: какой уровень выбран по видеокарте и где поменять
@@ -1021,6 +1030,7 @@ func _anims(dt: float) -> void:
 		return
 	var q: String = str(game.settings.get("quality", "high"))
 	var low := is_low(q)
+	var verylow := q == "verylow"
 	var viewport := get_viewport()
 	var cam := viewport.get_camera_3d()
 	if cam == null or game.people == null:
@@ -1034,11 +1044,16 @@ func _anims(dt: float) -> void:
 		return
 	var cp := cam.global_position
 	var fps := maxf(30.0, Engine.get_frames_per_second())
+	var mid_k := maxi(1, int(fps / float(ANIM_HZ[1])))
+	var small_k := maxi(1, int(fps / float(ANIM_HZ[2])))
+	var hidden_k := maxi(1, int(fps / float(ANIM_HZ[3])))
+	var frustum := cam.get_frustum()
 	# рост в точках = fpx · рост / расстояние (вертикальный угол камеры)
 	var fpx := viewport.get_visible_rect().size.y / (2.0 * tan(deg_to_rad(cam.fov) * 0.5))
 	var focus: Citizen = null
-	if game.people.by_id.has(game.people.focus_rid):
-		focus = game.people.by_id[game.people.focus_rid]["node"]
+	var focused: Dictionary = game.people.by_id.get(game.people.focus_rid, {})
+	if not focused.is_empty():
+		focus = focused["node"]
 	for t in 4:
 		tier_n[t] = 0
 	var list: Array[Citizen] = _anim_list
@@ -1059,19 +1074,27 @@ func _anims(dt: float) -> void:
 		i += 1
 		var pos := c.global_position
 		var tier := 0
+		var k := 1
 		var px := INF
-		var d := pos.distance_to(cp)
-		if c == focus or c.cape_sk != null or not lod_on:
-			tier = 0                               # выбранный житель и герой (у него плащ) — всегда плавно
-		elif not cam.is_position_in_frustum(pos + Vector3(0, 0.6, 0)):
-			tier = 3
-		else:
-			px = fpx * 1.4 * c.scale.y / Citizen.SIZE / maxf(0.5, d)
-			tier = 0 if px >= ANIM_BIG else (1 if px >= ANIM_SMALL else 2)
+		c.walk_offscreen = false
+		if c != focus and c.cape_sk == null and lod_on:
+			var point := pos + Vector3(0, 0.6, 0)
+			for plane: Plane in frustum:
+				var outside := plane.distance_to(point)
+				if outside > 0.0:
+					tier = 3
+					k = hidden_k
+					# У края сохраняем частоту ходьбы: в кадре ещё может быть видна модель.
+					c.walk_offscreen = outside > 2.5
+					break
+			if tier != 3:
+				px = fpx * 1.4 * c.scale.y / Citizen.SIZE / maxf(0.5, pos.distance_to(cp))
+				if px < ANIM_BIG:
+					tier = 1 if px >= ANIM_SMALL else 2
+					k = mid_k if tier == 1 else small_k
 		tier_n[tier] += 1
-		var k := 1 if tier == 0 else maxi(1, int(fps / float(ANIM_HZ[tier])))
-		if low and (q == "verylow" or d > HALF_FAR):
-			k = maxi(k, 2)
+		if k == 1 and low and (verylow or pos.distance_squared_to(cp) > HALF_FAR * HALF_FAR):
+			k = 2
 		if People.anim_batch:
 			# Нижняя частота зависит от размера, даже если весь кадр пока медленный.
 			if lod_on and tier > 0:

@@ -61,6 +61,8 @@ var lbl_pop: Label
 var lbl_happy: Label
 var lbl_day: Label
 var lbl_clock: Label
+var _clock_slot := -1
+var _undo_tick := 0.0
 var save_quill: TextureRect               # перо у часов — идёт сохранение (saving)
 var _quill_tw: Tween
 var speed_btns := []
@@ -4068,7 +4070,8 @@ func _process(_dt: float) -> void:
 		_ptr_shown = {}
 		_update_pointer()
 	if game and game.ready_done:
-		_flush_guidance()
+		if city_visible and (not guidance_queue.is_empty() or game.city.tips.has("arrive_wait")):
+			_flush_guidance()
 		if tutorial_busy():
 			advisor_panel.hide()
 			notes_box.hide()
@@ -4090,31 +4093,39 @@ func _process(_dt: float) -> void:
 		_cursor_tick()
 		_hover_tick()
 		_person_tag_tick(_dt)
-	if not info_p.is_empty() and info_panel and info_panel.visible:
+	if not info_p.is_empty() and info_panel and info_panel.is_visible_in_tree():
 		PersonCard.tick(self, info_p, _dt)     # портрет следит за головой, «Сейчас» — дважды в секунду
-	if tool_panel and tool_panel.visible and Engine.get_process_frames() % 30 == 0:
-		refresh_undo()                        # отменить постройку можно 30 с — медаль сереет сама
-	if not _lg_live.is_empty() and info_panel and info_panel.visible:
+	if tool_panel and tool_panel.is_visible_in_tree():
+		_undo_tick -= _dt
+		if _undo_tick <= 0.0:
+			_undo_tick = 0.25
+			refresh_undo()                    # медаль сереет, когда истекает время отмены
+	else:
+		_undo_tick = 0.0
+	if not _lg_live.is_empty() and info_panel and info_panel.is_visible_in_tree():
 		_lg_live_t -= _dt
 		if _lg_live_t <= 0.0:
 			_lg_live_t = 0.25
 			_lg_tick()                        # карточка здания Легиона: идущее улучшение
-	if rank_btn and rank_btn.visible:
+	if rank_btn and rank_btn.is_visible_in_tree():
 		# город готов к новому уровню: кнопка и надпись уровня мягко светятся
 		var k := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 320.0)
 		rank_btn.self_modulate = Color.WHITE.lerp(Color(1.2, 1.16, 1.02), k)
 		lbl_level.modulate = Color.WHITE.lerp(Color(1.35, 1.35, 1.1), k)
 
-	if _fold_badge and is_instance_valid(_fold_badge):
+	if _fold_badge and is_instance_valid(_fold_badge) and _fold_badge.is_visible_in_tree():
 		# на свёрнутом свитке новое «✓» мягко светится 2 с
 		var gk := 0.0
 		if Time.get_ticks_msec() < _fold_glow_until:
 			gk = 0.5 + 0.5 * sin(Time.get_ticks_msec() / 140.0)
 		_fold_badge.modulate = Color.WHITE.lerp(Color(1.35, 1.4, 1.2), gk)
-	if city_visible and game and lbl_clock:
+	if city_visible and game and lbl_clock and lbl_clock.is_visible_in_tree():
 		var h := int(game.hour)
 		var m := int((game.hour - h) * 60.0) / 10 * 10
-		lbl_clock.text = "%02d:%02d" % [h, m]
+		var slot := h * 60 + m
+		if slot != _clock_slot:
+			_clock_slot = slot
+			lbl_clock.text = "%02d:%02d" % [h, m]
 	if not _ptr_shown.is_empty():
 		# стрелка по щелчку строки: следует за тем, что открылось (раздел → вкладка → карточка), и гаснет через PTR_SHOW_MS
 		_ptr_tick -= _dt
@@ -9063,6 +9074,8 @@ func _icon_dir() -> String:
 	var root := "user://icons"
 	var name := key.md5_text().substr(0, 12)
 	DirAccess.make_dir_recursive_absolute(root.path_join(name))
+	if OS.get_environment("CIVCITY_NOMINPAUSE") == "1":
+		return root.path_join(name)       # проверки через общий замок берегут кэш других дорожек
 	for old in DirAccess.get_directories_at(root):
 		if old != name:
 			var od := root.path_join(old)

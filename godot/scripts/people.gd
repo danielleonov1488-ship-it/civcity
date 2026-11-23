@@ -1523,13 +1523,13 @@ func _schedule(dh: float) -> void:
 				if int(r["home"]) <= 0:
 					continue
 				if r["job"] >= 0:
-					var b: Dictionary = city.buildings.get(r["job"], {})
-					if b.is_empty():
+					if h >= 16.5 or r["done_today"] or not city.buildings.has(r["job"]):
 						continue
-					var dep := 8.0 - _hours_to(r["p"], work_door(r)) + float(r["dep"])
-					if h >= dep and h < 16.5 and not r["done_today"] and _sched_ok():
+					var door := work_door(r)
+					var dep := 8.0 - _hours_to(r["p"], door) + float(r["dep"])
+					if h >= dep and _sched_ok():
 						r["done_today"] = true
-						_go(r, work_door(r), "work")
+						_go(r, door, "work")
 				elif not night and h >= 8.5 and h < 19.5:
 					var chance := 0.02 if r["child"] else 0.025
 					if rng.randf() < chance * dh * 4.0 * 10.0 and _sched_ok():
@@ -2541,18 +2541,22 @@ func _act_step(r: Dictionary, dt: float) -> void:
 	if r["act"] == "play":
 		moved = _play_move(r, dt)
 	if c:
-		var dy := angle_difference(float(r["yaw"]), float(r["face"]))
+		var yaw: float = r["yaw"]
+		var dy := angle_difference(yaw, float(r["face"]))
 		if absf(dy) > 0.01:
-			r["yaw"] = float(r["yaw"]) + dy * minf(1.0, dt * 5.0)
+			r["yaw"] = yaw + dy * minf(1.0, dt * 5.0)
 			moved = true
-		if absf(float(r["yoff"]) - float(r["yoff_to"])) > 0.001:
-			r["yoff"] = move_toward(float(r["yoff"]), float(r["yoff_to"]), dt * 0.12)
+		var yoff: float = r["yoff"]
+		var target_yoff: float = r["yoff_to"]
+		if absf(yoff - target_yoff) > 0.001:
+			r["yoff"] = move_toward(yoff, target_yoff, dt * 0.12)
 			moved = true
 		if moved:
 			_place(r)
-	if r["act"] in ["solo", "watch", "play"]:
+	var act: String = r["act"]
+	if act == "solo" or act == "watch" or act == "play":
 		r["at"] = float(r["at"]) - dt
-	if r["act"] == "sit" and _sitting(r):
+	if act == "sit" and _sitting(r):
 		r["sw"] = float(r.get("sw", 0.0)) - dt
 		if float(r["sw"]) <= 0.0:
 			_sit_pick(r)
@@ -2711,11 +2715,14 @@ func _work_step(r: Dictionary, dt: float) -> void:
 	var c: Citizen = r["node"]
 	if not r.has("slot_yaw"):
 		return
-	var dy := angle_difference(c.rotation.y, float(r["face"]))
+	var yaw := c.rotation.y
+	var dy := angle_difference(yaw, float(r["face"]))
 	if absf(dy) > 0.01:
-		c.rotation.y += dy * minf(1.0, dt * 4.0)
-	if int(r["serve"]) != 0:
-		if not by_id.has(int(r["serve"])) or str((by_id[int(r["serve"])] as Dictionary)["act"]) != "shop":
+		c.rotation.y = yaw + dy * minf(1.0, dt * 4.0)
+	var serve: int = r["serve"]
+	if serve != 0:
+		var customer: Dictionary = by_id.get(serve, {})
+		if customer.is_empty() or customer["act"] != "shop":
 			r["serve"] = 0
 			r["face"] = float(r["slot_yaw"])
 			c.play(r["slot_anim"], 0.4, rng.randf())
@@ -3299,20 +3306,21 @@ func _process_body(dt: float) -> void:
 		return
 	var sdt := dt * speed
 	_frame_sdt = sdt
-	if _far_acc.size() != far_n:
-		_far_acc.resize(far_n)
-		_far_acc.fill(0.0)
-	for k in far_n:
-		_far_acc[k] += sdt
 	_far_ph = (_far_ph + 1) % far_n
-	var fdt := _far_acc[_far_ph]
-	_far_acc[_far_ph] = 0.0
 	_lod_frame += 1
-	var k_walk := maxi(1, int(Engine.get_frames_per_second() / 30.0))     # идущих — не реже 30 раз в секунду: шаг плавный
+	var fps := Engine.get_frames_per_second()
+	var k_walk := maxi(1, int(fps / 30.0))     # идущих — не реже 30 раз в секунду: шаг плавный
 	_sim_time += sdt
 	if hidden or anim_batch:
-		_residents_batch(speed, k_walk)
+		_residents_batch(speed, k_walk, maxi(k_walk, int(fps / 8.0)))
 	else:
+		if _far_acc.size() != far_n:
+			_far_acc.resize(far_n)
+			_far_acc.fill(0.0)
+		for k in far_n:
+			_far_acc[k] += sdt
+		var fdt := _far_acc[_far_ph]
+		_far_acc[_far_ph] = 0.0
 		for r in residents.duplicate():
 			var rdt := sdt
 			var cn: Citizen = r["node"]
@@ -3362,7 +3370,7 @@ func _process_body(dt: float) -> void:
 
 ## Видимые — своим шагом LOD, остальные — одной из восьми очередей.
 ## Снимки списков обновляются только при появлении/уходе; действия могут менять состав во время обхода.
-func _residents_batch(speed: float, k_walk: int) -> void:
+func _residents_batch(speed: float, k_walk: int, k_offscreen := 1) -> void:
 	if _buckets_dirty or _buckets.size() != far_n:
 		_buckets = []
 		for k in far_n:
@@ -3378,43 +3386,46 @@ func _residents_batch(speed: float, k_walk: int) -> void:
 			var c: Citizen = r["node"]
 			if c == null or not by_id.has(r["id"]):
 				continue
-			var k := mini(c.lod_k, k_walk) if r["state"] == "walk" else c.lod_k
-			if (_lod_frame + c.batch_slot) % maxi(1, k) != 0:
+			var k := c.lod_k
+			var offscreen := false
+			if r["state"] == "walk":
+				offscreen = c.walk_offscreen and int(r["id"]) != focus_rid and r["goal"] != "settle"
+				k = mini(k, k_offscreen if offscreen else k_walk)
+			if k > 1 and (_lod_frame + c.batch_slot) % k != 0:
 				continue
 			var rdt := _sim_time - float(r["sim_at"])
 			r["sim_at"] = _sim_time
-			_resident_step(r, rdt, speed)
+			_resident_step(r, rdt, speed, offscreen)
 	for r: Dictionary in _buckets[_far_ph]:
-		if (r["node"] != null and not _hidden_city) or not by_id.has(r["id"]) or float(r["sim_at"]) >= _sim_time:
+		if (r["node"] != null and not _hidden_city) or not by_id.has(r["id"]):
 			continue
 		var rdt := _sim_time - float(r["sim_at"])
+		if rdt <= 0.0:
+			continue
 		r["sim_at"] = _sim_time
-		_resident_step(r, rdt, speed)
+		_resident_step(r, rdt, speed, r["node"] == null and r["goal"] != "settle")
 
 
-func _resident_step(r: Dictionary, rdt: float, speed: float) -> void:
-	match r["state"]:
+func _resident_step(r: Dictionary, rdt: float, speed: float, offscreen := false) -> void:
+	var state: String = r["state"]
+	var c: Citizen = r["node"]
+	if state != "walk" and c != null and c.anim.speed_scale != speed:
+		c.anim.speed_scale = speed
+	match state:
 		"walk":
-			_step(r, rdt)
+			_step(r, rdt, offscreen)
 		"idle":
-			if r["node"] != null:
-				(r["node"] as Citizen).anim.speed_scale = speed
 			if r["act"] != "":
 				_act_step(r, rdt)
 		"door":
-			if r["node"] != null:
-				(r["node"] as Citizen).anim.speed_scale = speed
 			_door_step(r, rdt)
 		"work":
-			if r["node"] != null:
-				(r["node"] as Citizen).anim.speed_scale = speed
+			if c != null:
 				_work_step(r, rdt)
-		_:
-			if r["node"] != null:
-				(r["node"] as Citizen).anim.speed_scale = speed
-	if r["node"] != null and float(r["fade"]) < 1.0 and r["state"] != "walk" and r["state"] != "door":
+	c = r["node"]                          # действие могло спрятать или создать жителя
+	if c != null and float(r["fade"]) < 1.0 and r["state"] != "walk" and r["state"] != "door":
 		r["fade"] = minf(1.0, float(r["fade"]) + rdt / 0.6)
-		(r["node"] as Citizen).set_alpha(float(r["fade"]))
+		c.set_alpha(float(r["fade"]))
 
 
 ## Что у жителя должно быть в руках сейчас: на работе — вещи места (лира, свиток, серп…), по дороге — покупка
@@ -3648,7 +3659,7 @@ func _show(r: Dictionary) -> void:
 			c.play(nm, 0.0, rng.randf())
 
 
-func _step(r: Dictionary, dt: float) -> void:
+func _step(r: Dictionary, dt: float, offscreen := false) -> void:
 	var path: PackedVector2Array = r["path"]
 	var i: int = r["i"]
 	if i >= path.size():
@@ -3662,6 +3673,7 @@ func _step(r: Dictionary, dt: float) -> void:
 			r["fade"] = 0.0             # место на улице освободилось — проявляется, а не выскакивает
 			c.set_alpha(0.0)
 	var p: Vector2 = r["p"]
+	var pace: float = r["speed"]
 	var sf := 1.0
 	if land.up_n > 0:
 		var pc := land.cell(p)
@@ -3672,14 +3684,16 @@ func _step(r: Dictionary, dt: float) -> void:
 		dt = _settle_time - float(r["tutorial_settle_at"])
 		r["tutorial_settle_at"] = _settle_time
 	if c and not _hidden_city:
-		c.anim.speed_scale = game.speed * float(r["speed"]) * sf
+		var anim_speed: float = game.speed * pace * sf
+		if c.anim.speed_scale != anim_speed:
+			c.anim.speed_scale = anim_speed
 		if float(r["fade"]) < 1.0:
 			# получил узел в свою очередь — dt за 8 кадров; проявляется всё равно по кадру, а не выскакивает
 			r["fade"] = minf(1.0, float(r["fade"]) + minf(dt, _frame_sdt) / 0.6)
 			c.set_alpha(float(r["fade"]))
 	var to := path[i] - p
 	var dist := to.length()
-	var mv := WALK * float(r["speed"]) * sf * dt
+	var mv := WALK * pace * sf * dt
 	while dist <= mv and i < path.size() - 1:
 		p = path[i]
 		mv -= dist
@@ -3695,10 +3709,11 @@ func _step(r: Dictionary, dt: float) -> void:
 	var dir := to / dist
 	r["p"] = p + dir * mv
 	var yaw := atan2(dir.x, dir.y)
-	if _hidden_city:
+	if _hidden_city or (offscreen and (c == null or c.walk_offscreen)):
 		r["yaw"] = yaw
 	else:
 		r["yaw"] = lerp_angle(float(r["yaw"]), yaw, minf(1.0, dt * 8.0))
+	if c != null and not _hidden_city:
 		_place(r)
 
 
@@ -5209,7 +5224,9 @@ func _cat_anim(c: Dictionary) -> void:
 		c["clip"] = cl[0]
 		if c.has("mat"):
 			(c["mat"] as ShaderMaterial).set_shader_parameter("sleep", 1.0 if cl[0] == "Sleep" else 0.0)   # спит — глаза закрыты
-	ap.speed_scale = game.speed * (float(c["k"]) if cl[0] == "Walk" else float(cl[1]))
+	var anim_speed: float = game.speed * (float(c["k"]) if cl[0] == "Walk" else float(cl[1]))
+	if ap.speed_scale != anim_speed:
+		ap.speed_scale = anim_speed
 
 
 ## Прежняя кошка: лапы, хвост, голова — кодом
@@ -5217,6 +5234,8 @@ func _cat_kit_anim(c: Dictionary, dt: float, t: float) -> void:
 	if _hidden_city:
 		return
 	var n: Node3D = c["n"]
+	var head: Node3D = c["head"]
+	var body := n.get_child(0) as Node3D
 	var w: float = c["walk"]
 	var ph: float = c["ph"] + t * 9.0
 	var legs: Array = c["legs"]
@@ -5225,14 +5244,14 @@ func _cat_kit_anim(c: Dictionary, dt: float, t: float) -> void:
 	# гладят — хвост ходит быстрее и шире, голова поднята к человеку
 	var petted: bool = c["state"] == "pet"
 	(c["tail"] as Node3D).rotation.y = sin(t * (5.5 if petted else 2.2) + float(c["ph"])) * (0.6 if petted else 0.35)
-	(c["head"] as Node3D).rotation.x = lerpf((c["head"] as Node3D).rotation.x, -0.35 if petted else 0.0, minf(1.0, dt * 3.0))
+	head.rotation.x = lerpf(head.rotation.x, -0.35 if petted else 0.0, minf(1.0, dt * 3.0))
 	var body_y := 0.0
 	if c["state"] == "sit" or petted:
 		body_y = -0.04
 	elif c["state"] == "sleep":
 		body_y = -0.09
-	n.get_child(0).position.y = lerpf(n.get_child(0).position.y, body_y, minf(1.0, dt * 4.0))
-	(c["head"] as Node3D).position.y = 0.28 + body_y * 1.6
+	body.position.y = lerpf(body.position.y, body_y, minf(1.0, dt * 4.0))
+	head.position.y = 0.28 + body_y * 1.6
 
 
 ## Вещица из «Кошачьей лавки» (Д14): купили или сменили в карточке — надеть

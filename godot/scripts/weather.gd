@@ -19,6 +19,8 @@ var left_h := 0.0                         # сколько ещё идёт, иг
 var _last_hour := -1
 var _rng := RandomNumberGenerator.new()
 var _shadow_set := false
+var _wet_mat: ShaderMaterial
+var _rain_mat: ShaderMaterial
 var force := -1.0                         # проверки и снимки: ≥ 0 — дождь такой силы, не по случаю
 
 
@@ -53,6 +55,8 @@ func _process(dt: float) -> void:
 	elif on and left_h > 0.0:
 		want = 1.0
 	var spd := maxf(1.0, float(game.speed))
+	var old_level := level
+	var old_wet := wet
 	level = move_toward(level, want, dt * 0.25 * spd)
 	# земля мокнет быстро, сохнет медленно (DRY_H игровых часов)
 	if want > 0.05 and level > 0.2:
@@ -65,10 +69,12 @@ func _process(dt: float) -> void:
 		var at: Vector3 = game.rig.target if game.rig else Vector3.ZERO
 		rain.global_position = at + Vector3(0, 14.0, 0)
 		rain.amount_ratio = level * (0.5 if q == "low" else 1.0)
-	if game.land_mat != null:
-		game.land_mat.set_shader_parameter("wet", wet)
-	if game.grade != null:
-		game.grade.set_shader_parameter("rain", level)
+	if game.land_mat != null and (wet != old_wet or _wet_mat != game.land_mat):
+		_wet_mat = game.land_mat
+		_wet_mat.set_shader_parameter("wet", wet)
+	if game.grade != null and (level != old_level or _rain_mat != game.grade):
+		_rain_mat = game.grade
+		_rain_mat.set_shader_parameter("rain", level)
 	if game.sun != null and (level > 0.0 or _shadow_set):
 		game.sun.shadow_opacity = lerpf(1.0, 0.4, level)   # под тучами тени мягче
 		_shadow_set = level > 0.0

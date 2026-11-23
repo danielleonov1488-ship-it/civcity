@@ -7,6 +7,7 @@ var center := Vector3(38, 0, 44)
 var game = null                           # игра: по её постройкам птицы держат высоту (15.11 — не пролетают сквозь дома)
 var _tops := {}                           # клетка 8 м → высота самой высокой постройки в ней
 var _tops_t := 0.0
+var _clearance := {}
 
 
 func _ready() -> void:
@@ -50,6 +51,7 @@ func _ready() -> void:
 ## Высоты построек по клеткам 8 м — раз в несколько секунд
 func _refresh_tops() -> void:
 	_tops.clear()
+	_clearance.clear()
 	if game == null or game.city == null:
 		return
 	for id in game.city.buildings:
@@ -62,13 +64,18 @@ func _refresh_tops() -> void:
 
 ## Высота, ниже которой над точкой летать нельзя: самая высокая постройка в соседних клетках + запас
 func _clear_y(x: float, z: float) -> float:
-	var kx := int(floor(x / 8.0))
-	var kz := int(floor(z / 8.0))
+	if _tops.is_empty():
+		return 0.0
+	var key := Vector2i(floori(x / 8.0), floori(z / 8.0))
+	if _clearance.has(key):
+		return _clearance[key]
 	var top := 0.0
-	for j in range(kz - 1, kz + 2):
-		for i in range(kx - 1, kx + 2):
+	for j in range(key.y - 1, key.y + 2):
+		for i in range(key.x - 1, key.x + 2):
 			top = maxf(top, float(_tops.get(Vector2i(i, j), 0.0)))
-	return top + 2.5 if top > 0.0 else 0.0
+	var clearance := top + 2.5 if top > 0.0 else 0.0
+	_clearance[key] = clearance
+	return clearance
 
 
 func _process(dt: float) -> void:
@@ -77,22 +84,26 @@ func _process(dt: float) -> void:
 	if _tops_t <= 0.0:
 		_tops_t = 3.0
 		_refresh_tops()
+	var rise := 1.0 - exp(-dt * 1.5)
 	for b in birds:
-		b["ph"] += b["sp"] * dt
+		var speed: float = b["sp"]
+		b["ph"] += speed * dt
 		var a: float = b["ph"]
+		var ax := cos(a)
+		var az := sin(a)
 		var r: float = b["rad"] + sin(a * 1.7) * 1.5
-		var px: float = b["cx"] + cos(a) * r
-		var pz: float = b["cz"] + sin(a) * r
+		var px: float = b["cx"] + ax * r
+		var pz: float = b["cz"] + az * r
 		# высота плавно поднимается над крышами внизу (и опускается обратно над пустым местом)
 		var wy: float = maxf(float(b["y"]), _clear_y(px, pz))
-		b["yc"] = lerpf(float(b.get("yc", wy)), wy, 1.0 - exp(-dt * 1.5))
+		b["yc"] = lerpf(float(b.get("yc", wy)), wy, rise)
 		var p := Vector3(px, float(b["yc"]) + sin(a * 2.3) * 0.8, pz)
-		var dir := Vector3(-sin(a), 0, cos(a)) * signf(b["sp"])
+		var dir := Vector3(-az, 0, ax) * signf(speed)
 		var n: Node3D = b["n"]
 		n.position = p
 		n.look_at(p + dir, Vector3.UP)
 		n.rotate_object_local(Vector3.UP, PI)
-		n.rotate_object_local(Vector3.BACK, -0.35 * signf(b["sp"]))
+		n.rotate_object_local(Vector3.BACK, -0.35 * signf(speed))
 		# машет крыльями, а иногда парит
 		var glide := sin(t * 0.4 + b["fl"]) > 0.5
 		var flap := 0.15 if glide else sin(t * 11.0 + b["fl"]) * 0.7

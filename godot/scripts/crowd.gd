@@ -685,18 +685,23 @@ func _put(p: Dictionary, key: String, mesh: Mesh, mat: Material) -> void:
 	(p["parts"] as Array).append(part)
 
 
-func _write(p: Dictionary) -> void:
+func _write(p: Dictionary, target: MultiMesh = null, slot := -1) -> void:
 	var xf: Transform3D = p["xf"]
 	xf.basis = xf.basis.orthonormalized().scaled(Vector3.ONE * float(p["s"]))
 	var ci: Array = p["ci"]
 	var col := Color(ci[0] / 255.0, ci[1] / 255.0, ci[2] / 255.0, int(p["hc"]) / 255.0)
 	var cu := Color(float(p["clip"]), float(p["t0"]), float(p["prev"]), float(p["ts"]))
+	if target != null:
+		_write_slot(target, slot, xf, col, cu)
+		return
 	for part: Array in p["parts"]:
-		var mm: MultiMesh = groups[part[0]]["mm"]
-		var i: int = part[1]
-		mm.set_instance_transform(i, xf)
-		mm.set_instance_color(i, col)
-		mm.set_instance_custom_data(i, cu)
+		_write_slot(groups[part[0]]["mm"], part[1], xf, col, cu)
+
+
+static func _write_slot(mm: MultiMesh, i: int, xf: Transform3D, col: Color, cu: Color) -> void:
+	mm.set_instance_transform(i, xf)
+	mm.set_instance_color(i, col)
+	mm.set_instance_custom_data(i, cu)
 
 
 ## Сменить движение (плавно, за BLEND с). phase — с какой доли круга начать (−1 — с начала)
@@ -732,9 +737,8 @@ func remove(p: Dictionary) -> void:
 			var moved: Array = who[last]
 			who[i] = moved
 			(moved[1] as Array)[1] = i
-			mm.set_instance_transform(i, mm.get_instance_transform(last))
-			mm.set_instance_color(i, mm.get_instance_color(last))
-			mm.set_instance_custom_data(i, mm.get_instance_custom_data(last))
+			# Перенесённый зритель уже хранит позу и цвета в своей записи.
+			_write(moved[0], mm, i)
 		who.pop_back()
 		mm.visible_instance_count = who.size()
 	p["parts"] = []
