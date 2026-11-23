@@ -17,6 +17,42 @@ class View:
 		pitch = tilt
 		distance = d
 
+class VerdictMedal extends Control:
+	const ART := {
+		"smooth": preload("res://assets/ui/ai/icons/check.png"),
+		"heavy": preload("res://assets/ui/ai/icons/close.png"),
+	}
+	var grade := "unknown"
+
+	func _ready() -> void:
+		custom_minimum_size = Vector2(82, 82)
+		mouse_filter = MOUSE_FILTER_IGNORE
+
+	func set_grade(value: String) -> void:
+		grade = value
+		queue_redraw()
+
+	func _draw() -> void:
+		var center := size * 0.5
+		if ART.has(grade):
+			draw_texture_rect(ART[grade], Rect2(center - Vector2(41, 41), Vector2(82, 82)), false)
+			return
+		var color := Color("d29b30") if grade == "stutter" else Color("98795b")
+		draw_circle(center + Vector2(0, 3), 37, Color("d9c39e"), true, -1.0, true)
+		draw_circle(center, 37, Color("805831"), true, -1.0, true)
+		draw_circle(center, 35, Color("eec883"), true, -1.0, true)
+		draw_circle(center, 30, color.darkened(0.27), true, -1.0, true)
+		draw_circle(center - Vector2(0, 2), 28, color, true, -1.0, true)
+		draw_arc(center, 26, PI * 1.1, PI * 1.9, 24, Color(1, 1, 1, 0.25), 2.0, true)
+		var ink := Color("fff4d3")
+		if grade == "stutter":
+			draw_line(center + Vector2(0, -12), center + Vector2(0, 2), ink, 7.0, true)
+			for y in [-12, 2, 12]:
+				draw_circle(center + Vector2(0, y), 3.5, ink, true, -1.0, true)
+		else:
+			draw_line(center + Vector2(-10, 0), center + Vector2(10, 0), ink, 6.0, true)
+
+
 var game
 var active := false
 var report_text := ""
@@ -48,6 +84,8 @@ var _running: PanelContainer
 var _counter: Label
 var _result: PanelContainer
 var _verdict: Label
+var _medal: VerdictMedal
+var _fps: Label
 var _recommendation: Label
 var _apply: Button
 var _copy: Button
@@ -63,7 +101,7 @@ func _ready() -> void:
 
 
 func can_start() -> bool:
-	return game.ready_done and game.mode in ["play", "new"] and not active and not game.rig.cine \
+	return game.ready_done and game.mode in ["play", "new"] and not active and (_layer == null or not _layer.visible) and not game.rig.cine \
 		and not game.legion_city_hidden() and LegionBattle.current == null and (game.photo == null or not game.photo.on) \
 		and not (game.painting or game.fence_drag or game.floor_drag or game.field_from != Vector2.INF) \
 		and game.moving.is_empty() and game.moving_nature.is_empty() \
@@ -97,11 +135,13 @@ func start() -> void:
 	_last_draw = 0
 	_segment = -1
 	_last_segment = -1
+	_render_sample = false
 	_last_render_sample = false
 	_finishing = false
 	_countdown = -1
 	active = true
 	hud.settings_panel.hide()
+	hud.set_guidance_suspended(true)
 	hud.hide()
 	gfx._fps_box.hide()
 	game.speed = 0.0
@@ -191,11 +231,15 @@ func _before_draw() -> void:
 		_complete.call_deferred()
 
 
-func _restore() -> void:
+func _disconnect_measure() -> void:
 	active = false
 	set_process(false)
 	get_tree().process_frame.disconnect(_begin_frame)
 	RenderingServer.frame_pre_draw.disconnect(_before_draw)
+
+
+func _restore() -> void:
+	_disconnect_measure()
 	var gfx: Gfx = game.gfx
 	var rig: CameraRig = game.rig
 	rig.restore_view(_saved["view"])
@@ -223,14 +267,22 @@ func _complete() -> void:
 	for sample in _samples:
 		all.merge(sample)
 	var total := all.stats()
-	var answer := Report.verdict(total, _info["quality"])
-	_recommended = answer["quality"]
 	_report_saved(Report.format_report(_info, _samples, total))
+	_show_result(total, _info["quality"])
+
+
+func _show_result(stats: Dictionary, quality: String) -> void:
+	var answer := Report.verdict(stats, quality)
+	_recommended = answer["quality"]
+	_medal.set_grade(answer["grade"])
+	_fps.text = str(roundi(float(stats["fps"]))) if not stats.is_empty() else "—"
 	_verdict.text = answer["text"]
 	_recommendation.text = I18n.t("Советуем: %s") % I18n.t(Gfx.NAMES[_recommended])
-	_apply.visible = _recommended != _info["quality"]
+	_apply.visible = _recommended != quality
 	_feedback.text = "Не удалось сохранить отчёт" if report_path.is_empty() else ""
 	_overlay.color = Color(0.12, 0.08, 0.05, 0.28)
+	var hud: Hud = game.hud
+	hud._snug(_result)
 	_result.show()
 
 
@@ -255,7 +307,7 @@ func _poll_driver() -> void:
 
 func _exit_tree() -> void:
 	if active:
-		RenderingServer.viewport_set_measure_render_time(_vp, _saved["measure"])
+		_disconnect_measure()
 	if _driver_thread != null:
 		_driver_thread.wait_to_finish()
 
@@ -393,6 +445,7 @@ func _unhandled_input(_event: InputEvent) -> void:
 
 func _close() -> void:
 	_layer.hide()
+	game.hud.set_guidance_suspended(false)
 	set_process_unhandled_input(false)
 	set_process_unhandled_key_input(false)
 
@@ -431,18 +484,37 @@ func _build_ui() -> void:
 	_counter.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(_counter)
 	row.add_child(_button("Стоп", "", _stop))
-	_result = hud._panel(_overlay)
+	_result = hud._panel(_overlay, "panel", 0.0, 16.0)
 	_result.name = "SpeedTestResult"
 	hud._put(_result, Control.PRESET_CENTER, Vector2.ZERO)
 	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 9)
+	content.custom_minimum_size.x = 320.0
+	content.add_theme_constant_override("separation", 7)
 	_result.add_child(content)
-	var title := hud._label("Проверка скорости", 20, true, Hud.C_SOFT)
+	var title := hud._label("Проверка скорости", 18, true, Hud.C_SOFT)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(title)
-	_verdict = hud._label("", 30, false, Hud.C_INK, hud.font_title)
-	_verdict.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	content.add_child(_verdict)
+	var hero := HBoxContainer.new()
+	hero.alignment = BoxContainer.ALIGNMENT_CENTER
+	hero.add_theme_constant_override("separation", 14)
+	content.add_child(hero)
+	_medal = VerdictMedal.new()
+	_medal.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hero.add_child(_medal)
+	var readout := VBoxContainer.new()
+	readout.add_theme_constant_override("separation", 0)
+	readout.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hero.add_child(readout)
+	var figure := HBoxContainer.new()
+	figure.add_theme_constant_override("separation", 6)
+	readout.add_child(figure)
+	_fps = hud._label("", 49, true)
+	figure.add_child(_fps)
+	var unit := hud._label("кадров/с", 16, true, Hud.C_SOFT)
+	unit.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	figure.add_child(unit)
+	_verdict = hud._label("", 20, false, Hud.C_INK, hud.font_title)
+	readout.add_child(_verdict)
 	var recommendation := HBoxContainer.new()
 	recommendation.alignment = BoxContainer.ALIGNMENT_CENTER
 	recommendation.add_theme_constant_override("separation", 9)
@@ -456,7 +528,7 @@ func _build_ui() -> void:
 	actions.alignment = BoxContainer.ALIGNMENT_CENTER
 	actions.add_theme_constant_override("separation", 8)
 	content.add_child(actions)
-	_copy = _button("Скопировать отчёт", "copy", _copy_report)
+	_copy = _button("Скопировать отчёт", "scroll", _copy_report)
 	actions.add_child(_copy)
 	actions.add_child(_button("Закрыть", "", _close))
 	_feedback = hud._label("", 16, false, Hud.C_SOFT)

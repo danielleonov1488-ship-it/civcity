@@ -5934,5 +5934,7 @@
 	"Включить": "Apply",
 	"Скопировать отчёт": "Copy report",
 	"Отчёт скопирован": "Report copied",
-	"Не удалось сохранить отчёт": "Could not save the report"
+	"Не удалось сохранить отчёт": "Could not save the report",
+	"Игра идёт плавно": "Smooth gameplay",
+	"кадров/с": "FPS"
 }

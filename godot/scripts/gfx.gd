@@ -67,6 +67,7 @@ var _dbg: PanelContainer
 var _dbg_text: Label
 var _half := 0
 var speed_test
+var _speed_exit_frame := 0
 
 
 # ---------- выбор уровня по видеокарте ----------
@@ -848,6 +849,26 @@ func _set_measure(on: bool) -> void:
 	if on != _measure:
 		_measure = on
 		RenderingServer.viewport_set_measure_render_time(_vp, on)
+		if not on and speed_test != null:
+			_speed_exit_frame = Engine.get_process_frames() + 5
+
+
+## Дать рендеру закончить кадры с таймерами до освобождения viewport.
+func prepare_speed_test_exit() -> void:
+	if speed_test == null:
+		return
+	if speed_test_active():
+		speed_test._stop()
+	set_process(false)
+	set_process_unhandled_key_input(false)
+	_set_measure(false)
+	while Engine.get_process_frames() < _speed_exit_frame:
+		await get_tree().process_frame
+
+
+func _exit_tree() -> void:
+	if _measure:
+		RenderingServer.viewport_set_measure_render_time(_vp, false)
 
 
 func start_speed_test() -> void:
@@ -920,7 +941,7 @@ func _process(dt: float) -> void:
 
 func _adv_free() -> bool:
 	var h = game.hud
-	if h == null or h.advisor_panel == null or h.advisor_panel.visible or not h.visible:
+	if h == null or h.advisor_panel == null or h.advisor_panel.visible or not h.visible or h.guidance_suspended:
 		return false
 	if h.tutorial_busy() or not h.guidance_queue.is_empty() or h.notes_box.get_child_count() > 0:
 		return false

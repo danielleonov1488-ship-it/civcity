@@ -2,12 +2,13 @@ extends Node
 
 const Report = preload("res://scripts/speed_test_report.gd")
 const OWNER := "D:/CivCity/.work/owner_save/city.json"
-const STAGE := "D:/CivCity/.work/stage7/perf14g"
+const STAGE := "D:/CivCity/.work/stage7/perf14g2"
 
 var game: Game
 var out := STAGE.path_join("shots")
 var speed_test
 var fails := 0
+var scenario := "full"
 
 
 func _ready() -> void:
@@ -20,20 +21,60 @@ func _run() -> void:
 		_done()
 		return
 	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("case="):
+			scenario = arg.trim_prefix("case=")
 		if arg.begins_with("out="):
 			out = arg.trim_prefix("out=")
-	if not await _boot():
+	if not _check(scenario in ["full", "stop", "menu", "normal"], "known scenario") or not await _boot():
 		_done()
 		return
-	await _measure("ru", "high", 20)
-	if fails == 0:
-		await _measure("en", "verylow", 2)
-	# Освобождаем город и его ресурсы до завершения движка, после кадра со снимком.
+	print("SPEEDTEST CASE ", scenario)
+	if scenario == "normal":
+		await _play_and_quit()
+		return
+	if scenario == "menu":
+		await _measure("ru", "high", false, false)
+		if fails == 0:
+			await _measure("ru", "high", true, false)
+		await _play_and_quit()
+		return
+	if scenario == "stop":
+		await _measure("en", "high", false, false)
+	else:
+		await _measure("ru", "high", true, true)
+		if fails == 0:
+			await _measure("en", "verylow", true, true)
+		if fails == 0:
+			await _measure("en", "verylow", false, false)
 	await get_tree().process_frame
-	game.queue_free()
-	await game.tree_exited
-	for i in 3:
+	_done()
+
+
+func _play_and_quit() -> void:
+	if fails != 0:
+		_done()
+		return
+	var distance := game.rig.dist
+	game.rig.set_view(Vector3(208, 0, 140), 22.0, 41.0, 52.0)
+	game.hud.set_speed(4.0)
+	var before := game.hour
+	var deadline := Time.get_ticks_msec() + 8000
+	while is_equal_approx(game.hour, before) and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
+	if not _check(not is_equal_approx(game.hour, before) and game.rig.dist != distance, "regular play advances"):
+		_done()
+		return
+	game.hud._toggle(game.hud.pause_panel)
+	for node in game.hud.pause_panel.find_children("*", "Button", true, false):
+		var button := node as Button
+		if button.text == "Выход" and button.is_visible_in_tree():
+			button.pressed.emit()
+			if scenario == "menu":
+				_check(not game.gfx._measure and game.gfx._speed_exit_frame > Engine.get_process_frames(),
+					"render timing disabled before menu exit")
+			print("SPEEDTEST DONE fails=", fails, " menu exit")
+			return
+	_check(false, "Exit button in pause menu")
 	_done()
 
 
@@ -61,7 +102,10 @@ func _unit() -> void:
 	_check(formatted.split("\n").size() == 11 and formatted.contains("build 7") and formatted.contains("250 citizens")
 		and formatted.contains("Smoothness: on") and formatted.contains("Wide | 1 | 10.0 | 10.0 | 100.0 | — | 8.00 | 1 | 1")
 		and formatted.contains("Far | 0 | —"), "report formatting")
-	_check(Report.verdict({"fps": 55.0, "low": 45.0}, "high")["text"] == "Smooth gameplay (55 FPS)", "smooth threshold and translation")
+	var green := Report.verdict({"fps": 55.0, "low": 45.0}, "high")
+	_check(green["grade"] == "smooth" and I18n.t(green["text"]) == "Smooth gameplay" and I18n.t("кадров/с") == "FPS", "smooth threshold and translation")
+	_check(Report.verdict({"fps": 40.0, "low": 28.0}, "high")["grade"] == "stutter", "yellow grade")
+	_check(Report.verdict({"fps": 39.0, "low": 27.0}, "high")["grade"] == "heavy", "red grade")
 	_check(Report.verdict({"fps": 80.0, "low": 44.9}, "high")["quality"] == "medium", "low FPS changes verdict")
 	_check(Report.verdict({"fps": 40.0, "low": 28.0}, "medium")["quality"] == "low", "playable threshold")
 	_check(Report.verdict({"fps": 39.9, "low": 50.0}, "high")["quality"] == "low", "average FPS changes verdict")
@@ -108,12 +152,12 @@ func _boot() -> bool:
 	return _check(game.hud.icons.size() == icons, "building icons ready")
 
 
-func _measure(lang: String, quality: String, stop_after: int) -> void:
+func _measure(lang: String, quality: String, full: bool, capture: bool) -> void:
 	I18n.set_lang(lang)
 	game.settings["quality"] = quality
 	game._apply_quality()
 	Gfx.swap_all()
-	game.gfx._set_measure(lang == "en")
+	game.gfx._set_measure(lang == "en" or scenario == "menu")
 	game.hud.set_speed(2.0 if lang == "ru" else 0.0)
 	game.hud.paused_speed = 4.0
 	game.rig.set_view(Vector3(211, 0, 145), 16.0, 42.0, 61.0)
@@ -121,61 +165,119 @@ func _measure(lang: String, quality: String, stop_after: int) -> void:
 	var button := game.hud.settings_panel.find_child("speed_test", true, false) as Button
 	if not _check(button != null and button.is_visible_in_tree(), "settings button " + lang):
 		return
-	await _shot(lang + "_button")
-	game.rig._yaw_t += 0.05        # Проверяем возврат также к незавершённому движению камеры.
+	if capture:
+		await _shot(lang + "_button")
+	game.hud.advisor_panel.hide()
+	game.hud.guidance_queue.clear()
+	var tip := game.hud.advisor_panel
+	if lang == "en":
+		game.tutorial._enter(Tutorial.step_index("move"))
+		tip = game.tutorial.card
+	else:
+		game.hud._guidance_playing = true
+		game.hud.advisor("Этаж — без карточки дома",
+			"Нажмите «Этаж» справа внизу или клавишу U. Для нескольких домов ведите мышью с зажатой кнопкой вдоль улицы — этаж получат готовые дома, пока хватает денариев.",
+			Callable(), true)
+		game.hud._guidance_playing = false
+	if not _check(tip.is_visible_in_tree(), "guidance shown before start " + lang):
+		return
+	game.rig._yaw_t += 0.05
 	var before := _state()
 	button.pressed.emit()
 	speed_test = game.gfx.speed_test
-	if not _check(_running(), "started from settings " + lang):
+	if not _check(speed_test != null and _running() and _guidance_hidden(), "started from settings with guidance hidden " + lang):
 		return
 	var deadline := Time.get_ticks_msec() + 30000
-	while speed_test.active and (speed_test._countdown < 0 or speed_test._countdown > 40 - stop_after) and Time.get_ticks_msec() < deadline:
+	while speed_test.active and speed_test._countdown < 0 and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
-	if not _check(_running() and speed_test._countdown in range(1, 41 - stop_after), "countdown " + lang):
+	if not _check(_running() and speed_test._countdown in range(1, 41), "countdown " + lang):
 		return
-	await _shot(lang + "_running")
-	var stop := speed_test._running.find_children("*", "Button", true, false)[0] as Button
-	stop.pressed.emit()
-	if not _check(_state() == before and not speed_test._layer.visible and speed_test.report_path == "", "Stop restores all state " + lang):
+	if capture:
+		await _shot(lang + "_running")
+
+	if not full:
+		var stop := speed_test._running.find_children("*", "Button", true, false)[0] as Button
+		stop.pressed.emit()
+		_check(_state() == before and _detached() and not speed_test._layer.visible and speed_test.report_path == ""
+			and not game.hud.guidance_suspended and tip.is_visible_in_tree(), "Stop restores state and guidance " + lang)
+		print("SPEEDTEST STOP render timing restored=", game.gfx._measure)
 		return
-	print("SPEEDTEST STOP restored ", lang)
-	game.hud._open_settings()
-	before = _state()
-	button.pressed.emit()
-	if not _check(_running(), "full run started " + lang):
-		return
+
 	var after := []
 	speed_test._result.visibility_changed.connect(func(): after.append_array(_state()), CONNECT_ONE_SHOT)
 	deadline = Time.get_ticks_msec() + 75000
 	while speed_test.active and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
-	if not _check(not speed_test.active and after == before and speed_test._result.visible, "full run restores all state " + lang):
+	if not _check(not speed_test.active and _detached() and after == before and speed_test._result.is_visible_in_tree()
+			and _guidance_hidden(), "full run restores state while keeping guidance hidden " + lang):
 		return
 	for samples in speed_test._samples:
 		if not _check(samples.frames.size() > 10, "frames in each segment " + lang):
 			return
 	var path: String = speed_test.report_path
 	var report: String = speed_test.report_text
-	if not _check(path.begins_with("user://speed_test/") and FileAccess.get_file_as_string(path) == report, "saved report " + lang):
+	if not _check(path.begins_with("user://speed_test/") and FileAccess.get_file_as_string(path) == report
+			and report.contains("Quality: " + quality), "saved report " + lang):
 		return
-	speed_test._copy.pressed.emit()
-	var clipboard := DisplayServer.clipboard_get().replace("\r\n", "\n")
-	if not _check(clipboard == report and report.contains("Quality: " + quality), "copied report " + lang):
-		return
-	var copy_path := out.path_join(lang + "_" + quality + "_report.txt")
-	var file := FileAccess.open(copy_path, FileAccess.WRITE)
-	if not _check(file != null and file.store_string(clipboard + "\n"), "clipboard text artifact " + lang):
-		return
-	file.close()
-	print("SPEEDTEST REPORT ", copy_path)
-	await _shot(lang + "_" + quality + "_result")
-	# Проверяем ручное применение той рекомендации, которую вернул реальный замер.
-	if speed_test._apply.visible:
+	if capture:
+		await _capture_result(lang, quality)
+		if lang == "ru":
+			_copy_report(report)
+	speed_test._close()
+	_check(not speed_test._layer.visible and not game.hud.guidance_suspended and tip.is_visible_in_tree()
+		and (lang != "en" or game.tutorial.camera_keys.is_visible_in_tree()), "guidance restored after result " + lang)
+	if lang == "ru":
+		tip.hide()
+
+
+func _capture_result(lang: String, quality: String) -> void:
+	var grades := {"smooth": {"fps": 72.0, "low": 52.0}, "stutter": {"fps": 47.0, "low": 32.0}, "heavy": {"fps": 26.0, "low": 16.0}}
+	var measured_grade: String = speed_test._medal.grade
+	print("SPEEDTEST VERDICT ", lang, " ", measured_grade, " ", speed_test._fps.text, " FPS")
+	for grade: String in grades:
+		var sample: Dictionary = grades[grade]
+		if grade != "smooth" or measured_grade != grade:
+			speed_test._show_result(sample, "high")
+			_check(speed_test._fps.text == str(roundi(sample["fps"])), "FPS display " + grade)
+		_check(speed_test._medal.grade == grade and _guidance_hidden(), "result grade and hidden guidance " + lang + " " + grade)
+		await _shot(lang + "_" + grade + "_result")
+	# Проверяем применение после снимков, чтобы не влиять на следующий замер.
+	if lang == "en":
 		var recommended: String = speed_test._recommended
 		speed_test._apply.pressed.emit()
-		_check(game.settings["quality"] == recommended and game.settings["quality_user"] and not speed_test._apply.visible, "apply recommendation " + lang)
-	speed_test._close()
-	_check(not speed_test._layer.visible, "close result " + lang)
+		_check(game.settings["quality"] == recommended and game.settings["quality_user"] and not speed_test._apply.visible,
+			"apply recommendation")
+	else:
+		# У синтетического результата другой пресет. Возвращаем настоящий перед проверкой копирования.
+		var total := Report.Samples.new()
+		for sample in speed_test._samples:
+			total.merge(sample)
+		speed_test._show_result(total.stats(), quality)
+
+
+func _copy_report(report: String) -> void:
+	speed_test._copy.pressed.emit()
+	var clipboard := DisplayServer.clipboard_get().replace("\r\n", "\n")
+	if not _check(clipboard == report, "copied report"):
+		return
+	var path := out.path_join("ru_report.txt")
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if _check(file != null and file.store_string(clipboard + "\n"), "clipboard text artifact"):
+		file.close()
+		print("SPEEDTEST REPORT ", path)
+
+
+func _guidance_hidden() -> bool:
+	var hud := game.hud
+	var tut := game.tutorial
+	return hud.guidance_suspended and not hud.advisor_panel.is_visible_in_tree() and not hud.notes_box.is_visible_in_tree() \
+		and not hud.pointer.is_visible_in_tree() and not hud.pointer_text.is_visible_in_tree() \
+		and not tut.card.is_visible_in_tree() and not tut.camera_keys.is_visible_in_tree()
+
+
+func _detached() -> bool:
+	return not RenderingServer.frame_pre_draw.is_connected(speed_test._before_draw) \
+		and not get_tree().process_frame.is_connected(speed_test._begin_frame)
 
 
 func _state() -> Array:
@@ -192,7 +294,6 @@ func _running() -> bool:
 func _shot(name: String) -> void:
 	for i in 4:
 		await get_tree().process_frame
-	await RenderingServer.frame_post_draw
 	var path := out.path_join(name + ".png")
 	if _check(get_viewport().get_texture().get_image().save_png(path) == OK, "screenshot " + name):
 		print("SPEEDTEST SHOT ", path)
@@ -206,5 +307,7 @@ func _check(ok: bool, reason: String) -> bool:
 
 
 func _done() -> void:
+	if is_instance_valid(game) and game.gfx != null:
+		await game.gfx.prepare_speed_test_exit()
 	print("SPEEDTEST DONE fails=", fails)
 	get_tree().quit(0 if fails == 0 else 1)

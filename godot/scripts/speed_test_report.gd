@@ -4,10 +4,12 @@ const SEGMENTS := ["Центр вблизи", "Общий вид", "Дальни
 const SEGMENT_SEC := 10.0
 
 # Средний FPS и 1% low должны пройти оба порога. Для 1% low берём среднее время худшего 1% кадров.
-const SMOOTH_AVG := 55.0
-const SMOOTH_LOW := 45.0
-const PLAYABLE_AVG := 40.0
-const PLAYABLE_LOW := 28.0
+# 23.11: для градостроителя 35+ кадров в худшие моменты — плавно (RTX 3060 на «Высокой» в большом городе давал 72 / 44 и
+# получал «подтормаживает» — слишком строго); ниже 30 в среднем или 20 в худшие моменты — уже тяжело
+const SMOOTH_AVG := 50.0
+const SMOOTH_LOW := 35.0
+const PLAYABLE_AVG := 30.0
+const PLAYABLE_LOW := 20.0
 
 
 class Samples:
@@ -59,12 +61,12 @@ static func verdict(stats: Dictionary, quality: String) -> Dictionary:
 	var fps := float(stats.get("fps", 0.0))
 	var low := float(stats.get("low", 0.0))
 	if stats.is_empty():
-		return {"text": "Мало кадров для оценки", "quality": quality}
+		return {"grade": "unknown", "text": "Мало кадров для оценки", "quality": quality}
 	if fps >= SMOOTH_AVG and low >= SMOOTH_LOW:
-		return {"text": I18n.t("Игра идёт плавно (%d кадров/с)") % roundi(fps), "quality": quality}
+		return {"grade": "smooth", "text": "Игра идёт плавно", "quality": quality}
 	if fps >= PLAYABLE_AVG and low >= PLAYABLE_LOW:
-		return {"text": "Иногда подтормаживает", "quality": Gfx.lower(quality)}
-	return {"text": "Игре тяжело", "quality": "low" if quality in ["high", "medium"] else Gfx.lower(quality)}
+		return {"grade": "stutter", "text": "Иногда подтормаживает", "quality": Gfx.lower(quality)}
+	return {"grade": "heavy", "text": "Игре тяжело", "quality": "low" if quality in ["high", "medium"] else Gfx.lower(quality)}
 
 
 ## Отчёт на одном языке, чтобы проще сравнивать присланные замеры.
