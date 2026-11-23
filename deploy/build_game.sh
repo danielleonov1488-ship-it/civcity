@@ -78,6 +78,30 @@ check_log() {   # ошибки экспорта (не прогресс)
 VERSION=$(sed -n 's/^config\/version="\(.*\)"/\1/p' $ROOT/godot/project.godot | head -1)
 [ -n "$VERSION" ] || VERSION="1.0.0"
 
+# 23.11: значки построек — заранее, в архиве godot/icons_prebuilt/v<ICON_V>.zip (иначе первый запуск у игрока сам
+# рисует ~280 значков: +15 с). Архив не в git (это снимки моделей Synty); рисуется, если его нет или правились
+# чертежи построек (Hud.ICON_SRC, кроме hud.gd). Значок изменённой постройки, которого нет в архиве, игра дорисует
+# сама после загрузки. Рисование — через общий замок видеокарты (gpu_run.sh), около минуты.
+ICON_V=$(grep -oP 'const ICON_V := \K[0-9]+' "$ROOT/godot/scripts/hud.gd")
+ICONS="$ROOT/godot/icons_prebuilt/v$ICON_V.zip"
+need_icons=0
+[ -f "$ICONS" ] || need_icons=1
+if [ $need_icons -eq 0 ]; then
+  for f in $(grep -A1 'const ICON_SRC := ' "$ROOT/godot/scripts/hud.gd" | grep -oP '"\K[a-z_0-9]+\.gd'); do
+    [ "$f" = hud.gd ] && continue
+    [ "$ROOT/godot/scripts/$f" -nt "$ICONS" ] && { need_icons=1; echo "   значки: изменён $f — рисую заново"; break; }
+  done
+fi
+if [ $need_icons -eq 1 ]; then
+  echo "== 0/4 значки построек (рисование, замок видеокарты)"
+  bake=$(mktemp -d /d/CivCity/.work/icon_bake.XXXXXX)
+  CIVCITY_PROJ="$ROOT" ONE_GODOT=1 GPU_TIMEOUT=3600 CIVCITY_NOLOGIN=1 CIVCITY_SAVEDIR="$(cygpath -m "$bake")/profile"     bash /d/CivCity/.work/py/gpu_run.sh res://test_bake_building_icons.tscn -- "out=$(cygpath -m "$bake")/out" > "$LOGS/icons.log" 2>&1
+  [ -f "$bake/out/v$ICON_V.zip" ] || die "значки не нарисовались, см. $LOGS/icons.log"
+  mkdir -p "$ROOT/godot/icons_prebuilt"
+  [ -f "$ICONS" ] && mv -f "$ICONS" "$bake/previous_v$ICON_V.zip"     # прежний архив — в папку рисования, не удаляем
+  cp "$bake/out/v$ICON_V.zip" "$ICONS" || die "не удалось положить архив значков"
+fi
+
 if [ $MAC -eq 1 ]; then
   # ---------- Mac → build/mac/CivCity-mac.zip (Windows-сборку не трогаем) ----------
   MOUT=$ROOT/build/mac

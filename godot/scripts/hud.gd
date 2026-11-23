@@ -266,6 +266,8 @@ func prepare() -> void:
 		var started := Perf14.begin()
 		if panel == _bottom_center:
 			await _bottom_center()
+		elif panel == _bottom_left:
+			await _bottom_left()
 		else:
 			panel.call()
 			Perf14.end(Perf14.START_HUD, started)
@@ -2557,6 +2559,7 @@ func _bottom_left() -> void:
 			cell.add_child(b)
 		else:
 			swatches.add_child(b)
+		await get_tree().process_frame
 	var grass := HBoxContainer.new()
 	grass.name = "grass_swatches"
 	grass.add_theme_constant_override("separation", 6)
@@ -6954,8 +6957,10 @@ func _research_panel() -> void:
 func _fill_research() -> void:
 	if not research_panel.visible:
 		return
+	var started := Perf14.begin()
 	_research_head()
 	research_tree.refresh()
+	Perf14.detail("research_refresh", started)
 	if research_tree.open_scroll:
 		research_tree.open_scroll = false
 		if game.tutorial != null and game.tutorial.cur_id() == "research":
@@ -9254,47 +9259,83 @@ func _icon_dir() -> String:
 
 ## Картинки построек для карточек: готовые берём из папки (имя — тип и отпечаток деталей облика), рисуем только
 ## недостающие — при запуске почти нет чтений картинки с видеокарты (на слабых видеокартах на них падала игра)
-func _icons_async() -> void:
+const PREBUILT_ICONS := "res://icons_prebuilt/v%d.zip"
+
+
+func _icons_async(bake_dir := "") -> Error:
 	var vp: SubViewport
 	var cam: Camera3D
 	var holder: Node3D
 	var col := 0
-	var idir := _icon_dir()
+	var idir := bake_dir if bake_dir != "" else _icon_dir()
 	var drawn := 0
 	var deadline := Time.get_ticks_usec() + 4000
-	for type in Defs.B:
-		if Time.get_ticks_usec() >= deadline:
-			await get_tree().process_frame
-			if not _icons_alive(vp):
-				return
-			deadline = Time.get_ticks_usec() + 4000
+	var archive := ZIPReader.new()
+	var archive_path := PREBUILT_ICONS % ICON_V
+	var packed := bake_dir == "" and FileAccess.file_exists(archive_path) and archive.open(archive_path) == OK
+	var entries := {}
+	if packed:
+		for file: String in archive.get_files():
+			entries[file] = true
+	var missing: Array[Array] = []
+	for type: String in Defs.B:
 		var d: Dictionary = Defs.B[type]
 		if bool(d.get("hidden", false)):
 			continue
-		var tier: int = 2 if d["kind"] == "house" else (int(game.city.level) if type == "center" else 0)
 		col = (col + 3) % Defs.PALETTE.size()
-		# у украшений облик задаёт тип (Catalog.make сам берёт их постоянный цвет) — картинка как поставленное
 		if d.get("fcolors", false):
-			col = 6                               # цветы «Природы»: на карточке — пёстрые, а не цвет палитры фасадов
-		var bp: Bp = Catalog.make(type, tier, 0, col)
-		var path := idir.path_join("%s_%s%s.png" % [type, str(bp.parts).md5_text().substr(0, 12), "_p" if pets_of(type).size() > 0 else ""])
-		if FileAccess.file_exists(path):
-			var ci := Image.load_from_file(path)
-			if ci != null and not ci.is_empty():
-				icons[type] = ci
-				_refresh_building_pictures(type)
+			col = 6
+		var tiers: Array
+		if type == "center":
+			tiers = range(Defs.LEVELS.size()) if bake_dir != "" else [int(game.city.level)]
+		else:
+			tiers = [2 if d["kind"] == "house" else 0]
+		for tier: int in tiers:
+			if Time.get_ticks_usec() >= deadline:
+				await get_tree().process_frame
+				if not _icons_alive(null):
+					return ERR_SKIP
+				deadline = Time.get_ticks_usec() + 4000
+			var bp := Catalog.make(type, tier, 0, col)
+			var name := "%s_%s%s.png" % [type, str(bp.parts).md5_text().substr(0, 12), "_p" if pets_of(type).size() > 0 else ""]
+			var path := idir.path_join(name)
+			var img := Image.new()
+			if packed and entries.has(name):
+				img.load_png_from_buffer(archive.read_file(name))
+			if img.is_empty() and FileAccess.file_exists(path):
+				img = Image.load_from_file(path)
+			if img != null and not img.is_empty():
+				if bake_dir == "":
+					icons[type] = img
+					_refresh_building_pictures(type)
 				continue
+			missing.append([type, bp, path])
+	if packed:
+		archive.close()
+	icons_loading = false
+	if bake_dir == "":
+		if OS.get_environment("CIVCITY_STARTUP_TRACE") == "1":
+			print("STARTUP_ICONS ready=%d missing=%d" % [icons.size(), missing.size()])
+		if not missing.is_empty():
+			while not game.ready_done:
+				await get_tree().process_frame
+				if not _icons_alive(null):
+					return ERR_SKIP
+	for entry: Array in missing:
+		var type: String = entry[0]
+		var bp: Bp = entry[1]
+		var path: String = entry[2]
+		var d: Dictionary = Defs.B[type]
 		if vp == null:
 			var view := _make_icon_view()
 			vp = view[0]
 			cam = view[1]
 			holder = view[2]
-		drawn += 1
 		var paths := {}
 		CityWarmup.models(bp, paths)
 		var models := await CityWarmup.fetch(get_tree(), paths)
 		if not _icons_alive(vp):
-			return
+			return ERR_SKIP
 		var kit_before := KitLib._meshes.size()
 		var special_before := Parts._special.size()
 		var art_before := Artisau._cache.size()
@@ -9330,7 +9371,7 @@ func _icons_async() -> void:
 		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		await RenderingServer.frame_post_draw
 		if not _icons_alive(vp):
-			return                                # игру закрыли посреди картинок: окна и сцены уже нет
+			return ERR_SKIP                                # игру закрыли посреди картинок: окна и сцены уже нет
 		var img := vp.get_texture().get_image()
 		if deco:
 			# украшения маленькие: обрезать пустые поля, чтобы облик был крупно и облики отличались на карточке
@@ -9338,21 +9379,25 @@ func _icons_async() -> void:
 			if r.size.x > 8 and r.size.y > 8:
 				r = r.grow(int(maxf(r.size.x, r.size.y) * 0.05)).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
 				img = img.get_region(r)
-		icons[type] = img
-		_refresh_building_pictures(type)
-		img.save_png(path)
+		if bake_dir == "":
+			icons[type] = img
+			_refresh_building_pictures(type)
+		var err := img.save_png(path)
+		if err != OK and bake_dir != "":
+			return err
+		drawn += 1
 		g.queue_free()
 		models.clear()
 		await get_tree().process_frame
 		if not _icons_alive(vp):
-			return
+			return ERR_SKIP
 	if is_instance_valid(vp):
 		vp.queue_free()
-	icons_loading = false
 	if drawn > 0:
 		print("Картинки построек: нарисовано %d, остальные — из %s" % [drawn, idir])
-	if tray.visible:
+	if tray != null and tray.visible:
 		_update_cards()
+	return OK
 
 
 ## Животные этапа 5 у постройки (CatDecor2.PETS / CatExtra.PETS) для этого облика

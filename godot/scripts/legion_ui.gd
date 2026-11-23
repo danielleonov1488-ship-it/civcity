@@ -1405,9 +1405,9 @@ func _build_fort_map(sliced := false) -> void:
 		await get_tree().process_frame
 		if not visible or not is_instance_valid(fort_map):
 			return
-	started = Perf14.begin()
-	_build_fort_provinces()
-	Perf14.detail("battle_map_provinces" if sliced else "fort_map_provinces", started)
+	await _build_fort_provinces(sliced)
+	if not is_instance_valid(fort_map) or not visible:
+		return
 	_update_fort_map_resources()
 	_layout_fort_trail()
 	_fit.call_deferred()
@@ -1423,10 +1423,12 @@ func _fort_stage_title(stage: Dictionary) -> String:
 	return I18n.t(theme if not theme.is_empty() else String(stage["name"]))
 
 
-func _build_fort_provinces() -> void:
+func _build_fort_provinces(sliced := false) -> void:
+	var started := Perf14.begin()
+	var deadline := Time.get_ticks_usec() + 3500
+	var map := fort_map
 	var list := Look.panel(Look.DARK, 10)
 	list.name = "FortProvinces"
-	fort_map.add_child(list)
 	var body := VBoxContainer.new()
 	list.add_child(body)
 	body.add_child(Look.label(I18n.t("Провинции"), 30, Look.PAPER, true))
@@ -1438,6 +1440,14 @@ func _build_fort_provinces() -> void:
 	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(rows)
 	for index in Legion.regions().size():
+		if sliced and Time.get_ticks_usec() >= deadline:
+			Perf14.detail("battle_map_provinces", started)
+			await get_tree().process_frame
+			if not visible or not is_instance_valid(map) or fort_map != map:
+				list.free()
+				return
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 3500
 		var region: Dictionary = Legion.regions()[index]
 		var open_region := lg.stage_open(view_c, index, 0) and lg.region_rank_ok(index)
 		var count := 0
@@ -1463,7 +1473,9 @@ func _build_fort_provinces() -> void:
 			sel = {}
 			_rebuild())
 		body.add_child(cycle)
+	map.add_child(list)
 	_pin(list, Vector2(1, 1), Vector2(-22, -22))
+	Perf14.detail("battle_map_provinces" if sliced else "fort_map_provinces", started)
 
 
 func _fort_region_lock(index: int) -> String:
@@ -1918,9 +1930,11 @@ func _build_campaign(sliced := false) -> Control:
 		content.add_child(h)
 		await get_tree().process_frame
 	started = Perf14.begin()
-	left.add_child(_region_strip())
+	var provinces := await _region_strip(sliced, h)
+	if provinces == null:
+		return h
+	left.add_child(provinces)
 	if sliced:
-		Perf14.detail("battle_map_provinces", started)
 		await get_tree().process_frame
 		started = Perf14.begin()
 	var st := lg.stage_info(int(sel["c"]), int(sel["r"]), int(sel["s"]))
@@ -2197,7 +2211,9 @@ func _stage_btn(c: int, r: int, s: int, boss: bool, front: bool, junior := false
 
 
 ## Под картой — все провинции (портреты боссов): щелчок открывает карту провинции
-func _region_strip() -> Control:
+func _region_strip(sliced := false, campaign: Control = null) -> Control:
+	var started := Perf14.begin()
+	var deadline := Time.get_ticks_usec() + 3500
 	var fr := lg.frontier()
 	var h := HBoxContainer.new()
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -2205,6 +2221,14 @@ func _region_strip() -> Control:
 	var cw := 98.0 if Legion.regions().size() <= 8 else 88.0     # 10 провинций похода 2.0 — плотнее, окно не шире карты
 	var dx := (cw - 98.0) / 2.0
 	for r in Legion.regions().size():
+		if sliced and Time.get_ticks_usec() >= deadline:
+			Perf14.detail("battle_map_provinces", started)
+			await get_tree().process_frame
+			if not visible or not is_instance_valid(campaign) or not campaign.is_inside_tree():
+				h.free()
+				return null
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 3500
 		var R: Dictionary = Legion.regions()[r]
 		var rr := r
 		var reached := lg.stage_open(view_c, r, 0) or lg.region_done(view_c, r)
@@ -2252,6 +2276,8 @@ func _region_strip() -> Control:
 		cb.tooltip_text = "Походы бесконечны: каждый новый круг — враги сильнее, награды больше. Щелчок — другой круг"
 		cb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		h.add_child(cb)
+	if sliced:
+		Perf14.detail("battle_map_provinces", started)
 	return h
 
 

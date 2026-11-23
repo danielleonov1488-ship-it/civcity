@@ -19,6 +19,7 @@ static func fetch(tree: SceneTree, paths: Dictionary) -> Dictionary:
 				resources[path] = cached
 			elif ResourceLoader.exists(path) and ResourceLoader.load_threaded_request(path) == OK:
 				pending.append(path)
+		_poll(pending, resources)
 		while not pending.is_empty():
 			await tree.process_frame
 			_poll(pending, resources)

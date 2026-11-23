@@ -753,6 +753,7 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		return b
 	if defer_compute:
 		place_compute_pending = true
+		_place_goals_pending = true
 		building_added.emit(b)
 	else:
 		compute()
@@ -763,6 +764,8 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 
 
 var place_compute_pending := false
+var _place_goals_pending := false
+var _remove_arrivals_pending := false
 
 
 ## Обычная стройка меняет землю сразу, результаты для домов публикуются вместе.
@@ -779,7 +782,12 @@ func finish_place(tree: SceneTree = null) -> void:
 			if not place_compute_pending:
 				return
 			place_compute_pending = false
-			_check_goals()
+			if _place_goals_pending:
+				_place_goals_pending = false
+				_check_goals()
+			if _remove_arrivals_pending:
+				_remove_arrivals_pending = false
+				arrivals_changed.emit()
 			changed.emit()
 
 
@@ -825,7 +833,7 @@ func pick_color(pos: Vector2) -> int:
 
 ## quiet — без пересчёта города и сигнала changed (убирают сразу несколько: ластик по забору, отмена постройки —
 ## пересчитает тот, кто убирал)
-func remove(b: Dictionary, refund := true, quiet := false) -> void:
+func remove(b: Dictionary, refund := true, quiet := false, defer_compute := false) -> void:
 	if def(b).get("fixed", false):
 		return
 	place_gen += 1
@@ -854,14 +862,17 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 	# украшения на стенах снесённого дома падают вместе с ним
 	for oid in buildings.keys():
 		if buildings.has(oid) and int(buildings[oid].get("host", -1)) == int(b["id"]):
-			remove(buildings[oid], refund, quiet)
+			remove(buildings[oid], refund, quiet or defer_compute)
 	# семьи, которые шли в этот дом, возвращаются на площадь
 	for nm in pending.keys():
 		if int(pending[nm]["home"]) == int(b["id"]) and int(b["id"]) != moving_id:
 			var f: Dictionary = pending[nm]
 			pending.erase(nm)
 			arrivals.append(waiting_save(f))
-	if quiet:
+	if defer_compute:
+		place_compute_pending = true
+		_remove_arrivals_pending = true
+	if quiet or defer_compute:
 		building_removed.emit(b)
 		return
 	compute()

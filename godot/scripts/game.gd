@@ -292,7 +292,38 @@ static var _bp_boxes := {}            # чертёж → коробки его �
 const SAVE_NAME := "city.json"
 
 
+const STARTUP_PIPELINES := [
+	Performance.PIPELINE_COMPILATIONS_CANVAS, Performance.PIPELINE_COMPILATIONS_MESH,
+	Performance.PIPELINE_COMPILATIONS_SURFACE, Performance.PIPELINE_COMPILATIONS_DRAW,
+	Performance.PIPELINE_COMPILATIONS_SPECIALIZATION,
+]
+var _startup_started := 0
+var _startup_last := 0
+var _startup_counts := PackedInt64Array()
+var _chunk_task := -1
+
+
+func _startup_mark(label: String) -> void:
+	if _startup_started == 0:
+		return
+	var now := Time.get_ticks_usec()
+	var counts := PackedInt64Array()
+	for monitor: Performance.Monitor in STARTUP_PIPELINES:
+		counts.append(int(Performance.get_monitor(monitor)))
+	var diff := PackedInt64Array()
+	for i in counts.size():
+		diff.append(counts[i] - _startup_counts[i] if not _startup_counts.is_empty() else 0)
+	print("STARTUP %s total_ms=%.1f stage_ms=%.1f pipelines=%s" % [
+		label, (now - _startup_started) / 1000.0, (now - _startup_last) / 1000.0, diff])
+	_startup_counts = counts
+	_startup_last = now
+
+
 func _ready() -> void:
+	if OS.get_environment("CIVCITY_STARTUP_TRACE") == "1":
+		_startup_started = Time.get_ticks_usec()
+		_startup_last = _startup_started
+		_startup_mark("begin")
 	City.road_optional = FREE_BUILD and pave_build
 	var args := {}
 	for a in OS.get_cmdline_user_args():
@@ -491,6 +522,7 @@ func _ready() -> void:
 	add_child(br)
 	br.setup(self)
 	Perf14.detail("load_breathe", startup)
+	_startup_mark("ground_setup")
 	await _step("Город", 0.25)
 	var loaded := false
 	if mode == "play":
@@ -524,6 +556,7 @@ func _ready() -> void:
 			_demo_town()
 	Perf14.detail("load_city_seed", startup)
 	city.seg_thin = true                      # готовый город построен: дальше звенья заборов — узкой полосой (тянут мышью)
+	_startup_mark("city_meshes")
 	await _step("Леса и луга", 0.35)
 	if not loaded:
 		land.meadow_new = true                # новая карта лугов: мельницы и водяное колесо на окраинах (13.11)
@@ -540,10 +573,21 @@ func _ready() -> void:
 	_ponds_life()
 	Perf14.detail("load_ponds", startup)
 	await get_tree().process_frame
+	var fauna := await CityWarmup.fetch(get_tree(), {Fauna.SWAN: true, Fauna.DUCK: true})
 	await MeadowNature.life(self)                   # у ручьёв, мосты, луга в цветах, поля с оградами, мельницы (scripts/meadow_nature.gd)
+	fauna.clear()
 	startup = Perf14.begin()
 	_cliff_rocks()
 	Perf14.end(Perf14.START_GROUND, startup)
+	var order: Array[Vector2i] = []
+	for j in Land.CHN:
+		for i in Land.CHN:
+			order.append(Vector2i(i, j))
+	order.sort_custom(func(a: Vector2i, b: Vector2i): return (a - Vector2i(8, 4)).length_squared() < (b - Vector2i(8, 4)).length_squared())
+	var chunk_arrays: Array[Array] = []
+	if Land.smooth_on:
+		chunk_arrays.resize(order.size())
+		_chunk_task = WorkerThreadPool.add_group_task(_startup_chunk.bind(land, order, chunk_arrays), order.size(), 2)
 	var masks: Array[Image] = []
 	_terrain_task = WorkerThreadPool.add_task(_make_startup_masks.bind(land, masks), false, "Маски земли")
 	while not WorkerThreadPool.is_task_completed(_terrain_task):
@@ -562,27 +606,25 @@ func _ready() -> void:
 	land.dirty.clear()
 	land.dirty_soft.clear()
 	land.dirty_walk.clear()
-	var total := Land.CHN * Land.CHN
-	var built := 0
-	var order := []
-	for j in Land.CHN:
-		for i in Land.CHN:
-			order.append(Vector2i(i, j))
-	order.sort_custom(func(a, b): return (Vector2(a) - Vector2(8, 4)).length() < (Vector2(b) - Vector2(8, 4)).length())
+	await _step("Рисуем землю", 0.4)
+	if _chunk_task >= 0:
+		while not WorkerThreadPool.is_group_task_completed(_chunk_task):
+			await get_tree().process_frame
+		WorkerThreadPool.wait_for_group_task_completion(_chunk_task)
+		_chunk_task = -1
 	var chunk_deadline := Time.get_ticks_usec() + 8000
-	for ch: Vector2i in order:
+	for index in order.size():
 		startup = Perf14.begin()
-		_build_chunk(ch)
+		_build_chunk(order[index], chunk_arrays[index] if not chunk_arrays.is_empty() else [])
 		Perf14.end(Perf14.START_LAND, startup)
-		built += 1
-		if built % 4 == 0:
-			await _step("Рисуем землю", 0.4 + 0.45 * built / total)
-			chunk_deadline = Time.get_ticks_usec() + 8000
-		elif Time.get_ticks_usec() >= chunk_deadline:
+		if Time.get_ticks_usec() >= chunk_deadline:
+			_set_loading_step("Рисуем землю", 0.4 + 0.45 * (index + 1) / order.size())
 			await get_tree().process_frame
 			chunk_deadline = Time.get_ticks_usec() + 8000
+	chunk_arrays.clear()
 	grass = GrassCarpet.new()                 # трава-ковёр вокруг камеры (14.11): куски строятся понемногу каждый кадр
 	add_child(grass)
+	_startup_mark("land")
 	await _step("Жители", 0.9)
 	await grass.setup(self)
 	startup = Perf14.begin()
@@ -603,10 +645,13 @@ func _ready() -> void:
 	_make_markers()
 	Perf14.detail("load_camera_markers", startup)
 	_apply_quality()
+	if shadow_depth != null:
+		RenderingServer.frame_pre_draw.connect(_update_shadow_depth)
 	if stage_draw:
 		parts.hide_initial_batches()
 	await get_tree().process_frame
 	await parts.show_initial_batches()
+	_startup_mark("people_and_visible_meshes")
 	Perf14.memory("before_hud")
 	startup = Perf14.begin()
 	hud = Hud.new()
@@ -680,13 +725,17 @@ func _ready() -> void:
 			actor_deadline = Time.get_ticks_usec() + 4500
 	await _step("Жители", 0.97)
 	if mode in ["new", "play"] and DisplayServer.get_name() != "headless":
+		_startup_mark("hud_actors")
 		while hud.icons_loading:
 			await get_tree().process_frame
+		_startup_mark("icons_wait")
+		await hud.research_tree.prepare()
+		_startup_mark("research")
 		Perf14.memory("icons_ready")
 		await spectacle.finish_loading_crowds()
-		await CityWarmup.render_effects(self)
-		Perf14.memory("effects_released")
+		_startup_mark("crowds_wait")
 		await PersonCard.prewarm(hud)
+		_startup_mark("portrait")
 		Perf14.memory("portrait_released")
 	CityWarmup.release_sources()
 	Perf14.memory("sources_released")
@@ -694,12 +743,9 @@ func _ready() -> void:
 		var baker := prepare_ground_bake()
 		if baker != null:
 			await baker.prime()
-	if shadow_depth != null:
-		shadow_depth.warm_up()
-		await RenderingServer.frame_post_draw
-		shadow_depth.finish_warm_up()
-		RenderingServer.frame_pre_draw.connect(_update_shadow_depth)
+	_startup_mark("first_view")
 	ready_done = true
+	_startup_mark("ready_done")
 	var camp := CampUI.of(hud)
 	if camp != null:
 		camp._update_entry()
@@ -737,6 +783,11 @@ static func _make_land(result: Array[Land]) -> void:
 	result.append(Land.new())
 
 
+static func _startup_chunk(index: int, terrain: Land, order: Array[Vector2i], chunks: Array[Array]) -> void:
+	var ch := order[index]
+	chunks[index] = terrain.smooth_arrays(ch.x, ch.y)
+
+
 static func _make_startup_masks(terrain: Land, masks: Array[Image]) -> void:
 	var surface := terrain.make_surface()
 	surface.generate_mipmaps()
@@ -752,6 +803,12 @@ var _loading_progress: Tween
 
 
 func _step(text: String, k: float) -> void:
+	_set_loading_step(text, k)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+
+func _set_loading_step(text: String, k: float) -> void:
 	loading_step = text
 	if loading:
 		(loading.get_node("box/label") as Label).text = text + "…"
@@ -760,8 +817,6 @@ func _step(text: String, k: float) -> void:
 			_loading_progress.kill()
 		_loading_progress = create_tween()
 		_loading_progress.tween_property(bar, "value", k * 100.0, 0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	await get_tree().process_frame
-	await get_tree().process_frame
 
 
 # ---------- загрузка ----------
@@ -1733,7 +1788,7 @@ func _nature(sliced := false) -> void:
 	fn.seed = 77
 	fn.frequency = 0.02
 	for n in 52000:
-		if sliced and n % 64 == 0 and Time.get_ticks_usec() >= deadline:
+		if sliced and n % 32 == 0 and Time.get_ticks_usec() >= deadline:
 			await get_tree().process_frame
 			deadline = Time.get_ticks_usec() + 5000
 		var x := rng.randf_range(1.0, Land.SIZE - 1.0)
@@ -1807,6 +1862,9 @@ func _nature(sliced := false) -> void:
 			rm = mp[2]
 		var xf := Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(x, y - (0.1 if name.contains("Rock") else 0.0), z))
 		_add_nature(name, xf, p, rm)
+		if sliced and Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
 
 
 func _add_nature(name: String, xf: Transform3D, p: Vector2, rm := {}) -> void:
@@ -1993,7 +2051,7 @@ func _nature_arches() -> void:
 
 # ---------- земля ----------
 
-func _build_chunk(ch: Vector2i) -> void:
+func _build_chunk(ch: Vector2i, arrays: Array = []) -> void:
 	var mi: MeshInstance3D = chunk_nodes.get(ch)
 	if mi == null:
 		mi = MeshInstance3D.new()
@@ -2001,7 +2059,12 @@ func _build_chunk(ch: Vector2i) -> void:
 		mi.layers = 1 | LAND_LAYER          # на землю (и только на неё) ложатся пятно поисков и следы историй (Decal)
 		add_child(mi)
 		chunk_nodes[ch] = mi
-	mi.mesh = land.smooth_mesh(ch.x, ch.y) if Land.smooth_on else land.chunk_mesh(ch.x, ch.y)   # 14.11: плавная земля
+	if arrays.is_empty():
+		mi.mesh = land.smooth_mesh(ch.x, ch.y) if Land.smooth_on else land.chunk_mesh(ch.x, ch.y)
+	else:
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		mi.mesh = mesh
 	if shadow_depth != null:
 		shadow_depth.add(mi, land_mat)
 	if land_bake != null:
@@ -3257,7 +3320,9 @@ func _process_profiled(dt: float) -> void:
 	_minimized_pause()
 	if not hidden:
 		var placing: bool = _placement_running or _place_refresh_frame == Engine.get_process_frames()
-		_rebuild_land(1 if placing else 6, heavy or _place_refresh_frame == Engine.get_process_frames())
+		var removal_pending: bool = _placement_running and city._remove_arrivals_pending
+		# Покрытие меняется сразу. Сетку и пути обновляем после пересчёта сноса.
+		_rebuild_land(1 if placing else 6, heavy or removal_pending or _place_refresh_frame == Engine.get_process_frames())
 		_swim(dt)
 	if not _placement_running and _place_refresh_frame != Engine.get_process_frames():
 		land.save_warm()                      # отличия земли для сохранения — заранее, понемногу
@@ -6336,11 +6401,9 @@ func _click() -> void:
 				if city.def(b).get("fixed", false):
 					hud.notify("Станцию снести нельзя.", "info")
 				else:
-					var h0 := city.happy_map() if _pops_for(b["type"]) else {}
-					city.remove(b)
+					demolish_building(b)
 					_clear_highlight()
 					sound.ui("demolish")
-					_happy_pops(h0, b["pos"])     # снесли лавку или украшение — над кем стало хуже, грустные рожицы
 			return
 		"copy":
 			copy_building(pick_building())
@@ -6556,6 +6619,17 @@ func _build_here() -> void:
 		_puff(Vector3(pl["pos"].x, float(pl["y"]), pl["pos"].y))
 		sound.ui("place")
 		return
+
+
+func demolish_building(b: Dictionary, refund := true) -> void:
+	var happiness := city.happy_map() if _pops_for(b["type"]) else {}
+	var at: Vector2 = b["pos"]
+	var sliced := city.buildings.size() >= 48 or _placement_running
+	city.remove(b, refund, false, sliced)
+	if sliced:
+		_finish_placement(happiness, at)
+	else:
+		_happy_pops(happiness, at)
 
 
 func _finish_placement(before: Dictionary, at: Vector2, wait_for_grow := false) -> void:
@@ -7404,6 +7478,9 @@ static func _prepare_autosave(data: Dictionary, path: String, result: Dictionary
 
 
 func _exit_tree() -> void:
+	if _chunk_task >= 0:
+		WorkerThreadPool.wait_for_group_task_completion(_chunk_task)
+		_chunk_task = -1
 	if RenderingServer.frame_pre_draw.is_connected(_update_shadow_depth):
 		RenderingServer.frame_pre_draw.disconnect(_update_shadow_depth)
 	if _terrain_task >= 0:
