@@ -643,6 +643,9 @@ var free_mode := false
 ## Для бота темпа: свои «настоящие часы» (секунды; < 0 — часы компьютера). Бот играет по игровым часам, а таймеры
 ## улучшений идут по настоящим — бот ведёт их сам (1 игровой час = 25 с при 1×)
 static var clock := -1.0
+static var test_time_factor := _read_test_time_factor()
+static var _timer_started := Time.get_ticks_usec()
+static var _saved_timer_bonus := 0.0
 
 var _city: WeakRef = null
 
@@ -1809,8 +1812,31 @@ func _ensure() -> void:
 			perks[p] = 1 if int(PERKS[p]["boss"]) <= 0 else 0      # масло — с первого дня
 
 
+static func _read_test_time_factor() -> int:
+	if not OS.has_feature("editor") or OS.has_feature("template"):
+		return 1
+	var value := OS.get_environment("CIVCITY_TEST_TIME").strip_edges()
+	return maxi(1, value.to_int()) if value.is_valid_int() else 1
+
+
+## В сохранении — обычные сроки и отдельно набежавшее тестовое время.
+static func restore_timer_clock(bonus: float) -> void:
+	_saved_timer_bonus = maxf(0.0, bonus) if is_finite(bonus) else 0.0
+	_timer_started = Time.get_ticks_usec()
+
+
+static func timer_bonus(elapsed := -1.0) -> float:
+	if test_time_factor == 1:
+		return _saved_timer_bonus
+	if elapsed < 0.0:
+		elapsed = (Time.get_ticks_usec() - _timer_started) / 1000000.0
+	return _saved_timer_bonus + elapsed * (test_time_factor - 1)
+
+
 static func now() -> float:
-	return clock if clock >= 0.0 else Time.get_unix_time_from_system()
+	if clock >= 0.0:
+		return clock
+	return Time.get_unix_time_from_system() + timer_bonus()
 
 
 # =====================================================================

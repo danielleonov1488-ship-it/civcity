@@ -926,6 +926,13 @@ func _city_card() -> void:
 		var b := _bare(sp[1], sp[2], 24, func(): set_speed(sv))
 		t.add_child(b)
 		speed_btns.append([b, sv])
+	if Legion.test_time_factor > 1:
+		var chip := _chip(true, 0.0)
+		chip.name = "TestTimeBadge"
+		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		chip.add_child(_label(I18n.t("Тест ×%d") % Legion.test_time_factor, 13, true, C_INK))
+		t.add_child(chip)
 	lbl_clock = _label("08:00", 14, true, C_SOFT)
 	t.add_child(lbl_clock)
 	row.add_child(t)
@@ -2249,12 +2256,15 @@ func _place_pops() -> void:
 		var k := t / POP_T
 		var pt := cam.unproject_position(w)
 		n.reset_size()
-		n.position = (pt - Vector2(n.size.x * 0.5, n.size.y) - Vector2(0, POP_RISE * ease(k, 0.5))).round()
+		var at := (pt - Vector2(n.size.x * 0.5, n.size.y) - Vector2(0, POP_RISE * ease(k, 0.5))).round()
 		# быстро проявляется, держится, мягко гаснет; в начале чуть больше — «выпрыгивает»
 		n.modulate.a = clampf(t / 0.15, 0.0, 1.0) * clampf((POP_T - t) / 0.8, 0.0, 1.0)
 		n.pivot_offset = n.size * 0.5
 		n.scale = Vector2.ONE * (1.0 + 0.25 * maxf(0.0, 1.0 - t / 0.25))
-		n.visible = true
+		var inset := n.pivot_offset * (n.scale - Vector2.ONE)
+		var box := Rect2(at - inset, n.size * n.scale)
+		n.visible = Rect2(Vector2.ZERO, badge_layer.size).grow(POP_RISE).intersects(box)
+		n.position = _float_in_view(box.position, box.size, badge_layer.size) + inset
 
 
 # ---------- «НОВОЕ» (как в Town to City): открылось исследованием или рангом, а игрок ещё не смотрел ----------
@@ -7947,7 +7957,7 @@ func rp_eta(cost: float) -> String:
 	var need := cost - c.rp
 	if need <= 0.0 or ph <= 0.0 or cost > c.rp_cap():
 		return ""
-	var sec := need / ph * (Game.DAY_LEN / 24.0) / maxf(1.0, float(game.speed))
+	var sec := need / ph * (Game.DAY_LEN / 24.0) / (maxf(1.0, float(game.speed)) * Legion.test_time_factor)
 	var m := ceili(sec / 60.0)
 	if m >= 60:
 		return "~%d ч %d мин" % [m / 60, m % 60]
@@ -7984,11 +7994,20 @@ func _fly_rp(n: int) -> void:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(l)
 	var to := lbl_rp.global_position - root.global_position
-	l.position = to + Vector2(-60, -70)
+	l.reset_size()
+	var from := to + Vector2(-60, 70)
+	var dest := to + Vector2(4, -4)
+	l.position = _float_in_view(from, l.size, root.size)
 	var tw := l.create_tween()
-	tw.tween_property(l, "position", to + Vector2(4, -4), 0.9).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_method(func(at: Vector2): l.position = _float_in_view(at, l.size, root.size),
+		from, dest, 0.9).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tw.parallel().tween_property(l, "modulate:a", 0.0, 0.35).set_delay(0.75)
 	tw.tween_callback(l.queue_free)
+
+
+static func _float_in_view(at: Vector2, extent: Vector2, viewport_size: Vector2) -> Vector2:
+	var margin := Vector2(8.0, 8.0)
+	return at.clamp(margin, (viewport_size - extent - margin).max(margin))
 
 
 ## «Казна полна»: сколько домов готовы к перестройке и во что она встанет — «готовы 3 дома на 3 600 ден.» ("" — ни одного)
