@@ -1,6 +1,7 @@
 extends Node
 
 const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 ## Этап 1 (1.1, 1.2, 1.3): графика по видеокарте, уровни, счётчик кадров, F3, сторож кадров.
 ##   bash .work/py/gpu_run.sh res://test_gfx.tscn   — в конце «GFX DONE fails=0»; снимки — .work/gd/b/gfx_*.png
 ## Таблица видеокарт (в т. ч. ноутбучные на ступень ниже и встроенная); у тех, кто уже играет, уровень не меняется;
@@ -15,6 +16,7 @@ const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
 ## на видеокарте, без чтений с неё; так же для сжатой BC7 (tex_vram.py bc7) и прежних несжатых (tex_vram.py off).
 
 const SHOTS := "D:/CivCity/.work/gd/b/"
+const SWITCH_LIMIT_MS := 100.0
 
 var game
 var fails := 0
@@ -280,7 +282,27 @@ func _swap_wait() -> int:
 
 
 func _press(b: BaseButton) -> void:
-	b.emit_signal("pressed")
+	b.pressed.emit()
+	await frames(3)
+
+
+func _timed_press(b: BaseButton) -> float:
+	Perf14.reset_frame()
+	Perf14.enabled = true
+	var started := Time.get_ticks_usec()
+	b.pressed.emit()
+	var ms := (Time.get_ticks_usec() - started) / 1000.0
+	Perf14.enabled = false
+	print("GFX SWITCH %s %.2f ms %s" % [b.name, ms, str(Perf14.sections())])
+	return ms
+
+
+func _press_quality(panel: Control, quality: String) -> void:
+	var b := panel.find_child("q_" + quality, true, false) as Button
+	var ms := _timed_press(b)
+	var depth := not Gfx.is_low(quality)
+	check(game.settings["quality"] == quality and Gfx.depth_prepass() == depth
+		and game.env.ssao_enabled == depth, "%s: нажатие за %.1f мс, проход глубины и SSAO по пресету" % [b.text, ms])
 	await frames(3)
 
 
@@ -352,12 +374,11 @@ func _run() -> void:
 	Gfx.readbacks = 0
 	# Очень низкая — и обратно: нажатие не ждёт картинок, они меняются в фоне по одной за кадр
 	var bv: Button = sp.find_child("q_verylow", true, false)
-	t0 = Time.get_ticks_usec()
-	bv.emit_signal("pressed")
-	var press_ms := (Time.get_ticks_usec() - t0) / 1000.0
+	var press_ms := _timed_press(bv)
 	var busy := Gfx.swap_busy()
 	await frames(3)
-	check(busy and press_ms < 1000.0, "«Очень низкая»: картинки меняются после нажатия, по одной за кадр (нажатие — %.0f мс)" % press_ms, [busy, press_ms])
+	check(busy and press_ms < SWITCH_LIMIT_MS and not Gfx.depth_prepass(),
+		"«Очень низкая»: без прохода глубины, картинки меняются по одной за кадр (нажатие — %.1f мс)" % press_ms, [busy, press_ms])
 	var vp := get_viewport()
 	check(game.settings["quality"] == "verylow" and bool(game.settings.get("quality_user", false)), "«Очень низкая» нажата: выбор игрока (quality_user)")
 	check(not game.sun.shadow_enabled and not game.env.ssao_enabled and game.people.max_vis == 40
@@ -383,13 +404,13 @@ func _run() -> void:
 	check(hit != null and hit.get_width() == 2048 and Gfx.readbacks == 0 and ci != null and ci.get_data() == a.get_data(),
 		("копия заново из сжатого файла — та же картинка (%.0f мс)" % hit_ms) if packed else
 		("копия с диска — та же картинка (%.0f мс вместо %.0f мс из файла 4096²)" % [hit_ms, miss_ms]))
-	await _press(sp.find_child("q_low", true, false))
+	await _press_quality(sp, "low")
 	check(game.sun.shadow_enabled and is_equal_approx(game.sun.light_angular_distance, 0.0) and game.people.max_vis == 70
 		and is_equal_approx(game.sun.directional_shadow_max_distance, 128.0) and vp.msaa_3d == Viewport.MSAA_DISABLED
 		and game.sun.directional_shadow_mode == DirectionalLight3D.SHADOW_ORTHOGONAL
 		and (game.chunk_nodes.values()[0] as GeometryInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
 		"«Низкая»: одна полоса резких теней до 128 м, без MSAA, 70 прохожих, земля без тени")
-	await _press(sp.find_child("q_high", true, false))
+	await _press_quality(sp, "high")
 	var cast_ok := true
 	for m: GeometryInstance3D in game.far_near:
 		if m.cast_shadow != int(m.get_meta("cast", m.cast_shadow)):
@@ -403,6 +424,8 @@ func _run() -> void:
 	at = mat.albedo_texture
 	check(not Gfx.swap_busy() and at is CompressedTexture2D and at.resource_path == path and at.get_width() == 4096 and Gfx._small.is_empty(),
 		"снова «Высокая»: за %d кадров оригиналы 4096² вернулись (читались в фоне), копии отпущены" % nf, [at, Gfx._small.size()])
+	await _press_quality(sp, "medium")
+	await _press_quality(sp, "high")
 	# счётчик кадров
 	cb.button_pressed = true
 	await frames(45)

@@ -12,7 +12,7 @@ extends Node
 
 const ORDER := ["verylow", "low", "medium", "high"]
 const SmoothScale = preload("res://scripts/smooth_scale.gd")
-const RENDER_OVERRIDE := "user://render.cfg"
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const DEPTH_PREPASS := "rendering/driver/depth_prepass/enable"
 const NAMES := {"high": "Высокая", "medium": "Средняя", "low": "Низкая", "verylow": "Очень низкая"}
 const BASE_SCALE := {"verylow": 0.5, "low": 0.75, "medium": 1.0, "high": 1.0}
@@ -43,6 +43,7 @@ static var perf14_shadows := false
 static var perf14_soft_shadows := false
 static var _ssao_reduced := false
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
+static var _sun_filter := -1
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
 static var _grand_low := false         # большие постройки этапа 5 показаны с лёгкими деталями («Низкая», CatGrand.LOW)
 static var _small := {}                # путь картинки 4096² → её копия 2048² (ImageTexture)
@@ -253,15 +254,6 @@ static func depth_prepass() -> bool:
 	return bool(ProjectSettings.get_setting_with_override(DEPTH_PREPASS))
 
 
-static func save_render_quality(quality: String) -> void:
-	var config := "[rendering]\n\ndriver/depth_prepass/enable=%s\n" % str(not is_low(quality)).to_lower()
-	if FileAccess.get_file_as_string(RENDER_OVERRIDE) == config:
-		return
-	var file := FileAccess.open(RENDER_OVERRIDE, FileAccess.WRITE)
-	if file:
-		file.store_string(config)
-
-
 static func lower(q: String) -> String:
 	return ORDER[maxi(0, ORDER.find(q) - 1)]
 
@@ -286,6 +278,10 @@ static func apply(g) -> void:
 	var low := is_low(q)
 	var ml := q == "medium" and medium_light
 	var tune := low and weak_tuning
+	var started := Perf14.begin()
+	var prepass := not low
+	if depth_prepass() != prepass:
+		ProjectSettings.set_setting(DEPTH_PREPASS, prepass)
 	env.sdfgi_enabled = false
 	env.ssil_enabled = false
 	env.ssao_enabled = not low or tune
@@ -314,18 +310,28 @@ static func apply(g) -> void:
 		sun.light_angular_distance = 0.0 if low or ml else 2.2    # без «мягких» теней PCSS — они самые дорогие
 		sun.shadow_enabled = q != "verylow"
 	# атлас теней солнца и его фильтр — общие настройки отрисовки (project.godot: 8192, мягкие высокие): «Высокая» — 4096 и
-	# средняя мягкость, «Средняя» и ниже — 4096 и низкая; прежняя «Средняя» (переключатель medium_light выключен) — как было
+	# средняя мягкость, «Средняя» и «Низкая» — 4096 и низкая; прежняя «Средняя» (medium_light выключен) — как была
 	var full := q == "medium" and not ml
 	var smaller_atlas := perf14_shadows and q != "verylow"
 	var base_sl := 2 if full else (0 if q == "high" else 1)
 	var sl := (base_sl + 20 if tune else base_sl + (3 if smaller_atlas else 0)) + (6 if perf14_soft_shadows and q == "high" else 0)
-	if sl != _sun_low:
+	# Без теней фильтр не нужен: его смена сбрасывает конвейеры Forward+.
+	if q != "verylow" and sl != _sun_low:
+		var shadow_started := Perf14.begin()
 		var atlas := 2048 if tune else ((4096 if full else 2048) if smaller_atlas else (8192 if full else 4096))
 		RenderingServer.directional_shadow_atlas_set_size(atlas, true)
-		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH if full else
-			(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if q == "high" and not perf14_soft_shadows else RenderingServer.SHADOW_QUALITY_SOFT_LOW))
+		Perf14.detail("quality_shadow_atlas", shadow_started)
+		var filter := RenderingServer.SHADOW_QUALITY_SOFT_HIGH if full else (RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM \
+			if q == "high" and not perf14_soft_shadows else RenderingServer.SHADOW_QUALITY_SOFT_LOW)
+		if filter != _sun_filter or _sun_low == -1:
+			shadow_started = Perf14.begin()
+			RenderingServer.directional_soft_shadow_filter_set_quality(filter)
+			Perf14.detail("quality_shadow_filter", shadow_started)
+			_sun_filter = filter
 		_sun_low = sl
 	var vp: Viewport = g.get_viewport()
+	Perf14.detail("quality_environment", started)
+	started = Perf14.begin()
 	if vp:
 		vp.msaa_3d = Viewport.MSAA_DISABLED if low else (Viewport.MSAA_4X if full else Viewport.MSAA_2X)
 		# «Очень низкая»: дальние модели (деревья, жители, детали построек) упрощаются раньше (по умолчанию — 1 точка экрана)
@@ -336,6 +342,8 @@ static func apply(g) -> void:
 				g.gfx._configure_smooth(vp, q)
 			else:
 				_set_scale(vp, q, float(BASE_SCALE[q]), hidpi_scale())
+	Perf14.detail("quality_viewport", started)
+	started = Perf14.begin()
 	if g.rig and g.rig.attrs:
 		g.rig.attrs.dof_blur_far_enabled = not low
 		g.rig.attrs.dof_blur_near_enabled = not low
@@ -357,8 +365,12 @@ static func apply(g) -> void:
 				for a in (g.visuals[id] as Dictionary).get("actors", []):
 					HandProps.drop(a)
 	small_textures(q == "verylow")
+	Perf14.detail("quality_props_and_textures", started)
+	started = Perf14.begin()
 	if g.has_method("meadow_quality"):
 		g.meadow_quality(low)                  # природа Meadow Forest: мелочь лугов — «Средняя» и «Высокая», деревья набора на «Низкой» — прежние
+	Perf14.detail("quality_meadow", started)
+	started = Perf14.begin()
 	for water_name in ["CityWater", "RiverFar"]:
 		var water: MeshInstance3D = g.get_node_or_null(water_name)
 		if water:
@@ -379,6 +391,7 @@ static func apply(g) -> void:
 	# предел кадров (владелец 12.11: «минимум 120»): по умолчанию — сколько показывает монитор (вертикальная синхронизация,
 	# у владельца 180 Гц); прежний жёсткий предел 60 не давал больше даже на сильной видеокарте. Снимки — без предела
 	Engine.max_fps = fps_cap(g.settings) if g.shot_path == "" else 0
+	Perf14.detail("quality_landmarks", started)
 
 
 static func _set_scale(vp: Viewport, q: String, scale: float, hidpi: float) -> void:
@@ -1008,7 +1021,7 @@ func _check_due() -> bool:
 	var st: Dictionary = game.settings
 	var qa := str(st.get("quality_auto", ""))
 	return game.mode in ["play", "new"] and game.shot_path == "" and qa != "" and qa != "kept" and not bool(st.get("quality_checked", true)) \
-		and not bool(st.get("quality_user", false)) and game.selected_quality() == st.get("quality")
+		and not bool(st.get("quality_user", false))
 
 
 ## Сейчас обычная игра в городе (не меню, не ролик, не бой, окно не свёрнуто и в фокусе)
@@ -1378,16 +1391,12 @@ static func settings_block(h, v: VBoxContainer, more: VBoxContainer = null) -> v
 		b.name = "q_" + key
 		b.add_theme_font_size_override("font_size", 16)
 		b.pressed.connect(func():
-			if h.game.settings["quality"] != key and (depth_prepass() or is_low(key)):
+			if h.game.settings["quality"] != key:
 				h.game.fade_quality()
 			h.game.select_quality(key)
-			h._open_settings(true))
+			settings_refresh(h))
 		q.add_child(b)
 	v.add_child(q)
-	var restart: Label = h._label("Ещё быстрее — после перезапуска игры", 15, false, h.C_SOFT)
-	restart.name = "quality_restart"
-	restart.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(restart)
 	var smooth := CheckBox.new()
 	smooth.name = "smooth"
 	smooth.text = "Плавность"
@@ -1461,14 +1470,11 @@ static func fps_cap(st: Dictionary) -> int:
 
 
 static func settings_refresh(h) -> void:
-	var quality: String = h.game.selected_quality()
+	var quality := str(h.game.settings.get("quality", "high"))
 	for key: String in ["high", "medium", "low", "verylow"]:
 		var b: Button = h.settings_panel.find_child("q_" + key, true, false)
 		if b:
 			b.add_theme_stylebox_override("normal", h._box_pill(12, 6, "g_btn_on" if quality == key else "g_btn"))
-	var restart := h.settings_panel.find_child("quality_restart", true, false) as Label
-	if restart:
-		restart.visible = depth_prepass() == is_low(quality)
 	var gk := GrassCarpet.range_key(h.game.settings, str(h.game.settings.get("quality", "high")))
 	for key: String in ["near", "far", "all", "off"]:
 		var gb: Button = h.settings_panel.find_child("grass_" + key, true, false)

@@ -868,8 +868,6 @@ func _load_settings() -> void:
 		Gfx.first_launch(self, had)           # первый запуск — графика по видеокарте; кто уже играет — без перемен
 		if typeof(d) == TYPE_DICTIONARY and bool(settings.get("quality_user", false)) and not d.has("quality_user"):
 			write_settings()                  # запомнить уровень, выбранный в лаунчере до первой игры
-		_request_quality(selected_quality())
-		Gfx.save_render_quality(selected_quality())
 		_window_mode()
 	Gfx.small_textures(str(settings.get("quality", "high")) == "verylow")   # до построек: на «Очень низкой» сразу копии
 
@@ -878,7 +876,6 @@ func _load_settings() -> void:
 ## за краем всех экранов: не мелькает перед владельцем, а его мышь не попадает в окно и не мешает проверкам
 var _test_window_placed := false
 var _applied_quality := ""
-var _quality_after_restart := ""
 
 
 func _window_mode() -> void:
@@ -918,33 +915,19 @@ func fade_quality() -> void:
 	tween.tween_callback(_quality_fade.queue_free)
 
 
-func selected_quality() -> String:
-	return _quality_after_restart if not _quality_after_restart.is_empty() else str(settings.get("quality", "high"))
-
-
-func _request_quality(quality: String) -> void:
-	_quality_after_restart = ""
-	if not Gfx.depth_prepass() and not Gfx.is_low(quality):
-		# Без прохода глубины на верхних уровнях пропадёт SSAO.
-		_quality_after_restart = quality
-		settings["quality"] = _applied_quality if Gfx.is_low(_applied_quality) else "low"
-	else:
-		settings["quality"] = quality
-
-
 func select_quality(quality: String) -> void:
-	_request_quality(quality)
+	settings["quality"] = quality
 	settings["quality_user"] = true
 	save_settings()
 
 
 func write_settings() -> void:
+	var started := Perf14.begin()
 	var f := FileAccess.open(settings_path(), FileAccess.WRITE)
 	if f:
-		var saved := settings.duplicate()
-		saved["quality"] = selected_quality()
-		if f.store_string(JSON.stringify(saved)):
-			Gfx.save_render_quality(selected_quality())
+		f.store_string(JSON.stringify(settings))
+		f.close()
+	Perf14.detail("settings_json", started)
 
 
 func save_settings() -> void:

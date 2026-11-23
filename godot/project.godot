@@ -6,7 +6,6 @@ config_version=5
 [application]
 
 config/name="CivCity"
-config/project_settings_override="user://render.cfg"
 config/description="Римский город: уютная стройка как в Town to City, мир и дома в духе Synty"
 run/main_scene="res://main.tscn"
 config/version="1.0.0"
