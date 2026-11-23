@@ -905,9 +905,11 @@ func _ready() -> void:
 				"ноутбук сам замедляет видеокарту.") % adapter(), "", "tip_igpu"])
 
 
-## Настройки поменялись: счётчик кадров
+## Настройки поменялись: счётчик кадров и плавность
 func refresh() -> void:
 	_fps.visible = bool(game.settings.get("show_fps", false)) and game.shot_path == ""
+	if game.shot_path == "" and _smooth_on != bool(game.settings.get("smooth", true)):
+		_configure_smooth(get_viewport(), str(game.settings.get("quality", "high")))
 
 
 func _set_measure(on: bool) -> void:

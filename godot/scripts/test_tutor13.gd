@@ -168,6 +168,12 @@ func tap_map_badge() -> bool:
 func select_for_placement(type: String) -> bool:
 	for i in 4:
 		if game.tool == type:
+			# Щелчок по карте принимается после подготовки модели.
+			var deadline := Time.get_ticks_msec() + 5000
+			while game._preview_pending and Time.get_ticks_msec() < deadline:
+				await get_tree().process_frame
+			if not check(not game._preview_pending, "placement preview ready for " + type):
+				return false
 			return check(not hud.pointer.visible and not hud.badges.has("tutorial_target"), "no guidance during placement of " + type)
 		if not await tap_arrow():
 			return false
@@ -281,7 +287,9 @@ func city_route() -> bool:
 	game.rig.set_view(Vector3(square.x - 6.0, Land.BASE_Y, square.y + 19.0), 15, 48, 43)
 	await until_ms(500)
 	aim_placement(square + Vector2(-13, 12))
-	await frames(10)
+	var preview_deadline := Time.get_ticks_msec() + 5000
+	while (not is_instance_valid(game.ghost) or not game.ghost.visible) and Time.get_ticks_msec() < preview_deadline:
+		await get_tree().process_frame
 	check(is_instance_valid(game.ghost) and game.ghost.visible, "ordinary placement ghost is visible")
 	await shot("3_placing_no_arrow.png")
 	await until_ms(1050)

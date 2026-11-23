@@ -7404,6 +7404,8 @@ static func _prepare_autosave(data: Dictionary, path: String, result: Dictionary
 
 
 func _exit_tree() -> void:
+	if RenderingServer.frame_pre_draw.is_connected(_update_shadow_depth):
+		RenderingServer.frame_pre_draw.disconnect(_update_shadow_depth)
 	if _terrain_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_terrain_task)
 		_terrain_task = -1
