@@ -111,7 +111,7 @@ func _setup() -> void:
 	_canvas.add_child(paper)
 	_layer = PersonLayer.new()
 	_canvas.add_child(_layer)
-	_layer.setup("FortPortraitStudio", 4.0, false)
+	_layer.setup("FortPortraitStudio", 4.0, false, false)
 	_layer.fit(Vector2(PIXELS, PIXELS))
 	_layer.viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 
@@ -149,7 +149,11 @@ func _render_step() -> void:
 	if not ready:
 		_discard()
 		return
-	_layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_layer.render_first_frame()
+	RenderingServer.frame_post_draw.connect(_draw_portrait, CONNECT_ONE_SHOT)
+
+
+func _draw_portrait() -> void:
 	_canvas.render_target_update_mode = SubViewport.UPDATE_ONCE
 	RenderingServer.frame_post_draw.connect(_drawn, CONNECT_ONE_SHOT)
 

@@ -136,7 +136,7 @@ static func model_aabb(name: String) -> AABB:
 		var km := KitLib._mesh(name)                     # свой набор деталей (KitLib)
 		box = km.get_aabb() if km else box
 	elif not name.begins_with("#"):
-		var n := Synty.make(name)
+		var n := Synty.make(name, {}, true)
 		box = Artisau.aabb(n)
 		n.free()
 	_aabbs[name] = box

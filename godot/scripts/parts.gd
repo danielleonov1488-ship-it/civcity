@@ -688,8 +688,26 @@ static func outline_material(col := Color(1.0, 0.97, 0.88), width := 0.07) -> Sh
 ## "shell" — только цветная оболочка (подсветка существующей постройки); "outline" — обводка по силуэту
 static func ghost(bp: Bp, mode := "place", col := Color(0.4, 0.9, 0.4, 0.4)) -> Node3D:
 	var root := Node3D.new()
+	fill_ghost(root, bp, mode, col)
+	return root
+
+
+static func fill_ghost(root: Node3D, bp: Bp, mode: String, col: Color, tree: SceneTree = null) -> void:
 	var wheat := {CatCivic.WHEAT: [], CatCivic.WHEAT_DENSE: []}
-	for p in bp.parts:
+	var mat: Material
+	match mode:
+		"shell": mat = tint_material(col, 0.03)
+		"outline": mat = outline_material(col)
+		"thumbnail": pass
+		_: mat = tint_material(col, 0.005)
+	root.set_meta("mat", mat)
+	var deadline := Time.get_ticks_usec() + 2500
+	for p: Array in bp.parts:
+		if tree != null and Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			if not is_instance_valid(root) or root.is_queued_for_deletion():
+				return
+			deadline = Time.get_ticks_usec() + 2500
 		var name: String = p[0]
 		if wheat.has(name):
 			(wheat[name] as Array).append(p[1])
@@ -703,6 +721,7 @@ static func ghost(bp: Bp, mode := "place", col := Color(0.4, 0.9, 0.4, 0.4)) -> 
 			n = Synty.make(p[0], p[2])
 		n.transform = p[1]
 		root.add_child(n)
+		_ghost_material(n, mode, mat)
 	# Призрак поля и короткая анимация стройки тоже рисуют пучки пачками.
 	for name: String in wheat:
 		var transforms: Array = wheat[name]
@@ -717,19 +736,24 @@ static func ghost(bp: Bp, mode := "place", col := Color(0.4, 0.9, 0.4, 0.4)) -> 
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		root.add_child(mmi)
-	var mat: Material
-	match mode:
-		"shell": mat = tint_material(col, 0.03)
-		"outline": mat = outline_material(col)
-		_: mat = tint_material(col, 0.005)
-	for mi: GeometryInstance3D in root.find_children("*", "GeometryInstance3D", true, false):
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_ghost_material(mmi, mode, mat)
+
+
+static func _ghost_material(node: Node3D, mode: String, mat: Material) -> void:
+	if node is GeometryInstance3D:
+		var geometry := node as GeometryInstance3D
+		geometry.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if mode == "place":
-			mi.material_overlay = mat
+			geometry.material_overlay = mat
 		else:
-			mi.material_override = mat
-	root.set_meta("mat", mat)
-	return root
+			geometry.material_override = mat
+	for child: Node3D in node.find_children("*", "GeometryInstance3D", true, false):
+		var geometry := child as GeometryInstance3D
+		geometry.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if mode == "place":
+			geometry.material_overlay = mat
+		else:
+			geometry.material_override = mat
 
 
 static func ghost_color(g: Node3D, col: Color) -> void:

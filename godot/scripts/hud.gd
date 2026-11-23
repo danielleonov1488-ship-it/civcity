@@ -4682,6 +4682,7 @@ var _thumb_vp: SubViewport
 var _thumb_cam: Camera3D
 var _thumb_holder: Node3D
 var _thumb_key := ""
+var _thumb_build: Node3D
 
 
 func _thumb_make() -> void:
@@ -4740,16 +4741,24 @@ func thumb_update() -> void:
 	_thumb_key = key
 	if _thumb_vp == null:
 		_thumb_make()
+	var bp := Catalog.make(t, tier, v, c)
+	var g := Node3D.new()
+	g.hide()
+	_thumb_holder.add_child(g)
+	_thumb_build = g
+	await Parts.fill_ghost(g, bp, "thumbnail", Color.TRANSPARENT, get_tree() if t in Game.SLICED_PREVIEWS else null)
+	if not is_instance_valid(g) or g != _thumb_build:
+		if is_instance_valid(g):
+			g.queue_free()
+		return
 	for ch in _thumb_holder.get_children():
-		ch.queue_free()
-	var g := Parts.ghost(Catalog.make(t, tier, v, c), "outline", Color(0, 0, 0, 0))
-	for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
-		gi.material_override = null
+		if ch != g:
+			ch.queue_free()
 	for ch in g.get_children():
 		if ch is MeshInstance3D and (ch as MeshInstance3D).mesh == Parts._special_mesh("#dark") and (ch as Node3D).position.y < -0.05:
 			g.remove_child(ch)
 			ch.free()
-	_thumb_holder.add_child(g)
+	g.show()
 	var box := Artisau.aabb(g)
 	var ctr := box.get_center()
 	var rad := maxf(0.3 if d["kind"] == "decor" else 0.6, box.size.length() * 0.5)

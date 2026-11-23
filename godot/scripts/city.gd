@@ -453,12 +453,15 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	var hi := -INF
 	var on_water := 0
 	var arches := not land.under.is_empty()
+	const EDGE_CELLS := int(1.0 / Land.CELL)
+	const PLOT_CELLS := int(Land.PLOT / Land.CELL)
 	for k in cells:
-		var q := land.cell_center(k % Land.N, k / Land.N)
-		if q.x < 1.0 or q.y < 1.0 or q.x > Land.SIZE - 1.0 or q.y > Land.SIZE - 1.0:
+		var i := k % Land.N
+		var j := k / Land.N
+		if i < EDGE_CELLS or j < EDGE_CELLS or i >= Land.N - EDGE_CELLS or j >= Land.N - EDGE_CELLS:
 			res["err"] = "Край карты"
 			return res
-		if not land.is_owned(q) and ignore_id != -2:
+		if ignore_id != -2 and not land.owned.has(Vector2i(i / PLOT_CELLS, j / PLOT_CELLS)):
 			res["err"] = "Эта земля ещё не куплена"
 			return res
 		if size != Vector2i.ZERO and Land.walk_kind(land.kind[k]):
@@ -725,6 +728,7 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		if not bulk:
 			Chronicle.add(self, "decor" if d["kind"] == "decor" else "built")   # летопись: построено игроком
 	var cells: PackedInt32Array = b["cells"]
+	var terrain_started := Perf14.begin()
 	if not d.get("water", false):
 		land.flatten_cells(cells, b["y"], Land.Kind.FIELD if d["kind"] == "farm" else -1)
 		if d["kind"] != "decor":
@@ -735,9 +739,12 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 			changes_walk = changes_walk or Land.walk_kind(land.kind[k])
 			land.occ[k] = b["id"]
 	land.walk_ver += int(changes_walk)
+	Perf14.detail("placement_terrain", terrain_started)
+	var apron_started := Perf14.begin()
 	_under_add(b)
 	buildings[b["id"]] = b
 	_apron_add(b)
+	Perf14.detail("placement_apron", apron_started)
 	if apron_of(b) == 2:
 		land.wear_block[int(b["id"])] = true
 		_apron_refresh(b)
@@ -3316,7 +3323,7 @@ func _upgrade_candidate(b: Dictionary) -> bool:
 
 
 ## Значок перестройки потребует эти же проверки сразу после обновления города.
-func _prepare_upgrade_ready(tree: SceneTree) -> bool:
+func _prepare_upgrade_ready(tree: SceneTree, placing := true) -> bool:
 	var revision := _compute_revision
 	var placement := place_gen
 	var terrain := land.gen
@@ -3327,13 +3334,13 @@ func _prepare_upgrade_ready(tree: SceneTree) -> bool:
 		if _upgrade_candidate(buildings[id]):
 			all.append(id)
 		if Time.get_ticks_usec() >= deadline:
-			Perf14.detail("placement_upgrade_badge", started)
+			Perf14.detail("placement_upgrade_badge" if placing else "load_upgrade_badge", started)
 			await tree.process_frame
-			if not place_compute_pending or revision != _compute_revision or placement != place_gen or terrain != land.gen:
+			if (placing and not place_compute_pending) or revision != _compute_revision or placement != place_gen or terrain != land.gen:
 				return false
 			started = Perf14.begin()
 			deadline = Time.get_ticks_usec() + 4500
-	Perf14.detail("placement_upgrade_badge", started)
+	Perf14.detail("placement_upgrade_badge" if placing else "load_upgrade_badge", started)
 	_upg_ready = all
 	return true
 

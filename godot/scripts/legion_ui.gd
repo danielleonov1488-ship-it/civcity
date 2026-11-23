@@ -258,7 +258,7 @@ func open(tab_id := "", sliced := false) -> void:
 	hud._close_tray()
 	hud._hide_info()
 	camp_window = ""
-	win.show()
+	win.visible = not lg.v3()
 	visible = true
 	move_to_front()
 	lg.flags["seen"] = true
@@ -678,8 +678,22 @@ func _rebuild(sliced := false) -> void:
 		return
 	_live = []
 	hud._clear(content)
-	if sliced and (lg.v3() or tab == "campaign"):
-		await _prepare_return_map()
+	if lg.v3() and camp_window == "":
+		if _map_rebuild_waiting:
+			_dirty = true
+			return
+		var region := clampi(view_r, 0, Legion.regions().size() - 1)
+		if not _map_ready.has(region):
+			_map_rebuild_waiting = true
+			await _prepare_map(region)
+			_map_rebuild_waiting = false
+			if not visible or camp_window != "":
+				return
+			if view_r != region:
+				await _rebuild(sliced)
+				return
+	elif sliced and tab == "campaign":
+		await _prepare_map(clampi(view_r, 0, Legion.regions().size() - 1))
 	_fight_btn = null
 	guide_stage_button = null
 	guide_region_button = null
@@ -1808,23 +1822,45 @@ func _fort_reward(row: HBoxContainer, tex: Texture2D, value: String, tip: String
 	row.add_child(item)
 
 
-## За занавесом готовим картинку карты и запасную рисованную землю.
-func _prepare_return_map() -> void:
-	var region: Dictionary = Legion.regions()[clampi(view_r, 0, Legion.regions().size() - 1)]
+var _map_warming := {}
+var _map_ready := {}
+var _map_rebuild_waiting := false
+
+
+func warm_fort_map() -> void:
+	var region := view_r
+	if lg.fort_guide_combat():
+		region = 0
+	elif region < 0:
+		region = int(lg.frontier()["r"])
+	_prepare_map(clampi(region, 0, Legion.regions().size() - 1))
+
+
+## Готовим фон похода в форте или за занавесом боя.
+func _prepare_map(region_index: int) -> void:
+	var tree := get_tree()
+	while _map_warming.has(region_index):
+		await tree.process_frame
+	if _map_ready.has(region_index):
+		return
+	_map_warming[region_index] = true
+	var region: Dictionary = Legion.regions()[region_index]
 	var id := String(region["id"])
 	var path: String = Legion.art("map", id)["file"]
 	var resources := await CityWarmup.fetch(get_tree(), {path: true, path.get_basename() + ".jpg": true})
 	var texture := _art("map", id)
 	resources.clear()
 	if texture != null:
+		_map_ready[region_index] = true
+		_map_warming.erase(region_index)
 		return
 	var started := Perf14.begin()
 	var biome: Dictionary = BIOMES.get(String(region["biome"]), BIOMES["forest"])
-	var key := "ground:%d" % view_r
+	var key := "ground:%d" % region_index
 	var task := -1
 	var images: Array[Image] = []
 	if not _tex.has(key):
-		var seed_value := 1000 + view_r * 17
+		var seed_value := 1000 + region_index * 17
 		task = WorkerThreadPool.add_task(func() -> void:
 			images.append(MapPaint.ground_image(biome, seed_value)))
 	var deadline := Time.get_ticks_usec() + 3500
@@ -1839,6 +1875,10 @@ func _prepare_return_map() -> void:
 			started = Perf14.begin()
 			deadline = Time.get_ticks_usec() + 3500
 	Perf14.detail("battle_map_icons", started)
+	var enemy := String(region["boss"])
+	var enemy_path: String = Legion.art("enemy", enemy)["file"]
+	resources = await CityWarmup.fetch(tree, {enemy_path: true, enemy_path.get_basename() + ".jpg": true})
+	_art("enemy", enemy)
 	if task >= 0:
 		while not WorkerThreadPool.is_task_completed(task):
 			await get_tree().process_frame
@@ -1846,6 +1886,8 @@ func _prepare_return_map() -> void:
 		started = Perf14.begin()
 		_tex[key] = ImageTexture.create_from_image(images[0])
 		Perf14.detail("battle_map_ground_upload", started)
+	_map_ready[region_index] = true
+	_map_warming.erase(region_index)
 
 
 func _build_campaign(sliced := false) -> Control:

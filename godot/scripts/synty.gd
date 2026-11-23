@@ -11,6 +11,7 @@ static var _paths := {}          # имя модели → путь к FBX
 static var _slots := {}          # слот материала → [albedo, normal]
 static var _mesh_slots := {}     # модель → [[слот, albedo, normal], …] по порядку материалов
 static var _tex := {}            # имя картинки → путь
+static var _texture_names := {}
 static var _mats := {}           # слот → материал
 static var _scenes := {}
 static var unknown := {}         # слоты без картинки (для отладки)
@@ -68,6 +69,8 @@ static func _scan(path: String, ext: String, out: Dictionary) -> void:
 static func _tex_path(name: String) -> String:
 	if name == "":
 		return ""
+	if _texture_names.has(name):
+		return _texture_names[name]
 	var cands := [name]
 	var m := RegEx.create_from_string("^PolygonAncientEmpire_([0-9][0-9])_([A-C])$").search(name)
 	if m:
@@ -77,10 +80,14 @@ static func _tex_path(name: String) -> String:
 		cands.append("PolygonAncientWorlds_Normal_%s" % m.get_string(1))
 		cands.append("PolygonAncientWorlds_Normal_01")
 	cands.append_array([name.replace("_01", "_Tex"), name.replace("_01", "_Texture_01"), name.trim_suffix("_01"), name.to_lower()])
-	for c in cands:
-		for k in _tex.keys():
-			if k == c or k.to_lower() == String(c).to_lower():
+	for c: String in cands:
+		var lower := c.to_lower()
+		for k: String in _tex:
+			if k.to_lower() == lower:
+				_texture_names[name] = _tex[k]
 				return _tex[k]
+	if not _tex.is_empty():
+		_texture_names[name] = ""
 	return ""
 
 
@@ -122,6 +129,10 @@ static func texture_paths(name: String, remap: Dictionary, paths: Dictionary) ->
 
 
 static func _material_texture(path: String) -> Texture2D:
+	if not Gfx._tex_small:
+		var cached := ResourceLoader.get_cached_ref(path) as Texture2D
+		if cached != null:
+			return cached
 	var started := Perf14.begin()
 	var texture := Gfx.tex(path)
 	Perf14.loaded(path, started)
@@ -214,7 +225,7 @@ static func set_season(v: Vector4) -> void:
 const GREEN := Color(0.9, 0.93, 0.72)
 
 
-static func make(name: String, remap := {}) -> Node3D:
+static func make(name: String, remap := {}, geometry_only := false) -> Node3D:
 	if name.begins_with("K:"):
 		return KitLib.make(name, remap)                  # свой набор деталей (дома из Blender)
 	if name.begins_with("M:"):
@@ -233,6 +244,8 @@ static func make(name: String, remap := {}) -> Node3D:
 		_scenes[name] = load(_paths[name])
 		Perf14.loaded(_paths[name], loading)
 	var n := (_scenes[name] as PackedScene).instantiate() as Node3D
+	if geometry_only:
+		return n
 	var open_bridge := bool(remap.get("open_bridge", false))
 	if open_bridge:
 		remap = remap.duplicate()

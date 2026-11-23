@@ -171,6 +171,11 @@ func prepare_layout(b: Dictionary, ghost: Node3D) -> void:
 
 
 func _stage_layout(key: String, type: String, bp: Bp, meshes: Array, job: Array) -> void:
+	await get_tree().process_frame
+	while game._placement_running:
+		await get_tree().process_frame
+	if not _tris_jobs.has(key):
+		return
 	var cache := {}
 	var faces := []
 	var deadline := Time.get_ticks_usec() + 2400

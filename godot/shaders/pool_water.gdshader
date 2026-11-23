@@ -6,6 +6,7 @@ render_mode blend_mix, depth_draw_opaque, cull_back, specular_schlick_ggx;
 
 uniform vec3 tint : source_color = vec3(0.34, 0.74, 0.78);
 uniform vec3 deep : source_color = vec3(0.13, 0.44, 0.54);
+uniform float frozen_time = -1.0;
 
 varying vec3 wpos;
 varying vec3 wnrm;
@@ -31,7 +32,7 @@ void vertex() {
 }
 
 void fragment() {
-	float t = TIME;
+	float t = frozen_time >= 0.0 ? frozen_time : TIME;
 	vec2 p = wpos.xz;
 	float e = 0.04;
 	float h0 = hgt(p, t);

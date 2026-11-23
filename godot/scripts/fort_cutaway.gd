@@ -144,6 +144,7 @@ func setup(legion: Legion, game: Node) -> bool:
 	sub.disable_3d = true
 	sub.world_2d = World2D.new()
 	sub.size = Vector2i(size).max(Vector2i.ONE)
+	sub.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
 	sub.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
 	sub.gui_disable_input = true
 	add_child(sub)
@@ -219,6 +220,12 @@ func sync() -> void:
 
 func prepare_opening() -> void:
 	await _sync_cutaway(true)
+	if not active or is_queued_for_deletion():
+		return
+	# Рисуем разрез за заставкой до того, как контейнер покажет его текстуру.
+	if DisplayServer.get_name() != "headless":
+		sub.render_target_update_mode = SubViewport.UPDATE_ONCE
+		await RenderingServer.frame_post_draw
 	defer_initial_sync = false
 
 

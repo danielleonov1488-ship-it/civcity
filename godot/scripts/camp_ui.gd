@@ -1937,6 +1937,8 @@ func _open_diorama(serial: int) -> void:
 	opening = false
 	Perf14.end(Perf14.CAMP_BUILD, started)
 	art.clear()
+	if DisplayServer.get_name() != "headless":
+		lu.warm_fort_map.call_deferred()
 
 
 func _cover_city() -> void:

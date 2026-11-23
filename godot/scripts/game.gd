@@ -422,13 +422,13 @@ func _ready() -> void:
 	seasons.setup(self)
 	Perf14.detail("load_seasons", startup)
 	await get_tree().process_frame
-	startup = Perf14.begin()
+	var clips := await CityWarmup.fetch(get_tree(), {Citizen.CLIP_FILE: true})
+	await Citizen.warm_library(get_tree())
+	clips.clear()
 	var boats := Boats.new()                  # лодки с гребцами на больших прудах («Уютный Рим», этап 7; новая игра)
 	boats.name = "Boats"
 	add_child(boats)
-	boats.setup(self)
-	Perf14.detail("load_boats", startup)
-	await get_tree().process_frame
+	await boats.setup(self, get_tree())
 	startup = Perf14.begin()
 	var fnt := Fountains.new()                # живая вода в фонтанах (с акведуком — гуще; этап 7)
 	fnt.name = "Fountains"
@@ -554,7 +554,7 @@ func _ready() -> void:
 	_hero_check()                             # свой герой (Д11): в своей игре он есть всегда (старый город — случайный, пока игрок не создаст)
 	Perf14.end(Perf14.START_PEOPLE, startup)
 	await people.setup(land, city, self)
-	await get_tree().process_frame
+	await _step("Жители", 0.93)
 	startup = Perf14.begin()
 	rig = CameraRig.new()
 	add_child(rig)
@@ -629,6 +629,8 @@ func _ready() -> void:
 	if city.fest_left > 0:
 		_fest_look(true)                      # сохранение с идущими играми — город сразу наряжен
 	_set_hour(hour)
+	if mode in ["new", "play"] and city.research.has("artisans"):
+		await city._prepare_upgrade_ready(get_tree(), false)
 	for part in range(1, 4):
 		startup = Perf14.begin()
 		hud.refresh(part)
@@ -641,6 +643,7 @@ func _ready() -> void:
 		if Time.get_ticks_usec() >= actor_deadline:
 			await get_tree().process_frame
 			actor_deadline = Time.get_ticks_usec() + 4500
+	await _step("Жители", 0.97)
 	if mode in ["new", "play"] and DisplayServer.get_name() != "headless":
 		while hud.icons_loading:
 			await get_tree().process_frame
@@ -1803,8 +1806,8 @@ func clear_nature(c: Vector2, r: float, cells := PackedInt32Array()) -> void:
 
 ## Клетки, где под постройкой нет деревьев: её след, а у акведука — ещё полоса под арками с запасом на кроны
 ## (арки землю не занимают — Land.under). Природа не сохраняется: после загрузки убирается снова (_ready)
-func _nature_cells(type: String, cells0: PackedInt32Array, pos: Vector2, yaw: float) -> PackedInt32Array:
-	var cells := land.hull_cells(cells0, pos, yaw)     # 15.11: и внутри постройки (двор, комнаты) — без деревьев
+func _nature_cells(type: String, cells0: PackedInt32Array, pos: Vector2, yaw: float, hull := PackedInt32Array()) -> PackedInt32Array:
+	var cells := land.hull_cells(cells0, pos, yaw) if hull.is_empty() else hull
 	var ur := CatGrand.under_rects(type)
 	if ur.is_empty():
 		return cells
@@ -1926,7 +1929,7 @@ func _on_added(b: Dictionary) -> void:
 		_show(b)
 	if not (b["cells"] as PackedInt32Array).is_empty():
 		# окно поиска — по самому следу (у цирка он длиннее 28 м), у акведука — и полоса под арками
-		clear_nature_cells(_nature_cells(b["type"], b["cells"], b["pos"], float(b["yaw"])))
+		clear_nature_cells(_nature_cells(b["type"], b["cells"], b["pos"], float(b["yaw"]), b["bare"]))
 	var bp: Vector2 = b["pos"]
 	if not fest_vis.is_empty() and absf(bp.x - Land.ROAD_X) < 16.0 and bp.y > FEST_Z[0] - 12 and bp.y < FEST_Z[-1] + 12:
 		_fest_look(true)                       # новый дом у дороги во время игр — шесты переставим, чтобы не торчали из стены
@@ -1982,15 +1985,19 @@ func _grow_anim_profiled(b: Dictionary) -> void:
 		_grows += 1
 	var tw := create_tween()
 	_grow_live[id] = [tw, g, scaf]
-	if full:
-		var plan := _grow_plan(g, bp)
-		_grow_step(g, plan, 0.0)
-		tw.tween_method(func(t: float) -> void: _grow_step(g, plan, t), 0.0, 1.0, dur)
+	var large: bool = full and String(b["type"]) in SLICED_PREVIEWS
+	if large:
+		g.hide()
+		tw.pause()
+		_begin_large_grow(id, g, bp, tw, dur)
+	elif full:
+		_tween_grow(g, bp, tw, dur)
 	else:
 		g.scale = Vector3(1.0, 0.04, 1.0)
 		tw.tween_property(g, "scale", Vector3(1.0, 1.06, 1.0), dur).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		tw.tween_property(g, "scale", Vector3.ONE, 0.18)
-	tw.tween_callback(_finish_grow.bind(id, tw))
+	if not large:
+		tw.tween_callback(_finish_grow.bind(id, tw))
 	_grow_parts[id] = tw
 	_prepare_grow_parts.call_deferred(b, bp, xf, tw)
 	# пыль — всю стройку, у подножия, по всему следу
@@ -2001,10 +2008,32 @@ func _grow_anim_profiled(b: Dictionary) -> void:
 		get_tree().create_timer(dur / puffs * k).timeout.connect(func(): _puff(at, Color("e8dcc4")))
 
 
+func _tween_grow(g: Node3D, bp: Bp, tw: Tween, duration: float) -> void:
+	var plan := _grow_plan(g, bp)
+	_grow_step(g, plan, 0.0)
+	tw.tween_method(func(t: float) -> void: _grow_step(g, plan, t), 0.0, 1.0, duration)
+
+
+func _begin_large_grow(id: int, g: Node3D, bp: Bp, tw: Tween, duration: float) -> void:
+	await get_tree().process_frame
+	var entry: Array = _grow_live.get(id, [])
+	if entry.is_empty() or entry[0] != tw:
+		return
+	var started := Perf14.begin()
+	_tween_grow(g, bp, tw, duration)
+	tw.tween_callback(_finish_grow.bind(id, tw))
+	g.show()
+	tw.play()
+	Perf14.end(Perf14.CITY_GROW, started)
+
+
 func _prepare_grow_parts(b: Dictionary, bp: Bp, xf: Transform3D, tw: Tween) -> void:
 	var id: int = b["id"]
 	var alive := func() -> bool: return _grow_parts.get(id) == tw and city.buildings.has(id)
 	await get_tree().process_frame
+	if String(b["type"]) in SLICED_PREVIEWS:
+		while _placement_running and alive.call():
+			await get_tree().process_frame
 	if alive.call():
 		await parts.prepare_groups(bp, xf, _show_substitutions(b, bp), alive)
 	if alive.call() and city.apron_of(b) == 2:
@@ -3049,9 +3078,11 @@ func _process_profiled(dt: float) -> void:
 		heavy = false
 	_minimized_pause()
 	if not hidden:
-		_rebuild_land(6, heavy)
+		var placing: bool = _placement_running or _place_refresh_frame == Engine.get_process_frames()
+		_rebuild_land(1 if placing else 6, heavy or _place_refresh_frame == Engine.get_process_frames())
 		_swim(dt)
-	land.save_warm()                          # отличия земли для сохранения — заранее, понемногу
+	if not _placement_running and _place_refresh_frame != Engine.get_process_frames():
+		land.save_warm()                      # отличия земли для сохранения — заранее, понемногу
 	var sdt := dt * speed
 	if speed > 0.0 and mode != "menu":
 		var h0 := hour
@@ -4734,8 +4765,7 @@ func _update_tool_profiled() -> void:
 		if ghost:
 			ghost.queue_free()
 		var bp := Catalog.make(tool, pl["tier"], pl["variant"], pl["color"]) if size == Vector2i.ZERO else Catalog.field_bp(tool, size)
-		ghost = Parts.ghost(bp, "place")
-		add_child(ghost)
+		ghost = _take_preview_ghost(bp, key)
 		ghost_key = key
 		if hud:
 			hud.thumb_update()             # живая картинка в панели — тот же облик и цвет (3.4)
@@ -4758,6 +4788,7 @@ func _update_tool_profiled() -> void:
 
 const GHOST_OK := Color(0.45, 1.0, 0.45, 0.07)     # годное место: настоящие цвета постройки, лишь лёгкая зелень
 const GHOST_BAD := Color(1.0, 0.25, 0.2, 0.5)
+const SLICED_PREVIEWS := ["colosseum", "medic", "academy"]
 var _preview_serial := 0
 var _preview_pending := false
 var _preview_models := {}
@@ -4766,6 +4797,8 @@ var _preview_type := ""
 var _preview_variant := -1
 var _preview_tier := -1
 var _preview_color := -1
+var _preview_ghost: Node3D
+var _preview_ghost_key := ""
 
 
 func _clear_preview_models() -> void:
@@ -4773,6 +4806,10 @@ func _clear_preview_models() -> void:
 	_preview_pending = false
 	_preview_type = ""
 	_preview_models.clear()
+	if is_instance_valid(_preview_ghost):
+		_preview_ghost.queue_free()
+	_preview_ghost = null
+	_preview_ghost_key = ""
 
 
 func _request_preview(type: String, tier: int, variant: int, color := 0) -> void:
@@ -4785,9 +4822,14 @@ func _request_preview(type: String, tier: int, variant: int, color := 0) -> void
 	_preview_color = color
 	var serial := _preview_serial
 	var paths := {}
+	var started := Perf14.begin()
 	var bp := Catalog.make(type, tier, variant, color)
+	Perf14.detail("preview_blueprint", started)
+	started = Perf14.begin()
 	CityWarmup.models(bp, paths, true)
-	if paths.is_empty():
+	Perf14.detail("preview_paths", started)
+	var staged := type in SLICED_PREVIEWS
+	if paths.is_empty() and not staged:
 		return
 	_preview_pending = true
 	var tree := get_tree()
@@ -4807,12 +4849,37 @@ func _request_preview(type: String, tier: int, variant: int, color := 0) -> void
 			deadline = Time.get_ticks_usec() + 3000
 		seen[name] = true
 		Bp.model_aabb(name)
+	if serial != _preview_serial:
+		return
+	if staged:
+		await tree.process_frame
+		if serial != _preview_serial:
+			return
+		var model := Node3D.new()
+		model.hide()
+		add_child(model)
+		_preview_ghost = model
+		await Parts.fill_ghost(model, bp, "place", GHOST_OK, tree)
+		if serial != _preview_serial:
+			return
+		_preview_ghost_key = "%s:%d:%d:%d:%s" % [type, tier, variant, color, Vector2i.ZERO]
 	if serial == _preview_serial:
 		_preview_models = models
 		_preview_source_frame = Engine.get_process_frames()
 		_preview_pending = false
 		if hud:
 			hud.thumb_update.call_deferred()
+
+
+func _take_preview_ghost(bp: Bp, key: String) -> Node3D:
+	if _preview_ghost_key == key and is_instance_valid(_preview_ghost):
+		var prepared := _preview_ghost
+		_preview_ghost = null
+		_preview_ghost_key = ""
+		return prepared
+	var model := Parts.ghost(bp, "place")
+	add_child(model)
+	return model
 
 
 var _ghost_line: ShaderMaterial                       # тонкая светлая обводка годного призрака
@@ -4844,11 +4911,14 @@ func _ghost_frozen() -> void:
 	var size := City.field_size(pl)
 	var key := "%s:%d:%d:%d:%s" % [tool, pl["tier"], v, c, size]
 	if key != ghost_key:
+		if moving.is_empty() and tool in SLICED_PREVIEWS:
+			_request_preview(tool, int(pl["tier"]), v, c)
+			if _preview_pending:
+				return
 		var xf := ghost.transform
 		ghost.queue_free()
 		var bp := Catalog.make(tool, pl["tier"], v, c) if size == Vector2i.ZERO else Catalog.field_bp(tool, size)
-		ghost = Parts.ghost(bp, "place")
-		add_child(ghost)
+		ghost = _take_preview_ghost(bp, key)
 		ghost.transform = xf
 		ghost_key = key
 		pl["variant"] = v
@@ -6273,7 +6343,7 @@ func _build_here() -> void:
 				hud.note_recent(tool)              # «Недавние» в меню украшений
 			_rot_hint_count()
 			if defer_compute:
-				_finish_placement(h0, pl["pos"])
+				_finish_placement(h0, pl["pos"], tool in SLICED_PREVIEWS)
 			else:
 				_happy_pops(h0, pl["pos"])
 			if stories != null:
@@ -6296,13 +6366,15 @@ func _build_here() -> void:
 		return
 
 
-func _finish_placement(before: Dictionary, at: Vector2) -> void:
+func _finish_placement(before: Dictionary, at: Vector2, wait_for_grow := false) -> void:
 	if not before.is_empty():
 		_placement_pops.append([before, at])
 	if _placement_running:
 		return
 	_placement_running = true
 	await get_tree().process_frame
+	if wait_for_grow:
+		await get_tree().process_frame
 	while _clock_busy:
 		await get_tree().process_frame
 	await city.finish_place(get_tree())

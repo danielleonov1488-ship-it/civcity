@@ -81,19 +81,47 @@ static func _scene(path: String) -> PackedScene:
 ## «Listen» (слушает и кивает), «Look_Around» (оглядывается), «Laugh» (смеётся, плечи трясутся)
 static func library() -> AnimationLibrary:
 	if _lib == null:
-		var src := _scene("res://assets/people/UAL1_Standard.glb").instantiate()
-		var ap: AnimationPlayer = src.find_children("*", "AnimationPlayer", true, false)[0]
-		_lib = AnimationLibrary.new()
-		for n in ap.get_animation_list():
-			var a := ap.get_animation(n).duplicate() as Animation
-			var short := String(n).get_slice("/", String(n).get_slice_count("/") - 1)
-			if short.ends_with("_Loop") or short in ["Walk", "Idle", "Idle_Talking", "Sitting_Idle", "Sitting_Talking", "Driving", "Walk_Formal", "Jog_Fwd", "Push", "Crouch_Idle",
-					"Fixing_Kneeling", "Interact", "PickUp_Table", "Spell_Simple_Idle", "Sword_Idle", "Dance", "Idle_Torch", "Crouch_Fwd"]:
-				a.loop_mode = Animation.LOOP_LINEAR
-			_lib.add_animation(short.trim_suffix("_Loop"), a)
-		src.free()
-		_derive(_lib)
+		_lib = _make_library(_source_clips())
 	return _lib
+
+
+const CLIP_FILE := "res://assets/people/UAL1_Standard.glb"
+
+
+static func warm_library(tree: SceneTree) -> void:
+	if _lib != null:
+		return
+	var clips := _source_clips()
+	var result: Array[AnimationLibrary] = []
+	var task := WorkerThreadPool.add_task(func() -> void: result.append(_make_library(clips)))
+	while not WorkerThreadPool.is_task_completed(task):
+		await tree.process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	if _lib == null:
+		_lib = result[0]
+
+
+static func _source_clips() -> Dictionary:
+	var src := _scene(CLIP_FILE).instantiate()
+	var ap: AnimationPlayer = src.find_children("*", "AnimationPlayer", true, false)[0]
+	var clips := {}
+	for name in ap.get_animation_list():
+		clips[name] = ap.get_animation(name)
+	src.free()
+	return clips
+
+
+static func _make_library(clips: Dictionary) -> AnimationLibrary:
+	var lib := AnimationLibrary.new()
+	for name: String in clips:
+		var a := (clips[name] as Animation).duplicate() as Animation
+		var short := name.get_slice("/", name.get_slice_count("/") - 1)
+		if short.ends_with("_Loop") or short in ["Walk", "Idle", "Idle_Talking", "Sitting_Idle", "Sitting_Talking", "Driving", "Walk_Formal", "Jog_Fwd", "Push", "Crouch_Idle",
+				"Fixing_Kneeling", "Interact", "PickUp_Table", "Spell_Simple_Idle", "Sword_Idle", "Dance", "Idle_Torch", "Crouch_Fwd"]:
+			a.loop_mode = Animation.LOOP_LINEAR
+		lib.add_animation(short.trim_suffix("_Loop"), a)
+	_derive(lib)
+	return lib
 
 
 ## Плавный горбик: 0 вне [a, b], 1 в середине

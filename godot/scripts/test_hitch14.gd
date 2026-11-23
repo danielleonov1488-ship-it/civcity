@@ -302,9 +302,9 @@ func _place_focus(type: String, at: Vector2) -> Dictionary:
 		return {}
 	if is_instance_valid(game.ghost):
 		game.ghost.queue_free()
-	game.ghost = Parts.ghost(Catalog.make(type, pl["tier"], pl["variant"], pl["color"]))
 	game.ghost_key = "%s:%d:%d:%d:%s" % [type, pl["tier"], pl["variant"], pl["color"], Vector2i.ZERO]
-	game.add_child(game.ghost)
+	game.ghost = game._take_preview_ghost(Catalog.make(type, pl["tier"], pl["variant"], pl["color"]), game.ghost_key)
+	game.ghost.show()
 	await frames(2)
 	_mark(action)
 	var id := game.city.next_id
