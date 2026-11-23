@@ -868,6 +868,7 @@ func _load_settings() -> void:
 		Gfx.first_launch(self, had)           # первый запуск — графика по видеокарте; кто уже играет — без перемен
 		if typeof(d) == TYPE_DICTIONARY and bool(settings.get("quality_user", false)) and not d.has("quality_user"):
 			write_settings()                  # запомнить уровень, выбранный в лаунчере до первой игры
+		Gfx.save_render_quality(str(settings.get("quality", "high"))) # старые настройки и повреждённый render.cfg
 		_window_mode()
 	Gfx.small_textures(str(settings.get("quality", "high")) == "verylow")   # до построек: на «Очень низкой» сразу копии
 
@@ -924,10 +925,13 @@ func select_quality(quality: String) -> void:
 func write_settings() -> void:
 	var started := Perf14.begin()
 	var f := FileAccess.open(settings_path(), FileAccess.WRITE)
+	var saved := false
 	if f:
-		f.store_string(JSON.stringify(settings))
+		saved = f.store_string(JSON.stringify(settings))
 		f.close()
 	Perf14.detail("settings_json", started)
+	if saved:
+		Gfx.save_render_quality(str(settings.get("quality", "high")))
 
 
 func save_settings() -> void:

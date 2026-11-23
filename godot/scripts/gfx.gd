@@ -13,6 +13,7 @@ extends Node
 const ORDER := ["verylow", "low", "medium", "high"]
 const SmoothScale = preload("res://scripts/smooth_scale.gd")
 const Perf14 = preload("res://scripts/perf14_timers.gd")
+const RENDER_OVERRIDE := "user://render.cfg"
 const DEPTH_PREPASS := "rendering/driver/depth_prepass/enable"
 const NAMES := {"high": "Высокая", "medium": "Средняя", "low": "Низкая", "verylow": "Очень низкая"}
 const BASE_SCALE := {"verylow": 0.5, "low": 0.75, "medium": 1.0, "high": 1.0}
@@ -254,6 +255,17 @@ static func depth_prepass() -> bool:
 	return bool(ProjectSettings.get_setting_with_override(DEPTH_PREPASS))
 
 
+static func save_render_quality(quality: String) -> void:
+	# Godot прочитает это при следующем запуске, до сборки конвейеров.
+	var config := "[rendering]\n\ndriver/depth_prepass/enable=%s\n" % str(not is_low(quality)).to_lower()
+	if FileAccess.get_file_as_string(RENDER_OVERRIDE) == config:
+		return
+	var file := FileAccess.open(RENDER_OVERRIDE, FileAccess.WRITE)
+	if file:
+		file.store_string(config)
+		file.close()
+
+
 static func lower(q: String) -> String:
 	return ORDER[maxi(0, ORDER.find(q) - 1)]
 
@@ -283,7 +295,7 @@ static func apply(g) -> void:
 	# Если выключить проход на ходу, ранее собранные конвейеры теряют геометрию.
 	env.sdfgi_enabled = false
 	env.ssil_enabled = false
-	env.ssao_enabled = not low or tune
+	env.ssao_enabled = depth_prepass() and (not low or tune)
 	var reduce_ssao := perf14_ssao and not low and not tune
 	if tune != _ssao_cheap or reduce_ssao != _ssao_reduced:
 		var p := "rendering/environment/ssao/"
@@ -1396,6 +1408,11 @@ static func settings_block(h, v: VBoxContainer, more: VBoxContainer = null) -> v
 			settings_refresh(h))
 		q.add_child(b)
 	v.add_child(q)
+	var restart: Label = h._label("", 15, false, h.C_SOFT)
+	restart.name = "quality_restart"
+	restart.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	restart.hide()
+	v.add_child(restart)
 	var smooth := CheckBox.new()
 	smooth.name = "smooth"
 	smooth.text = "Плавность"
@@ -1474,6 +1491,12 @@ static func settings_refresh(h) -> void:
 		var b: Button = h.settings_panel.find_child("q_" + key, true, false)
 		if b:
 			b.add_theme_stylebox_override("normal", h._box_pill(12, 6, "g_btn_on" if quality == key else "g_btn"))
+	var restart := h.settings_panel.find_child("quality_restart", true, false) as Label
+	if restart:
+		var depth := depth_prepass()
+		restart.visible = depth == is_low(quality)
+		if restart.visible:
+			restart.text = "Ещё быстрее — после перезапуска игры" if depth else "Полное качество — после перезапуска игры"
 	var gk := GrassCarpet.range_key(h.game.settings, str(h.game.settings.get("quality", "high")))
 	for key: String in ["near", "far", "all", "off"]:
 		var gb: Button = h.settings_panel.find_child("grass_" + key, true, false)
