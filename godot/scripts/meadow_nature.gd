@@ -966,7 +966,8 @@ static func apply_group(grp: Dictionary) -> void:
 		if i == main:
 			if not sub.has("hi"):
 				sub["hi"] = mm.mesh
-			mm.mesh = _standin_mesh(base, sub) if low else sub["hi"]
+			var mesh: Mesh = _standin_mesh(base, sub) if low else sub["hi"]
+			mm.mesh = Parts.Detail.with_missing_lods(mesh) if low and sub.has("foliage_lod") else mesh
 		else:
 			(sub["mmi"] as MultiMeshInstance3D).visible = not low
 

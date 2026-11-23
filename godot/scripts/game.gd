@@ -41,6 +41,20 @@ var photo: PhotoMode                  # режим фото (P): интерфе�
 var weather: Weather                  # дождь (scripts/weather.gd)
 var seasons: Seasons                  # времена года: листва, трава, листопад (scripts/seasons.gd)
 var clouds: Clouds                    # тени облаков по городу (scripts/clouds.gd)
+# PERF14-e3: отдельные пробы. Включаются до загрузки города.
+static var perf14_land := false
+static var perf14_foliage := false
+static var perf14_parts := false
+static var perf14_baked_ground := false
+static var perf14_ground_specular := false
+static var perf14_share_meshes := true
+static var _perf14_land_shader: Shader
+static var _ground_shaders := {}
+const LandBake = preload("res://scripts/land_bake.gd")
+const ShadowDepth = preload("res://scripts/shadow_depth.gd")
+var land_bake: LandBake
+var shadow_depth: ShadowDepth
+
 var land_mat: ShaderMaterial
 var surf_img: Image
 var surf_tex: ImageTexture
@@ -339,6 +353,16 @@ func _ready() -> void:
 	if stage_draw:
 		parts.hide()
 	parts.tint_split = Parts.split_on           # одинаковые детали разных цветов — один MultiMesh (12.11, скорость)
+	parts.share_perf_meshes = perf14_share_meshes
+	if mode in ["play", "new", "demo"] and DisplayServer.get_name() != "headless":
+		parts.detail = Parts.detail_config
+		parts.foliage_lod = perf14_foliage
+		if perf14_parts and parts.detail == null:
+			parts.detail = Parts.Detail.new()
+			parts.detail.tile_m = 48.0
+			parts.detail.lods = true
+			parts.detail.shadows = 1
+			parts.detail.prepare_c2 = true
 	add_child(parts)
 	cover = Cover.new()
 	add_child(cover)
@@ -346,7 +370,9 @@ func _ready() -> void:
 	actors_root = Node3D.new()
 	add_child(actors_root)
 	land_mat = ShaderMaterial.new()
-	land_mat.shader = load("res://shaders/land.gdshader")
+	land_mat.shader = ground_shader(perf14_land, perf14_baked_ground, perf14_ground_specular)
+	if mode in ["play", "new", "demo"] and DisplayServer.get_name() != "headless" and RenderingServer.get_current_rendering_method() == "forward_plus":
+		shadow_depth = ShadowDepth.new()
 	Synty._index()
 	var tiles := {"tile_road": "Floor_Tiles_04", "tile_plaza_a": "Floor_Tiles_03",
 		"tile_plaza_b": "Floor_Tiles_05", "tile_plaza_c": "Floor_Tiles_01", "tile_plaza_d": "Floor_Tiles_02"}
@@ -655,6 +681,15 @@ func _ready() -> void:
 		Perf14.memory("portrait_released")
 	CityWarmup.release_sources()
 	Perf14.memory("sources_released")
+	if perf14_baked_ground and mode in ["play", "new", "demo"]:
+		var baker := prepare_ground_bake()
+		if baker != null:
+			await baker.prime()
+	if shadow_depth != null:
+		shadow_depth.warm_up()
+		await RenderingServer.frame_post_draw
+		shadow_depth.finish_warm_up()
+		RenderingServer.frame_pre_draw.connect(_update_shadow_depth)
 	ready_done = true
 	var camp := CampUI.of(hud)
 	if camp != null:
@@ -900,6 +935,49 @@ func _apply_quality() -> void:
 func _apply_quality_profiled() -> void:
 	Gfx.apply(self)
 	_applied_quality = str(settings.get("quality", "high"))
+	if shadow_depth != null:
+		# Без MSAA земля должна сохранить порядок отрисовки на совпадающих по глубине пикселях.
+		var priority := -1 if sun.directional_shadow_mode == DirectionalLight3D.SHADOW_ORTHOGONAL else 0
+		shadow_depth.set_priority(land_mat, priority)
+
+
+func prepare_ground_bake() -> LandBake:
+	if land_bake == null and RenderingServer.get_current_rendering_method() == "forward_plus" and DisplayServer.get_name() != "headless":
+		land_bake = LandBake.new()
+		land_bake.game = self
+		add_child(land_bake)
+	return land_bake
+
+
+static func ground_shader(distance_lod: bool, baked: bool, no_specular: bool) -> Shader:
+	if not baked and not no_specular:
+		return land_shader(distance_lod)
+	var id := Vector3i(int(distance_lod), int(baked), int(no_specular))
+	if not _ground_shaders.has(id):
+		var code := land_shader(distance_lod).code
+		if baked:
+			code = "#define PERF14_BAKE\n" + code
+		if no_specular:
+			code = code.replace("specular_schlick_ggx", "specular_disabled")
+		var shader := Shader.new()
+		shader.code = code
+		_ground_shaders[id] = shader
+	return _ground_shaders[id]
+
+
+static func land_shader(distance_lod: bool) -> Shader:
+	var base: Shader = load("res://shaders/land.gdshader")
+	if not distance_lod:
+		return base
+	if _perf14_land_shader == null:
+		_perf14_land_shader = Shader.new()
+		_perf14_land_shader.code = "#define PERF14_LAND\n" + base.code
+	return _perf14_land_shader
+
+
+func _update_shadow_depth() -> void:
+	# Солнце — единственный источник теней в мире города; свет Легиона в другом Viewport.
+	shadow_depth.update(get_viewport().get_camera_3d(), sun)
 
 
 # ---------- небо, солнце, свет, цвет ----------
@@ -1082,6 +1160,8 @@ func _water() -> void:
 	mi.position = Vector3(Land.SIZE / 2.0, Land.WATER_Y, Land.SIZE / 2.0)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+	if shadow_depth != null:
+		shadow_depth.add(mi, sm, 0.05)         # амплитуда обеих синусоид в vertex воды
 
 
 ## Арка на въезде на свою землю: большая дорога проходит под ней (чертёж — Entrance.gate_bp). Опоры и колонны
@@ -1204,19 +1284,24 @@ func _horizon() -> void:
 			var tone := clampf(0.5 + fz.get_noise_2d(x, z) * 0.9, 0.0, 1.0)
 			cols[k] = g0.lerp(g3, tone).srgb_to_linear()
 			uvs[k] = Vector2(8.0, y)
+	var i0 := far_xs.find(0.0)
+	var i1 := far_xs.find(S)
+	var j0 := far_zs.find(0.0)
+	var j1 := far_zs.find(S)
+	if shadow_depth != null:
+		await _horizon_tiles(verts, norms, cols, uvs, Rect2i(i0, j0, i1 - i0, j1 - j0))
 	var ix := PackedInt32Array()
-	for j in nz - 1:
-		if Time.get_ticks_usec() >= deadline:
-			await get_tree().process_frame
-			deadline = Time.get_ticks_usec() + 5000
-		for i in nx - 1:
-			var cx := (far_xs[i] + far_xs[i + 1]) * 0.5
-			var cz := (far_zs[j] + far_zs[j + 1]) * 0.5
-			if cx > 0.0 and cz > 0.0 and cx < S and cz < S:
-				continue                      # внутри карты — там своя земля
-			var a := j * nx + i
-			# обход как у кусков земли (Land.chunk_mesh): (00, 11, 01) и (00, 10, 11) — диагональ 00–11
-			ix.append_array([a, a + nx + 1, a + nx, a, a + 1, a + nx + 1])
+	if Time.get_ticks_usec() >= deadline:
+		await get_tree().process_frame
+		deadline = Time.get_ticks_usec() + 5000
+	if shadow_depth == null:
+		ix = _horizon_indices(Rect2i(0, 0, nx - 1, nz - 1), Rect2i(i0, j0, i1 - i0, j1 - j0))
+	else:
+		# Юбка остаётся отдельной сеткой с прежними вершинами и треугольниками.
+		verts = PackedVector3Array()
+		norms = PackedVector3Array()
+		cols = PackedColorArray()
+		uvs = PackedVector2Array()
 	# юбка по краю карты: от края пейзажа вниз на 1 м лицом внутрь (если земля у края чуть ниже — не видно щели)
 	var skirt := func(a: Vector2, b: Vector2, ya: float, yb: float, n: Vector3) -> void:
 		var base := verts.size()
@@ -1227,10 +1312,6 @@ func _horizon() -> void:
 		var u := Vector2(1.0, maxf(ya, yb))
 		uvs.append_array([u, u, u, u])
 		ix.append_array([base, base + 2, base + 1, base, base + 3, base + 2])
-	var j0 := far_zs.find(0.0)
-	var j1 := far_zs.find(S)
-	var i0 := far_xs.find(0.0)
-	var i1 := far_xs.find(S)
 	for i in range(i0, i1):
 		var xa := far_xs[i]
 		var xb := far_xs[i + 1]
@@ -1241,20 +1322,7 @@ func _horizon() -> void:
 		var zb := far_zs[j + 1]
 		skirt.call(Vector2(0.0, zb), Vector2(0.0, za), far_hy[(j + 1) * nx + i0], far_hy[j * nx + i0], Vector3(1, 0, 0))
 		skirt.call(Vector2(S, za), Vector2(S, zb), far_hy[j * nx + i1], far_hy[(j + 1) * nx + i1], Vector3(-1, 0, 0))
-	var arr := []
-	arr.resize(Mesh.ARRAY_MAX)
-	arr[Mesh.ARRAY_VERTEX] = verts
-	arr[Mesh.ARRAY_NORMAL] = norms
-	arr[Mesh.ARRAY_COLOR] = cols
-	arr[Mesh.ARRAY_TEX_UV] = uvs
-	arr[Mesh.ARRAY_INDEX] = ix
-	var am := ArrayMesh.new()
-	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	var mi := MeshInstance3D.new()
-	mi.mesh = am
-	mi.material_override = land_mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mi)
+	_horizon_mesh(verts, norms, cols, uvs, ix)
 	if Streams.far_on():
 		# вода реки за краем карты: полосы того же вида, что вода прудов и моря (shaders/water.gdshader)
 		var rb := MeshInstance3D.new()
@@ -1265,6 +1333,8 @@ func _horizon() -> void:
 		rb.material_override = rm
 		rb.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(rb)
+		if shadow_depth != null:
+			shadow_depth.add(rb, rm, 0.05)
 	await _far_nature()
 	# дальние леса: деревья пятнами (без теней — далеко)
 	var rng := RandomNumberGenerator.new()
@@ -1293,6 +1363,75 @@ func _horizon() -> void:
 			batches[key] = {"name": nm, "list": [], "shadow": false, "range": 0.0}
 		batches[key]["list"].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.45, 0.8)), Vector3(p.x, y - 0.3, p.y)))
 	far_forest = await _batch_mm(batches)
+	if shadow_depth != null:
+		for mmi: MultiMeshInstance3D in far_forest:
+			var mesh := mmi.multimesh.mesh
+			if mesh.get_surface_count() == 1 and mesh.surface_get_material(0) is ShaderMaterial:
+				shadow_depth.add(mmi, mesh.surface_get_material(0) as ShaderMaterial)
+
+
+func _horizon_indices(cells: Rect2i, map_cells: Rect2i) -> PackedInt32Array:
+	var stride := cells.size.x + 1
+	var indices := PackedInt32Array()
+	for j in cells.size.y:
+		for i in cells.size.x:
+			if map_cells.has_point(cells.position + Vector2i(i, j)):
+				continue
+			var a := j * stride + i
+			indices.append_array([a, a + stride + 1, a + stride, a, a + 1, a + stride + 1])
+	return indices
+
+
+func _horizon_tiles(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray,
+		uvs: PackedVector2Array, map_cells: Rect2i) -> void:
+	var nx := far_xs.size()
+	var nz := far_zs.size()
+	var z := 0
+	var deadline := Time.get_ticks_usec() + 5000
+	while z < nz - 1:
+		var end_z := mini(nz - 1, far_zs.bsearch(far_zs[z] + 256.0))
+		var x := 0
+		while x < nx - 1:
+			var end_x := mini(nx - 1, far_xs.bsearch(far_xs[x] + 256.0))
+			var indices := _horizon_indices(Rect2i(x, z, end_x - x, end_z - z), map_cells)
+			if not indices.is_empty():
+				var v := PackedVector3Array()
+				var n := PackedVector3Array()
+				var c := PackedColorArray()
+				var u := PackedVector2Array()
+				for j in range(z, end_z + 1):
+					var first := j * nx + x
+					var end := j * nx + end_x + 1
+					v.append_array(verts.slice(first, end))
+					n.append_array(normals.slice(first, end))
+					c.append_array(colors.slice(first, end))
+					u.append_array(uvs.slice(first, end))
+				_horizon_mesh(v, n, c, u, indices)
+				if Time.get_ticks_usec() >= deadline:
+					await get_tree().process_frame
+					deadline = Time.get_ticks_usec() + 5000
+			x = end_x
+		z = end_z
+
+
+func _horizon_mesh(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray,
+		uvs: PackedVector2Array, indices: PackedInt32Array) -> void:
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = land_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	if shadow_depth != null:
+		shadow_depth.add(mi, land_mat)
 
 
 ## Природа за краем карты вблизи (до 110 м): те же рощи (тот же шум лесов, что в _nature), одиночные деревья,
@@ -1360,7 +1499,9 @@ func _far_nature() -> void:
 			continue
 		var y := far_y(x, z) - (0.1 if name.contains("Rock") else 0.0)
 		var small := name.contains("Grass") or name.contains("Flowers")
-		var key := "%s|%d,%d" % [name, floori(x / 160.0), floori(z / 160.0)]
+		# Мелочь сохраняет штатную дальность исчезновения, привязанную к куску.
+		var tile_m := 48.0 if perf14_foliage and not small and Parts.is_foliage(name) else 160.0
+		var key := "%s|%d,%d" % [name, floori(x / tile_m), floori(z / tile_m)]
 		if not batches.has(key):
 			batches[key] = {"name": name, "list": [], "shadow": not small, "range": 150.0 if small else 0.0}
 		batches[key]["list"].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(x, y, z)))
@@ -1378,21 +1519,24 @@ func _batch_mm(batches: Dictionary) -> Array:
 			deadline = Time.get_ticks_usec() + 5000
 		var bt: Dictionary = batches[key]
 		var nm: String = bt["name"]
+		var use_foliage_lod := perf14_foliage and Parts.is_foliage(nm)
 		if not srcs.has(nm):
 			var tinted := nm.begins_with("SM_Env_Tree") or nm.begins_with("SM_Env_Bush")
 			var src := Synty.make(nm, {"tint": Synty.GREEN} if tinted else {})
 			var subs := []
 			for smi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-				var mesh := smi.mesh.duplicate() as Mesh
-				for si in mesh.get_surface_count():
-					var sm := smi.get_surface_override_material(si)
-					if sm:
-						mesh.surface_set_material(si, sm)
+				var original := Parts.Detail.with_missing_lods(smi.mesh) if use_foliage_lod else smi.mesh
+				var overrides: Array[Material] = []
+				for si in original.get_surface_count():
+					overrides.append(smi.get_surface_override_material(si))
+				var mesh := Parts.mesh_with_materials(parts._shared_meshes, original, overrides, false, parts.share_perf_meshes)
 				subs.append([mesh, Citizen._rel(smi, src)])
 			src.free()
 			srcs[nm] = subs
 		var list: Array = bt["list"]
-		for sub: Array in srcs[nm]:
+		var source_subs: Array = srcs[nm]
+		for part in source_subs.size():
+			var sub: Array = source_subs[part]
 			var mm := MultiMesh.new()
 			mm.transform_format = MultiMesh.TRANSFORM_3D
 			mm.mesh = sub[0]
@@ -1402,6 +1546,10 @@ func _batch_mm(batches: Dictionary) -> Array:
 				mm.set_instance_transform(k, (list[k] as Transform3D) * local)
 			var mmi := MultiMeshInstance3D.new()
 			mmi.multimesh = mm
+			mmi.set_meta("batch_model", nm)
+			mmi.set_meta("batch_part", part)
+			if use_foliage_lod:
+				mmi.lod_bias = Parts.FOLIAGE_LOD_BIAS
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if bt["shadow"] else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			if float(bt["range"]) > 0.0:
 				mmi.visibility_range_end = float(bt["range"])
@@ -1835,6 +1983,11 @@ func _build_chunk(ch: Vector2i) -> void:
 		add_child(mi)
 		chunk_nodes[ch] = mi
 	mi.mesh = land.smooth_mesh(ch.x, ch.y) if Land.smooth_on else land.chunk_mesh(ch.x, ch.y)   # 14.11: плавная земля
+	if shadow_depth != null:
+		shadow_depth.add(mi, land_mat)
+	if land_bake != null:
+		var span := Land.CH * Land.CELL
+		land_bake.invalidate(Rect2(Vector2(ch) * span, Vector2.ONE * span))
 	if grass != null:
 		grass.invalidate_chunk(ch)            # трава-ковёр на этом куске — заново (постройка, дорога, ручей)
 
@@ -1873,6 +2026,9 @@ func _deco_tiles() -> void:
 ## куска за кадр; куски, где поменялось одно покрытие, и сетка ходьбы — когда мазок кончен
 func _rebuild_land(limit := 6, busy := false) -> void:
 	var stroke_on := painting and is_road_tool(tool)
+	if land_bake != null:
+		land_bake.invalidate_mask(land.mask_lo, land.mask_hi)
+		land_bake.invalidate_mask(land.deco_lo, land.deco_hi)
 	if surf_img and surf_tex and land.update_surface_rect(surf_img):
 		var upload := Perf14.begin()
 		surf_img.generate_mipmaps()
@@ -2910,6 +3066,8 @@ func _plot_hover(p: Vector2i) -> void:
 
 
 func _update_plot_signs() -> void:
+	if land_bake != null:
+		land_bake.invalidate(Rect2(Vector2.ZERO, Vector2.ONE * Land.SIZE))
 	MeadowNature.plots_tex(self)              # трава своей и чужой земли — плавной границей (13.11)
 	if hud == null:
 		return

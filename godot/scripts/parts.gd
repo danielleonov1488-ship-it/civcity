@@ -18,6 +18,20 @@ const WHEAT_BATCH := 24.0
 ## в городе владельца ~в 3,5 раза меньше (1955 → 531) — во столько же меньше вызовов отрисовки. Только у главного
 ## пула (у подсветки cover.gd — нет)
 var tint_split := false
+const Detail = preload("res://scripts/parts_detail.gd")
+static var detail_config: Detail
+var detail: Detail
+var foliage_lod := false
+var share_perf_meshes := true
+var _shared_meshes := {}
+const FOLIAGE_LOD_BIAS := 0.65
+static var profile_place := false
+var place_usec := 0
+var max_place_usec := 0
+var max_place_frame_usec := 0
+var _place_frame := -1
+var _place_frame_usec := 0
+
 static var split_on := true                # для сравнений «было/стало» (test_perf split=0)
 var _col := Color.WHITE                     # цвет экземпляра для последней группы из _group
 static var _tint_mats := {}
@@ -80,21 +94,81 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 	else:
 		var src := Synty.make(name, remap)
 		for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-			var mesh := mi.mesh
-			if not name.begins_with("K:") or not remap.is_empty() or tile.x >= 0:
-				var copy_started := Perf14.begin()
-				mesh = mesh.duplicate() as Mesh
-				Perf14.end(Perf14.MESH_COPY, copy_started)
-				for s in mesh.get_surface_count():
-					var m := mi.get_surface_override_material(s)
-					if m:
-						mesh.surface_set_material(s, m)
+			var copy_started := Perf14.begin()
+			var mesh := _group_mesh(mi, tile, name)
+			Perf14.end(Perf14.MESH_COPY, copy_started)
 			var sub := _sub(mesh, Citizen._rel(mi, src))
 			_small(name, sub, tile)
+			_set_foliage_lod(sub, tile, name)
 			g["subs"].append(sub)
+			if detail != null and tile.x < 0:
+				detail.add_shadow(self, g, sub, name, mi.mesh)
 		src.free()
 	groups[key] = g
 	return g
+
+
+static func is_foliage(name: String) -> bool:
+	var model := name.trim_prefix("M:").trim_prefix("SM_Env_")
+	if model == name.trim_prefix("M:"):
+		return false
+	for prefix: String in ["Tree", "Bush", "Grass", "Flowers", "Wildflowers",
+			"Garden_Plants", "Ground_Cover", "Lillies", "Sunflower", "CropField", "Rapeseed"]:
+		if model.begins_with(prefix):
+			return true
+	return false
+
+
+func _lod_mesh(source: Mesh, tile: Vector2i, name: String) -> Mesh:
+	if foliage_lod and tile.x >= 0 and is_foliage(name):
+		return Detail.with_missing_lods(source)
+	return detail.lod_mesh(source, tile, name) if detail != null else source
+
+
+func _group_mesh(mi: MeshInstance3D, tile: Vector2i, name: String) -> Mesh:
+	var source := _lod_mesh(mi.mesh, tile, name)
+	var overrides: Array[Material] = []
+	for s in source.get_surface_count():
+		overrides.append(mi.get_surface_override_material(s))
+	return mesh_with_materials(_shared_meshes, source, overrides,
+		tile.x >= 0 and _fading_detail(name), share_perf_meshes)
+
+
+static func mesh_with_materials(cache: Dictionary, source: Mesh, overrides: Array[Material], faded: bool, share: bool) -> Mesh:
+	var key := PackedInt64Array()
+	if share:
+		key.append(source.get_instance_id())
+		key.append(int(faded))
+		var copy_needed := faded
+		for s in overrides.size():
+			var m := overrides[s]
+			key.append(m.get_instance_id() if m != null else 0)
+			copy_needed = copy_needed or (m != null and m != source.surface_get_material(s))
+		if not copy_needed:
+			return source
+		if cache.has(key):
+			return cache[key]
+	var mesh := source.duplicate() as Mesh
+	for s in overrides.size():
+		if overrides[s] != null:
+			mesh.surface_set_material(s, overrides[s])
+	if share:
+		if faded:
+			_far_fade(mesh)
+			mesh.set_meta("parts_faded", true)
+		cache[key] = mesh
+	return mesh
+
+
+static func _fading_detail(name: String) -> bool:
+	return name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") \
+		or name.contains("Pebbles") or name.contains("Garden_Plants") or Meadow.small(name)
+
+
+func _set_foliage_lod(sub: Dictionary, tile: Vector2i, name: String) -> void:
+	if foliage_lod and tile.x >= 0 and is_foliage(name):
+		sub["foliage_lod"] = true
+		(sub["mmi"] as MultiMeshInstance3D).lod_bias = FOLIAGE_LOD_BIAS
 
 
 ## Группа без оттенка: модель с remap без цвета, у подкрашиваемых поверхностей — белый материал «умножить на цвет
@@ -107,25 +181,25 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 	var subs := []
 	var ok := true
 	for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-		var copy_started := Perf14.begin()
-		var mesh := mi.mesh.duplicate() as Mesh
-		Perf14.end(Perf14.MESH_COPY, copy_started)
-		for s in mesh.get_surface_count():
+		var source := _lod_mesh(mi.mesh, tile, name)
+		var overrides: Array[Material] = []
+		for s in source.get_surface_count():
 			var m := mi.get_surface_override_material(s)
-			if m == null:
-				continue
-			var hit: bool = sp[1] == "*" or (m.has_meta("alb") and marks.has(str(m.get_meta("alb"))))
-			if hit:
-				if not m is StandardMaterial3D or (mesh is ArrayMesh and (mesh as ArrayMesh).surface_get_format(s) & Mesh.ARRAY_FORMAT_COLOR):
-					ok = false
-					break
-				# «tint» ставит и прозрачность (как Synty.material: albedo_color = tint), «tints» — нет
-				var a: float = (sp[0] as Color).a if sp[1] == "*" else (m as StandardMaterial3D).albedo_color.a
-				m = _tint_mat(m as StandardMaterial3D, a)
-			mesh.surface_set_material(s, m)
+			if m != null:
+				var hit: bool = sp[1] == "*" or (m.has_meta("alb") and marks.has(str(m.get_meta("alb"))))
+				if hit:
+					if not m is StandardMaterial3D or (source is ArrayMesh and (source as ArrayMesh).surface_get_format(s) & Mesh.ARRAY_FORMAT_COLOR):
+						ok = false
+						break
+					# «tint» меняет прозрачность, «tints» — нет.
+					var a: float = (sp[0] as Color).a if sp[1] == "*" else (m as StandardMaterial3D).albedo_color.a
+					m = _tint_mat(m as StandardMaterial3D, a)
+			overrides.append(m)
 		if not ok:
 			break
-		subs.append([mesh, Citizen._rel(mi, src)])
+		var mesh := mesh_with_materials(_shared_meshes, source, overrides,
+			tile.x >= 0 and _fading_detail(name), share_perf_meshes)
+		subs.append([mesh, Citizen._rel(mi, src), mi.mesh])
 	src.free()
 	if not ok:
 		return {}
@@ -133,7 +207,10 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 	for e: Array in subs:
 		var sub := _sub(e[0], e[1], true)
 		_small(name, sub, tile)
+		_set_foliage_lod(sub, tile, name)
 		g["subs"].append(sub)
+		if detail != null and tile.x < 0:
+			detail.add_shadow(self, g, sub, name, e[2])
 	groups[tkey] = g
 	return g
 
@@ -174,7 +251,7 @@ static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
 		var sz := mesh.get_aabb().size
 		if maxf(sz.x, maxf(sz.y, sz.z)) < SMALL_SHADOW:
 			(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	if name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") or name.contains("Pebbles") or name.contains("Garden_Plants") or Meadow.small(name):
+	if _fading_detail(name):
 		var mmi: MultiMeshInstance3D = sub["mmi"]
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if tile.x >= 0:
@@ -182,7 +259,8 @@ static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			_small_mmis.append(mmi)
 			_apply_range(mmi)
-			_far_fade(mesh)
+			if not mesh.has_meta("parts_faded"):
+				_far_fade(mesh)
 	elif Meadow.field(name):
 		(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # поля набора Meadow — без тени
 
@@ -572,34 +650,50 @@ func prepare_groups(bp: Bp, xf: Transform3D, subst: Dictionary, alive: Callable)
 ## Поставить чертёж; xf — где стоит постройка. Возвращает ручку [[группа, место], …]
 func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 	var handles := []
+	var started := Time.get_ticks_usec() if profile_place else 0
 	for p in bp.parts:
 		var name: String = subst.get(p[0], p[0])
 		var t: Transform3D = xf * (p[1] as Transform3D)
 		var tile := _batch_tile(name, t.origin)
-		var started := Perf14.begin()
-		var g := _group(name, p[2], tile)
-		Perf14.end(Perf14.PARTS, started)
-		var col := _col
-		var slot := _alloc(g)
-		var tinted := g.has("tint")
-		for sub in g["subs"]:
-			(sub["mm"] as MultiMesh).set_instance_transform(slot, t * (sub["local"] as Transform3D))
-			if tinted:
-				(sub["mm"] as MultiMesh).set_instance_color(slot, col)
-		handles.append([g, slot])
+		handles.append(_place_part(name, t, p[2], tile))
+	if started > 0:
+		var usec := Time.get_ticks_usec() - started
+		place_usec += usec
+		max_place_usec = maxi(max_place_usec, usec)
+		var frame := Engine.get_process_frames()
+		if frame != _place_frame:
+			_place_frame = frame
+			_place_frame_usec = 0
+		_place_frame_usec += usec
+		max_place_frame_usec = maxi(max_place_frame_usec, _place_frame_usec)
 	return handles
+
+
+func _place_part(name: String, xf: Transform3D, remap: Dictionary, tile: Vector2i) -> Array:
+	var group_started := Perf14.begin()
+	var g := _group(name, remap, tile)
+	Perf14.end(Perf14.PARTS, group_started)
+	if detail != null and tile.x < 0 and detail.uses_area(name, g["key"]):
+		g = detail.area_group(self, groups, g, xf.origin)
+	var slot := _alloc(g)
+	var tinted := g.has("tint")
+	var area := g.has("area")
+	var use_range := area and detail.tiny and Detail.prop(name)
+	for sub: Dictionary in g["subs"]:
+		var mm: MultiMesh = sub["mm"]
+		var pose := xf * (sub["local"] as Transform3D)
+		mm.set_instance_transform(slot, pose)
+		if tinted and mm.use_colors:
+			mm.set_instance_color(slot, _col)
+		if area or sub.has("casts"):
+			detail.bounds(sub, pose, area, use_range)
+	return [g, slot]
 
 
 ## Одна деталь; tiled — природа: кусками по 48 м, чтобы невидимые куски не рисовались
 func place_one(name: String, xf: Transform3D, remap := {}, tiled := false) -> Array:
-	var g := _group(name, remap, Vector2i(int(xf.origin.x / 48.0), int(xf.origin.z / 48.0)) if tiled else Vector2i(-1, -1))
-	var col := _col
-	var slot := _alloc(g)
-	for sub in g["subs"]:
-		(sub["mm"] as MultiMesh).set_instance_transform(slot, xf * (sub["local"] as Transform3D))
-		if g.has("tint"):
-			(sub["mm"] as MultiMesh).set_instance_color(slot, col)
-	return [[g, slot]]
+	var tile := Vector2i(int(xf.origin.x / 48.0), int(xf.origin.z / 48.0)) if tiled else Vector2i(-1, -1)
+	return [_place_part(name, xf, remap, tile)]
 
 
 ## Спрятать детали на время (ролик: дерево заслонило героя): возвращает [[MultiMesh, место, преобразование], …] для restore
@@ -640,7 +734,15 @@ func remove(handles: Array) -> void:
 		var slot: int = h[1]
 		for sub in g["subs"]:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, zero)
-		(g["free"] as Array).append(slot)
+		var free: Array = g["free"]
+		free.append(slot)
+		if g.has("area") and free.size() == int(g["used"]):
+			free.clear()
+			g["used"] = 0
+			for sub: Dictionary in g["subs"]:
+				(sub["mm"] as MultiMesh).visible_instance_count = 0
+				(sub["mmi"] as MultiMeshInstance3D).custom_aabb = AABB()
+				sub.erase("diameter")
 
 
 ## Спрятать (нулевой масштаб) или вернуть детали ручки на место xf — деревья под призраком постройки (game.gd, 3.7)

@@ -47,6 +47,8 @@ class Pool extends Parts:
 			return super._group(name, remap, tile)
 		var g := {"subs": [], "free": [], "used": 0, "cap": 0, "key": key}
 		for sub in s["subs"]:
+			if (sub["mmi"] as MultiMeshInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY:
+				continue
 			g["subs"].append(_sub((sub["mm"] as MultiMesh).mesh, sub["local"]))
 		groups[key] = g
 		return g

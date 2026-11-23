@@ -36,6 +36,10 @@ static var earlier_verylow_lod := true     # PERF13: дальние модели
 static var weak_tuning := false           # опытные настройки test_smooth14: в замерах дороже прежних
 static var _ssao_cheap := false
 
+static var perf14_ssao := false
+static var perf14_shadows := false
+static var perf14_soft_shadows := false
+static var _ssao_reduced := false
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
 static var _grand_low := false         # большие постройки этапа 5 показаны с лёгкими деталями («Низкая», CatGrand.LOW)
@@ -275,16 +279,19 @@ static func apply(g) -> void:
 	env.sdfgi_enabled = false
 	env.ssil_enabled = false
 	env.ssao_enabled = not low or tune
-	if tune != _ssao_cheap:
+	var reduce_ssao := perf14_ssao and not low and not tune
+	if tune != _ssao_cheap or reduce_ssao != _ssao_reduced:
 		var p := "rendering/environment/ssao/"
+		var quality := int(ProjectSettings.get_setting(p + "quality"))
 		RenderingServer.environment_set_ssao_quality(
-			RenderingServer.ENV_SSAO_QUALITY_LOW if tune else int(ProjectSettings.get_setting(p + "quality")),
+			RenderingServer.ENV_SSAO_QUALITY_LOW if tune else (maxi(0, quality - 1) if reduce_ssao else quality),
 			true if tune else bool(ProjectSettings.get_setting(p + "half_size")),
 			float(ProjectSettings.get_setting(p + "adaptive_target")),
 			1 if tune else int(ProjectSettings.get_setting(p + "blur_passes")),
 			32.0 if tune else float(ProjectSettings.get_setting(p + "fadeout_from")),
 			96.0 if tune else float(ProjectSettings.get_setting(p + "fadeout_to")))
 		_ssao_cheap = tune
+		_ssao_reduced = reduce_ssao
 	env.glow_enabled = not low
 	var sun: DirectionalLight3D = g.sun
 	if sun:
@@ -299,11 +306,14 @@ static func apply(g) -> void:
 	# атлас теней солнца и его фильтр — общие настройки отрисовки (project.godot: 8192, мягкие высокие): «Высокая» — 4096 и
 	# средняя мягкость, «Средняя» и ниже — 4096 и низкая; прежняя «Средняя» (переключатель medium_light выключен) — как было
 	var full := q == "medium" and not ml
-	var sl := 3 if tune else (2 if full else (0 if q == "high" else 1))
+	var smaller_atlas := perf14_shadows and q != "verylow"
+	var base_sl := 2 if full else (0 if q == "high" else 1)
+	var sl := (base_sl + 20 if tune else base_sl + (3 if smaller_atlas else 0)) + (6 if perf14_soft_shadows and q == "high" else 0)
 	if sl != _sun_low:
-		RenderingServer.directional_shadow_atlas_set_size(2048 if tune else (8192 if full else 4096), true)
+		var atlas := 2048 if tune else ((4096 if full else 2048) if smaller_atlas else (8192 if full else 4096))
+		RenderingServer.directional_shadow_atlas_set_size(atlas, true)
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH if full else
-			(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if q == "high" else RenderingServer.SHADOW_QUALITY_SOFT_LOW))
+			(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if q == "high" and not perf14_soft_shadows else RenderingServer.SHADOW_QUALITY_SOFT_LOW))
 		_sun_low = sl
 	var vp: Viewport = g.get_viewport()
 	if vp:

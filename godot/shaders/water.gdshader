@@ -1,6 +1,10 @@
 // Море: бирюза на мели и синева в глубине, прозрачное у берега, пена у кромки, лёгкая рябь и блики.
 shader_type spatial;
+#ifdef CIVCITY_NO_SHADOWS
+render_mode cull_disabled, specular_schlick_ggx, depth_draw_always, shadows_disabled;
+#else
 render_mode cull_disabled, specular_schlick_ggx, depth_draw_always;
+#endif
 
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
 uniform vec3 shallow : source_color = vec3(0.30, 0.52, 0.46);
