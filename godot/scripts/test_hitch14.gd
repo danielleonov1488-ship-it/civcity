@@ -58,6 +58,8 @@ func _run() -> void:
 			if not booted:
 				_fail("не открыт город " + scenario)
 				continue
+			if args.has("startup_only"):
+				continue
 			game.hud.set_speed(0.0)
 			if args.has("free_only"):
 				game._set_hour(9.0)
@@ -280,7 +282,13 @@ func _colosseum_normal() -> void:
 	if not game.visuals.has(id) or not game.spectacle.venues.has(id):
 		_fail("Колизей: после стройки нет трибун")
 	_mark("снос тестового Колизея")
-	game.city.remove(b, false)
+	game.demolish_building(b, false)
+	while game._placement_running:
+		await frames(1)
+	if game.city.buildings.has(id) or game.visuals.has(id) or game.spectacle.venues.has(id):
+		_fail("Колизей остался после сноса")
+	if args.has("focus"):
+		_verify_placement("снос colosseum")
 	game._clear_preview_models()
 	await frames(8)
 

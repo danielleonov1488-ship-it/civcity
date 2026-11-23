@@ -1516,6 +1516,12 @@ func surface_y(x: float, z: float) -> float:
 ## Плавная сетка куска (ci, cj): узлы через RS клеток. UV.x = 0 (вид клетки — по маске покрытий в шейдере),
 ## UV.y — высота; UV2.x — доля пашни, UV2.y = 2 под мостовой; цвет — оттенок клетки (как у chunk_mesh)
 func smooth_mesh(ci: int, cj: int) -> ArrayMesh:
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, smooth_arrays(ci, cj))
+	return mesh
+
+
+func smooth_arrays(ci: int, cj: int) -> Array:
 	var Q := CH / RS                          # узлов-промежутков в куске
 	var W := Q + 1
 	var vi0 := ci * Q
@@ -1590,9 +1596,7 @@ func smooth_mesh(ci: int, cj: int) -> ArrayMesh:
 	arr[Mesh.ARRAY_TEX_UV] = uv
 	arr[Mesh.ARRAY_TEX_UV2] = uv2
 	arr[Mesh.ARRAY_INDEX] = ix
-	var m := ArrayMesh.new()
-	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	return m
+	return arr
 
 
 ## Верх моста повторяет высоту, текстуру и цвет прежней дороги.

@@ -63,3 +63,5 @@ roblox/build/
 godot/assets/fort/*.glb
 godot/assets/fort/fort_manifest.json
 godot/assets/fort/*.png
+# значки построек, нарисованные заранее (deploy/build_game.sh, шаг 0) — снимки моделей Synty, не в git
+godot/icons_prebuilt/

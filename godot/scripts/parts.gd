@@ -24,6 +24,7 @@ var detail: Detail
 var foliage_lod := false
 var share_perf_meshes := true
 var _shared_meshes := {}
+var _tiled_sources := {}
 const FOLIAGE_LOD_BIAS := 0.65
 static var profile_place := false
 var place_usec := 0
@@ -92,18 +93,25 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 			(ssub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # нутро тени не бросает
 		g["subs"].append(ssub)
 	else:
-		var src := Synty.make(name, remap)
-		for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-			var copy_started := Perf14.begin()
-			var mesh := _group_mesh(mi, tile, name)
-			Perf14.end(Perf14.MESH_COPY, copy_started)
-			var sub := _sub(mesh, Citizen._rel(mi, src))
+		var source_key := key.trim_suffix(ts) if tile.x >= 0 and share_perf_meshes else ""
+		var sources: Array = _tiled_sources.get(source_key, [])
+		if not _tiled_sources.has(source_key):
+			var src := Synty.make(name, remap)
+			for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
+				var copy_started := Perf14.begin()
+				var mesh := _group_mesh(mi, tile, name)
+				Perf14.end(Perf14.MESH_COPY, copy_started)
+				sources.append([mesh, Citizen._rel(mi, src), mi.mesh])
+			src.free()
+			if source_key != "":
+				_tiled_sources[source_key] = sources
+		for entry: Array in sources:
+			var sub := _sub(entry[0], entry[1])
 			_small(name, sub, tile)
 			_set_foliage_lod(sub, tile, name)
 			g["subs"].append(sub)
 			if detail != null and tile.x < 0:
-				detail.add_shadow(self, g, sub, name, mi.mesh)
-		src.free()
+				detail.add_shadow(self, g, sub, name, entry[2])
 	groups[key] = g
 	return g
 
@@ -673,6 +681,8 @@ func _place_part(name: String, xf: Transform3D, remap: Dictionary, tile: Vector2
 	var group_started := Perf14.begin()
 	var g := _group(name, remap, tile)
 	Perf14.end(Perf14.PARTS, group_started)
+	if group_started > 0 and Time.get_ticks_usec() - group_started >= 33000:
+		Perf14.detail("mesh_" + name, group_started)
 	if detail != null and tile.x < 0 and detail.uses_area(name, g["key"]):
 		g = detail.area_group(self, groups, g, xf.origin)
 	var slot := _alloc(g)

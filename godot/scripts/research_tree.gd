@@ -208,17 +208,26 @@ func refresh() -> void:
 		_update_picture(_popup_picture, Defs.research(_hovered))
 
 
-func rebuild(auto_scroll := false) -> void:
+## Свиток готовится порциями, пока видна заставка.
+func prepare() -> void:
+	await rebuild(false, get_tree())
+
+
+func rebuild(auto_scroll := false, tree: SceneTree = null) -> void:
 	if not _built:
-		_build()
+		await _build(tree)
 	_state = state_key()
 	_first = ""
+	var deadline := Time.get_ticks_usec() + 3500
 	for r: Dictionary in Defs.RESEARCH:
 		var id := String(r["id"])
 		var card: Button = cards[id]
 		_update_card(card, r)
 		if _first.is_empty() and card.visible and not card.disabled:
 			_first = id
+		if tree != null and Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			deadline = Time.get_ticks_usec() + 3500
 	if pending != "" and hud.game.city.can_research(pending) != "":
 		cancel_confirm()
 	_layout_sections()
@@ -228,13 +237,17 @@ func rebuild(auto_scroll := false) -> void:
 		focus_rank(hud.game.city.level)
 
 
-func _build() -> void:
+func _build(tree: SceneTree = null) -> void:
+	var deadline := Time.get_ticks_usec() + 3500
 	var shader := Shader.new()
 	shader.code = "shader_type canvas_item;\nvoid fragment() {\n vec4 c = COLOR;\n float g = dot(c.rgb, vec3(0.30, 0.59, 0.11));\n COLOR = vec4(mix(c.rgb, vec3(g), 0.88), c.a);\n}\n"
 	_muted = ShaderMaterial.new()
 	_muted.shader = shader
 	for tier in Defs.LEVELS.size():
 		_build_section(tier)
+		if tree != null and Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			deadline = Time.get_ticks_usec() + 3500
 	for r: Dictionary in Defs.RESEARCH:
 		var id := String(r["id"])
 		var tier := int(r["lvl"])
@@ -246,6 +259,9 @@ func _build() -> void:
 		var parents := Defs.research_prerequisites(r)
 		for previous: String in parents:
 			_build_link(id, previous, tier, id + "_" + previous if parents.size() > 1 else id)
+		if tree != null and Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			deadline = Time.get_ticks_usec() + 3500
 	_empty = hud._label("Пока нет доступных исследований", 16, true, CityStyle.INK)
 	_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	add_child(_empty)
@@ -496,19 +512,22 @@ func building_ids(id: String) -> Array[String]:
 	if c.decor_v != _building_rules:
 		_buildings.clear()
 		_building_rules = c.decor_v
-	if _buildings.has(id):
-		return _buildings[id]
+		for r: Dictionary in Defs.RESEARCH:
+			var rid := String(r["id"])
+			var items: Array[String] = []
+			if bool(r.get("initial", false)) and Defs.B.has(rid):
+				items.append(rid)
+			_buildings[rid] = items
+		for type: String in Defs.B:
+			if c.city_buildable(type) and Defs.B[type].get("research_list", true):
+				var rid := c.unlock_id(type)
+				if _buildings.has(rid):
+					_buildings[rid].append(type)
+		for rid: String in UPGRADE_PICTURES:
+			if _buildings.has(rid) and _buildings[rid].is_empty() and UPGRADE_PICTURES[rid] != "":
+				_buildings[rid].append(UPGRADE_PICTURES[rid])
 	var out: Array[String] = []
-	if bool(Defs.research(id).get("initial", false)) and Defs.B.has(id):
-		out.append(id)
-	for type: String in Defs.B:
-		if c.unlock_id(type) == id and c.city_buildable(type) and Defs.B[type].get("research_list", true):
-			out.append(type)
-	var upgrade_picture := String(UPGRADE_PICTURES.get(id, ""))
-	if out.is_empty() and not upgrade_picture.is_empty():
-		out.append(upgrade_picture)
-	_buildings[id] = out
-	return out
+	return _buildings.get(id, out)
 
 
 func _update_picture(img: TextureRect, r: Dictionary) -> void:
