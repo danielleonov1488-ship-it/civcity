@@ -19,7 +19,7 @@ const Detail = preload("res://scripts/parts_detail.gd")
 static var detail_config: Detail
 var detail: Detail
 var foliage_lod := false
-var share_perf_meshes := false
+var share_perf_meshes := true
 var _shared_meshes := {}
 const FOLIAGE_LOD_BIAS := 0.65
 static var profile_place := false

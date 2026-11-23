@@ -1,7 +1,11 @@
 // Земля игры: трава пятнами разных оттенков (у каждого кубика 12,5 см — свой тон), утоптанные тропы,
 // дороги и площади из плитки Synty (как в промо Ancient Empire), песок, скалы со слоями.
 shader_type spatial;
+#ifdef CIVCITY_NO_SHADOWS
+render_mode cull_back, diffuse_burley, specular_schlick_ggx, shadows_disabled;
+#else
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+#endif
 
 uniform sampler2D tile_cobble : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D tile_footpath : source_color, filter_linear_mipmap, repeat_enable;

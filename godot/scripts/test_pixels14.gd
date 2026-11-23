@@ -186,6 +186,10 @@ func _sample(renderer: String, label: String, q: String, view: String, key: Stri
 
 
 func _index_scene() -> void:
+	# Пробы здесь меняют штатные материалы и ищут их по пути исходного шейдера.
+	if game.shadow_depth != null:
+		game.shadow_depth.enabled = false
+		game._update_shadow_depth()
 	layers = {}
 	materials = {}
 	layer_members = {}

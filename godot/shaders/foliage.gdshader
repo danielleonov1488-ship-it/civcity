@@ -4,7 +4,11 @@
 // season.y — зима (листва тусклая и буроватая, хвойные — темнее), season.z — весна (свежая зелень, часть деревьев в цвету).
 // Красится только зелёное (листва); стволы, камни и всё прочее — как были.
 shader_type spatial;
+#ifdef CIVCITY_NO_SHADOWS
+render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx, shadows_disabled;
+#else
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
+#endif
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
 uniform vec4 albedo : source_color = vec4(1.0);

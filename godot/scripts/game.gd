@@ -48,8 +48,9 @@ static var perf14_share_meshes := true
 static var _perf14_land_shader: Shader
 static var _ground_shaders := {}
 const LandBake = preload("res://scripts/land_bake.gd")
+const ShadowDepth = preload("res://scripts/shadow_depth.gd")
 var land_bake: LandBake
-var _horizon_ground: MeshInstance3D
+var shadow_depth: ShadowDepth
 
 var land_mat: ShaderMaterial
 var surf_img: Image
@@ -326,6 +327,7 @@ func _ready() -> void:
 	city.want_nature = _want_nature_near
 	parts = Parts.new()
 	parts.tint_split = Parts.split_on           # одинаковые детали разных цветов — один MultiMesh (12.11, скорость)
+	parts.share_perf_meshes = perf14_share_meshes
 	if mode in ["play", "new", "demo"] and DisplayServer.get_name() != "headless":
 		parts.detail = Parts.detail_config
 		parts.foliage_lod = perf14_foliage
@@ -335,7 +337,6 @@ func _ready() -> void:
 			parts.detail.lods = true
 			parts.detail.shadows = 1
 			parts.detail.prepare_c2 = true
-		parts.share_perf_meshes = perf14_share_meshes and (perf14_foliage or perf14_parts)
 	add_child(parts)
 	cover = Cover.new()
 	add_child(cover)
@@ -344,6 +345,8 @@ func _ready() -> void:
 	add_child(actors_root)
 	land_mat = ShaderMaterial.new()
 	land_mat.shader = ground_shader(perf14_land, perf14_baked_ground, perf14_ground_specular)
+	if mode in ["play", "new", "demo"] and DisplayServer.get_name() != "headless" and RenderingServer.get_current_rendering_method() == "forward_plus":
+		shadow_depth = ShadowDepth.new()
 	Synty._index()
 	var tex := func(n: String) -> Texture2D: return load(Synty._tex_path(n))
 	land_mat.set_shader_parameter("tile_road", tex.call("Floor_Tiles_04"))
@@ -538,6 +541,11 @@ func _ready() -> void:
 		var baker := prepare_ground_bake()
 		if baker != null:
 			await baker.prime()
+	if shadow_depth != null:
+		shadow_depth.warm_up()
+		await RenderingServer.frame_post_draw
+		shadow_depth.finish_warm_up()
+		RenderingServer.frame_pre_draw.connect(_update_shadow_depth)
 	ready_done = true
 	_loading_hide()
 	if args.has("noui"):
@@ -715,6 +723,10 @@ func apply_settings() -> void:
 ## Уровни графики «Высокая / Средняя / Низкая / Очень низкая» — scripts/gfx.gd (Средняя и Высокая — как были)
 func _apply_quality() -> void:
 	Gfx.apply(self)
+	if shadow_depth != null:
+		# Без MSAA земля должна сохранить порядок отрисовки на совпадающих по глубине пикселях.
+		var priority := -1 if sun.directional_shadow_mode == DirectionalLight3D.SHADOW_ORTHOGONAL else 0
+		shadow_depth.set_priority(land_mat, priority)
 
 
 func prepare_ground_bake() -> LandBake:
@@ -749,6 +761,11 @@ static func land_shader(distance_lod: bool) -> Shader:
 		_perf14_land_shader = Shader.new()
 		_perf14_land_shader.code = "#define PERF14_LAND\n" + base.code
 	return _perf14_land_shader
+
+
+func _update_shadow_depth() -> void:
+	# Солнце — единственный источник теней в мире города; свет Легиона в другом Viewport.
+	shadow_depth.update(get_viewport().get_camera_3d(), sun)
 
 
 # ---------- небо, солнце, свет, цвет ----------
@@ -924,6 +941,8 @@ func _water() -> void:
 	mi.position = Vector3(Land.SIZE / 2.0, Land.WATER_Y, Land.SIZE / 2.0)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+	if shadow_depth != null:
+		shadow_depth.add(mi, sm, 0.05)         # амплитуда обеих синусоид в vertex воды
 
 
 ## Арка на въезде на свою землю: большая дорога проходит под ней (чертёж — Entrance.gate_bp). Опоры и колонны
@@ -1039,16 +1058,21 @@ func _horizon() -> void:
 			var tone := clampf(0.5 + fz.get_noise_2d(x, z) * 0.9, 0.0, 1.0)
 			cols[k] = g0.lerp(g3, tone).srgb_to_linear()
 			uvs[k] = Vector2(8.0, y)
+	var i0 := far_xs.find(0.0)
+	var i1 := far_xs.find(S)
+	var j0 := far_zs.find(0.0)
+	var j1 := far_zs.find(S)
+	if shadow_depth != null:
+		_horizon_tiles(verts, norms, cols, uvs, Rect2i(i0, j0, i1 - i0, j1 - j0))
 	var ix := PackedInt32Array()
-	for j in nz - 1:
-		for i in nx - 1:
-			var cx := (far_xs[i] + far_xs[i + 1]) * 0.5
-			var cz := (far_zs[j] + far_zs[j + 1]) * 0.5
-			if cx > 0.0 and cz > 0.0 and cx < S and cz < S:
-				continue                      # внутри карты — там своя земля
-			var a := j * nx + i
-			# обход как у кусков земли (Land.chunk_mesh): (00, 11, 01) и (00, 10, 11) — диагональ 00–11
-			ix.append_array([a, a + nx + 1, a + nx, a, a + 1, a + nx + 1])
+	if shadow_depth == null:
+		ix = _horizon_indices(Rect2i(0, 0, nx - 1, nz - 1), Rect2i(i0, j0, i1 - i0, j1 - j0))
+	else:
+		# Юбка остаётся отдельной сеткой с прежними вершинами и треугольниками.
+		verts = PackedVector3Array()
+		norms = PackedVector3Array()
+		cols = PackedColorArray()
+		uvs = PackedVector2Array()
 	# юбка по краю карты: от края пейзажа вниз на 1 м лицом внутрь (если земля у края чуть ниже — не видно щели)
 	var skirt := func(a: Vector2, b: Vector2, ya: float, yb: float, n: Vector3) -> void:
 		var base := verts.size()
@@ -1059,10 +1083,6 @@ func _horizon() -> void:
 		var u := Vector2(1.0, maxf(ya, yb))
 		uvs.append_array([u, u, u, u])
 		ix.append_array([base, base + 2, base + 1, base, base + 3, base + 2])
-	var j0 := far_zs.find(0.0)
-	var j1 := far_zs.find(S)
-	var i0 := far_xs.find(0.0)
-	var i1 := far_xs.find(S)
 	for i in range(i0, i1):
 		var xa := far_xs[i]
 		var xb := far_xs[i + 1]
@@ -1073,21 +1093,7 @@ func _horizon() -> void:
 		var zb := far_zs[j + 1]
 		skirt.call(Vector2(0.0, zb), Vector2(0.0, za), far_hy[(j + 1) * nx + i0], far_hy[j * nx + i0], Vector3(1, 0, 0))
 		skirt.call(Vector2(S, za), Vector2(S, zb), far_hy[j * nx + i1], far_hy[(j + 1) * nx + i1], Vector3(-1, 0, 0))
-	var arr := []
-	arr.resize(Mesh.ARRAY_MAX)
-	arr[Mesh.ARRAY_VERTEX] = verts
-	arr[Mesh.ARRAY_NORMAL] = norms
-	arr[Mesh.ARRAY_COLOR] = cols
-	arr[Mesh.ARRAY_TEX_UV] = uvs
-	arr[Mesh.ARRAY_INDEX] = ix
-	var am := ArrayMesh.new()
-	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	var mi := MeshInstance3D.new()
-	mi.mesh = am
-	_horizon_ground = mi
-	mi.material_override = land_mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mi)
+	_horizon_mesh(verts, norms, cols, uvs, ix)
 	if Streams.far_on():
 		# вода реки за краем карты: полосы того же вида, что вода прудов и моря (shaders/water.gdshader)
 		var rb := MeshInstance3D.new()
@@ -1098,6 +1104,8 @@ func _horizon() -> void:
 		rb.material_override = rm
 		rb.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(rb)
+		if shadow_depth != null:
+			shadow_depth.add(rb, rm, 0.05)
 	_far_nature()
 	# дальние леса: деревья пятнами (без теней — далеко)
 	var rng := RandomNumberGenerator.new()
@@ -1123,6 +1131,71 @@ func _horizon() -> void:
 			batches[key] = {"name": nm, "list": [], "shadow": false, "range": 0.0}
 		batches[key]["list"].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.45, 0.8)), Vector3(p.x, y - 0.3, p.y)))
 	far_forest = _batch_mm(batches)
+	if shadow_depth != null:
+		for mmi: MultiMeshInstance3D in far_forest:
+			var mesh := mmi.multimesh.mesh
+			if mesh.get_surface_count() == 1 and mesh.surface_get_material(0) is ShaderMaterial:
+				shadow_depth.add(mmi, mesh.surface_get_material(0) as ShaderMaterial)
+
+
+func _horizon_indices(cells: Rect2i, map_cells: Rect2i) -> PackedInt32Array:
+	var stride := cells.size.x + 1
+	var indices := PackedInt32Array()
+	for j in cells.size.y:
+		for i in cells.size.x:
+			if map_cells.has_point(cells.position + Vector2i(i, j)):
+				continue
+			var a := j * stride + i
+			indices.append_array([a, a + stride + 1, a + stride, a, a + 1, a + stride + 1])
+	return indices
+
+
+func _horizon_tiles(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray,
+		uvs: PackedVector2Array, map_cells: Rect2i) -> void:
+	var nx := far_xs.size()
+	var nz := far_zs.size()
+	var z := 0
+	while z < nz - 1:
+		var end_z := mini(nz - 1, far_zs.bsearch(far_zs[z] + 256.0))
+		var x := 0
+		while x < nx - 1:
+			var end_x := mini(nx - 1, far_xs.bsearch(far_xs[x] + 256.0))
+			var indices := _horizon_indices(Rect2i(x, z, end_x - x, end_z - z), map_cells)
+			if not indices.is_empty():
+				var v := PackedVector3Array()
+				var n := PackedVector3Array()
+				var c := PackedColorArray()
+				var u := PackedVector2Array()
+				for j in range(z, end_z + 1):
+					var first := j * nx + x
+					var end := j * nx + end_x + 1
+					v.append_array(verts.slice(first, end))
+					n.append_array(normals.slice(first, end))
+					c.append_array(colors.slice(first, end))
+					u.append_array(uvs.slice(first, end))
+				_horizon_mesh(v, n, c, u, indices)
+			x = end_x
+		z = end_z
+
+
+func _horizon_mesh(verts: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray,
+		uvs: PackedVector2Array, indices: PackedInt32Array) -> void:
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = land_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	if shadow_depth != null:
+		shadow_depth.add(mi, land_mat)
 
 
 ## Природа за краем карты вблизи (до 110 м): те же рощи (тот же шум лесов, что в _nature), одиночные деревья,
@@ -1661,6 +1734,8 @@ func _build_chunk(ch: Vector2i) -> void:
 		add_child(mi)
 		chunk_nodes[ch] = mi
 	mi.mesh = land.smooth_mesh(ch.x, ch.y) if Land.smooth_on else land.chunk_mesh(ch.x, ch.y)   # 14.11: плавная земля
+	if shadow_depth != null:
+		shadow_depth.add(mi, land_mat)
 	if land_bake != null:
 		var span := Land.CH * Land.CELL
 		land_bake.invalidate(Rect2(Vector2(ch) * span, Vector2.ONE * span))
