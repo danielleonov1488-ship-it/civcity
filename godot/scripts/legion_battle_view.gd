@@ -1259,6 +1259,7 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 
 
 func clear_visible() -> void:
+	people_layer.viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	var started := Perf14.begin()
 	var deadline := Time.get_ticks_usec() + 3500
 	var count := 0

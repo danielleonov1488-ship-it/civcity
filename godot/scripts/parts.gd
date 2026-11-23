@@ -9,6 +9,7 @@ const Perf14 = preload("res://scripts/perf14_timers.gd")
 var groups := {}          # ключ → {subs: [{mm, mmi, local}], free: [], used: int, cap: int}
 var alias := {}           # прежний ключ (с цветом оттенка) → группа без оттенка: подсветка (cover.gd) ищет по нему
 static var _special := {}
+var _initial_draw: Array[MultiMeshInstance3D] = []
 const WHEAT_BATCH := 24.0
 
 ## Оттенок — у экземпляра (12.11, владелец: «минимум 120 кадров»): одинаковые детали разных цветов (штукатурка
@@ -269,6 +270,29 @@ func _sub_profiled(mesh: Mesh, local: Transform3D, colors := false) -> Dictionar
 	return {"mm": mm, "mmi": mmi, "local": local}
 
 
+## Отмечаем только детали, которые рисуются при выбранном качестве.
+func hide_initial_batches() -> void:
+	for child: Node in get_children():
+		if child is MultiMeshInstance3D and (child as MultiMeshInstance3D).visible:
+			var mmi := child as MultiMeshInstance3D
+			mmi.hide()
+			_initial_draw.append(mmi)
+	show()
+
+
+## После первого кадра камеры добавляем детали города и природу порциями.
+func show_initial_batches() -> void:
+	var tree := get_tree()
+	for start in range(0, _initial_draw.size(), 96):
+		var started := Perf14.begin()
+		for mmi: MultiMeshInstance3D in _initial_draw.slice(start, start + 96):
+			if is_instance_valid(mmi):
+				mmi.show()
+		Perf14.detail("load_city_draw_batch", started)
+		await tree.process_frame
+	_initial_draw.clear()
+
+
 static func _special_mesh(name: String) -> Mesh:
 	if _special.has(name):
 		return _special[name]
@@ -520,15 +544,38 @@ func _alloc(g: Dictionary) -> int:
 	return i
 
 
+static func _batch_tile(name: String, pos: Vector3) -> Vector2i:
+	if name == CatCivic.WHEAT or name == CatCivic.WHEAT_DENSE:
+		return Vector2i(Vector2(pos.x, pos.z) / WHEAT_BATCH)
+	return Vector2i(-1, -1)
+
+
+## Пока здание растёт, готовим те же группы, которые возьмёт готовая модель.
+func prepare_groups(bp: Bp, xf: Transform3D, subst: Dictionary, alive: Callable) -> void:
+	var tree := get_tree()
+	var deadline := Time.get_ticks_usec() + 3000
+	var started := Perf14.begin()
+	for p: Array in bp.parts:
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.detail("placement_parts_prepare", started)
+			await tree.process_frame
+			if not alive.call():
+				return
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 3000
+		var name: String = subst.get(p[0], p[0])
+		var local: Transform3D = p[1]
+		_group(name, p[2], _batch_tile(name, xf * local.origin))
+	Perf14.detail("placement_parts_prepare", started)
+
+
 ## Поставить чертёж; xf — где стоит постройка. Возвращает ручку [[группа, место], …]
 func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 	var handles := []
 	for p in bp.parts:
 		var name: String = subst.get(p[0], p[0])
 		var t: Transform3D = xf * (p[1] as Transform3D)
-		var tile := Vector2i(-1, -1)
-		if name == CatCivic.WHEAT or name == CatCivic.WHEAT_DENSE:
-			tile = Vector2i(Vector2(t.origin.x, t.origin.z) / WHEAT_BATCH)
+		var tile := _batch_tile(name, t.origin)
 		var started := Perf14.begin()
 		var g := _group(name, p[2], tile)
 		Perf14.end(Perf14.PARTS, started)

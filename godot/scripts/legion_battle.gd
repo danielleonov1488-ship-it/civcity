@@ -1810,6 +1810,7 @@ func _close() -> void:
 	if phase == "closing":
 		return
 	phase = "closing"
+	fade.mouse_filter = Control.MOUSE_FILTER_STOP
 	fade_map.texture = null
 	fade_lbl.text = ""
 	fade.modulate.a = 0.0
@@ -1820,24 +1821,41 @@ func _close() -> void:
 
 func _finish_close() -> void:
 	await battle_view.clear_visible()
+	var tree := get_tree()
 	var started := Perf14.begin()
+	# Сначала освобождаем карточку итога, затем поле и его SubViewport.
 	_clear_world()
 	Perf14.end(Perf14.BATTLE_CLOSE, started)
-	await get_tree().process_frame
+	Perf14.detail("battle_release_result", started)
+	await tree.process_frame
+	battle_view.hide()
+	battle_view.queue_free()
+	await tree.process_frame
+	ui.hide()
+	ui.queue_free()
+	await tree.process_frame
+	if is_instance_valid(game):
+		await game.prepare_city_return(self)
 	started = Perf14.begin()
 	_leave()
-	if game != null and is_instance_valid(game) and game.can_save and not out.is_empty():
-		game.save()                          # добыча и прогресс похода — сразу в сохранение (и в облако)
 	Perf14.end(Perf14.BATTLE_CLOSE, started)
-	await get_tree().process_frame
-	started = Perf14.begin()
+	Perf14.detail("battle_leave", started)
+	await tree.process_frame
+	if is_instance_valid(game) and game.can_save and not out.is_empty():
+		await game.save_battle_result()
 	var o := out
+	started = Perf14.begin()
+	legion.battle_closed.emit(o)
+	Perf14.end(Perf14.BATTLE_CLOSE, started)
+	Perf14.detail("battle_return_ui", started)
+	if is_instance_valid(game):
+		var legion_ui := LegionUi.of(game.hud)
+		while is_instance_valid(legion_ui) and legion_ui.battle_returning:
+			await tree.process_frame
 	if current == self:
 		current = null
-	legion.battle_closed.emit(o)
 	if on_done.is_valid():
 		on_done.call(o)
-	Perf14.end(Perf14.BATTLE_CLOSE, started)
 	queue_free()
 
 

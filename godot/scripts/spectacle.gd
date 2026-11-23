@@ -921,7 +921,13 @@ func _prepare_crowd() -> void:
 		_crowd_models.assign(Citizen.PLEBS + Citizen.RICH)
 
 
-func _crowd_step() -> bool:
+## Когда видна заставка, загружаем по одному набору зрителей за кадр.
+func finish_loading_crowds() -> void:
+	while not _crowd_step(true):
+		await get_tree().process_frame
+
+
+func _crowd_step(during_load := false) -> bool:
 	if _crowd_prepared or _crowd_models.is_empty():
 		return true
 	if _crowd_prepare_index < _crowd_models.size():
@@ -935,7 +941,7 @@ func _crowd_step() -> bool:
 			return false
 		Crowd.collect(mdl)
 	if _crowd_upload_index < _crowd_models.size():
-		if not game.ready_done or game.speed <= 0.0:
+		if not during_load and (not game.ready_done or game.speed <= 0.0):
 			return false
 		crowd_upload_frame = Engine.get_process_frames()
 		Crowd.rig(_crowd_models[_crowd_upload_index])

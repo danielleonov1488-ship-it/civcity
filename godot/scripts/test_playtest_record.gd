@@ -18,6 +18,10 @@ var frame_titles: FileAccess
 var next_frame := 0
 var next_scan := 0
 var last_frame := 0
+var viewport_rid: RID
+var draw_start := 0
+var draw_end := 0
+var last_load_step := ""
 var last_progress := 0
 var dead_end := false
 var busy := false
@@ -82,7 +86,15 @@ func progress(description: String) -> void:
 	dead_end = false
 
 
-func clock(dt: float, speed: float, window: String) -> void:
+func pre_draw() -> void:
+	draw_start = Time.get_ticks_usec()
+
+
+func post_draw() -> void:
+	draw_end = Time.get_ticks_usec()
+
+
+func clock(dt: float, speed: float, window: String, load_step: String) -> void:
 	var now := Time.get_ticks_usec()
 	var row: Dictionary = phases[phase]
 	var pipes := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW))
@@ -111,11 +123,16 @@ func clock(dt: float, speed: float, window: String) -> void:
 					if Perf13.usec[id] > 0:
 						sections[Perf13.LABELS[id]] = Perf13.usec[id] / 1000.0
 				slow_frames.append(JSON.stringify({"phase": phase, "window": last_window, "step": latest_state,
-					"ms": ms, "draw_compiles": pipes - draw_compiles, "sections_ms": sections, "loads_us": Perf14.load_paths}))
+					"ms": ms, "draw_compiles": pipes - draw_compiles, "sections_ms": sections, "loads_us": Perf14.load_paths,
+					"loading_step": last_load_step, "process_ms": maxf(0.0, (draw_start - last_frame) / 1000.0),
+					"draw_wall_ms": maxf(0.0, (draw_end - draw_start) / 1000.0),
+					"render_cpu_ms": RenderingServer.viewport_get_measured_render_time_cpu(viewport_rid),
+					"render_gpu_ms": RenderingServer.viewport_get_measured_render_time_gpu(viewport_rid)}))
 	draw_compiles = pipes
 	Perf14.reset_frame()
 	Perf13.usec.fill(0)
 	last_window = window
+	last_load_step = load_step
 	last_frame = now
 	captured_frame = false
 	row["game_s"] += dt * speed

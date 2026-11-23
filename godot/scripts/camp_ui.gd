@@ -285,6 +285,8 @@ func _update_entry() -> void:
 ## Лагерь открылся (50 жителей): один раз — спокойная карточка советника, стрелка и кивок кнопки «Лагерь».
 ## Занят советник или идёт ролик — подождём следующего обновления
 func _camp_moment() -> void:
+	if not hud.game.ready_done:
+		return
 	if hud.tutorial_busy() or not hud._tip_free():
 		return
 	if lg.flags.has("camp_told") or top_button == null or not lg.window_open() or not top_button.is_visible_in_tree() or visible:
@@ -328,8 +330,10 @@ func _open() -> void:
 	hud.game.set_tool("")
 	hud.advisor_panel.hide()
 	lg.flags["seen"] = true
+	var started := Perf14.begin()
 	lg.army_tick()
 	lg.begin_fort_guide()
+	Perf14.detail("fort_open_rules", started)
 	visible = true
 	move_to_front()
 	_opening_serial += 1
@@ -337,9 +341,11 @@ func _open() -> void:
 	_open_diorama(_opening_serial)
 	set_process(true)
 	set_process_input(true)
+	started = Perf14.begin()
 	_refresh()
 	_layout()
 	hud._update_pointer()
+	Perf14.detail("fort_open_hud", started)
 
 
 func close() -> void:
@@ -766,10 +772,12 @@ func _process(dt: float) -> void:
 		return
 	_elapsed = 0.0
 	# tick завершает стройку, обучение, ковку и обновляет задания дня.
+	var started := Perf14.begin()
 	for message in lg.tick():
 		hud.game.city._quiet(message, "legion")
 		if String(message).ends_with("!") or String(message) == I18n.t("Плац стал частью Казармы — стройматериалы вернулись"):
 			hud.notify(message, "legion")
+	Perf14.detail("fort_tick", started)
 	_refresh()
 
 
@@ -788,6 +796,12 @@ func _roster_signature() -> String:
 
 
 func _refresh() -> void:
+	var started := Perf14.begin()
+	_refresh_profiled()
+	Perf14.detail("fort_refresh", started)
+
+
+func _refresh_profiled() -> void:
 	lg.watch_fort_lessons()
 	FortPerson.bind_portrait(_profile_art, FortPerson.hero_person(lg), lg.worn(lg.hero_dweller()))
 	if is_instance_valid(diorama) and not opening:
@@ -1461,6 +1475,12 @@ func _refresh_card() -> void:
 
 
 func _upgrade() -> void:
+	var started := Perf14.begin()
+	_upgrade_room()
+	Perf14.detail("fort_upgrade", started)
+
+
+func _upgrade_room() -> void:
 	var id := selected_plot
 	if selected == "hq":
 		show_hq_upgrade(id)
@@ -1881,6 +1901,7 @@ func _show_soldier(sid: int) -> void:
 
 func _open_diorama(serial: int) -> void:
 	var tree := get_tree()
+	_cover_city()
 	var art := {}
 	if USE_3D and use_cutaway and not is_instance_valid(diorama) and DisplayServer.get_name() != "headless":
 		await tree.process_frame
@@ -1896,6 +1917,9 @@ func _open_diorama(serial: int) -> void:
 	Perf14.end(Perf14.CAMP_BUILD, started)
 	if diorama is FortCutaway:
 		var cutaway := diorama as FortCutaway
+		for path: String in art:
+			if art[path] is Texture2D:
+				cutaway.remember_art(path, art[path])
 		await tree.process_frame
 		if serial != _opening_serial or not visible:
 			return
@@ -1915,12 +1939,15 @@ func _open_diorama(serial: int) -> void:
 	art.clear()
 
 
-func _start_diorama() -> void:
+func _cover_city() -> void:
 	if not _city_render_owned:
 		_previous_disable_3d = get_viewport().disable_3d
 		_city_render_owned = true
 		hud.game.legion_cover(self, true)
 		get_viewport().disable_3d = true
+
+
+func _start_diorama() -> void:
 	if not USE_3D or not lg.v3() or is_instance_valid(diorama):
 		return
 	var scene: Camp3D = FortCutaway.new() if use_cutaway else Camp3D.new()
@@ -2524,6 +2551,12 @@ func _jump_to_type(type: String) -> void:
 
 
 func show_build_menu(plot_id := -1) -> void:
+	var started := Perf14.begin()
+	_build_menu(plot_id)
+	Perf14.detail("fort_build_menu", started)
+
+
+func _build_menu(plot_id: int) -> void:
 	_set_placement("")
 	_clear_room_selection()
 	build_pinned = plot_id >= 0
@@ -2568,7 +2601,7 @@ func show_build_menu(plot_id := -1) -> void:
 		var body := VBoxContainer.new()
 		body.add_theme_constant_override("separation", 7)
 		panel.add_child(body)
-		var picture := _room_picture(type, 1, Vector2(202, 104))
+		var picture := _room_picture(type, 1, Vector2(202, 104), false, false)
 		picture.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		body.add_child(picture)
 		var title_label := _text(I18n.t(String(spec["name"])), 18, true)
@@ -2609,13 +2642,34 @@ func show_build_menu(plot_id := -1) -> void:
 				build_focus = lesson_room
 			show_build_menu(build_plot_id if build_pinned else -1))
 		tabs_row.add_child(tab)
+	var picture_paths := {}
 	for type: String in build_cards:
 		var group := 0 if not Legion.fort_production(type, 1).is_empty() else 1 if type in ["barracks", "drill", "stable"] else 2
-		(build_cards[type]["panel"] as Control).visible = group == build_tab
+		var shown := group == build_tab
+		(build_cards[type]["panel"] as Control).visible = shown
+		if shown:
+			picture_paths[FortCutaway.room_texture_path(type, 1)] = true
 	_build_sig = _plot_signature()
 	_refresh_build_menu()
 	_fit_modal.call_deferred()
 	_focus_build_card.call_deferred()
+	_build_pictures(build_scroll, picture_paths)
+
+
+func _build_pictures(scroll: ScrollContainer, paths: Dictionary) -> void:
+	var textures := await CityWarmup.fetch(get_tree(), paths)
+	if not is_instance_valid(scroll) or scroll != build_scroll:
+		return
+	var started := Perf14.begin()
+	for type: String in build_cards:
+		var path := FortCutaway.room_texture_path(type, 1)
+		if textures.has(path):
+			var frame: PanelContainer = build_cards[type]["picture"]
+			var pic := frame.get_child(0) as TextureRect
+			pic.texture = textures[path]
+			if diorama is FortCutaway:
+				(diorama as FortCutaway).remember_art(path, pic.texture)
+	Perf14.detail("fort_build_pictures", started)
 
 
 func _focus_build_card() -> void:
@@ -2683,8 +2737,18 @@ func _cancel_placement() -> void:
 
 
 func _place_build(id: int, type := "") -> void:
+	var started := Perf14.begin()
+	_place_build_profiled(id, type)
+	Perf14.end(Perf14.CAMP_BUILD, started)
+	Perf14.detail("fort_build_action", started)
+
+
+func _place_build_profiled(id: int, type: String) -> void:
 	var room_type := placement_type if type == "" else type
-	if not lg.fort_build(room_type, id):
+	var started := Perf14.begin()
+	var built := lg.fort_build(room_type, id)
+	Perf14.detail("fort_build_rules", started)
+	if not built:
 		hud.notify(I18n.t(lg.fort_can_build(room_type, id)), "lock")
 		if is_instance_valid(build_scroll):
 			_refresh_build_menu()
@@ -3628,14 +3692,17 @@ func show_hq_upgrade(id: int) -> void:
 
 
 func _instant_upgrade() -> void:
+	var started := Perf14.begin()
 	if lg.fort_instant(selected_plot, instant_button.get_meta("quote", {})):
 		_build_card()
 	_refresh()
+	Perf14.detail("fort_instant", started)
 
 
-func _room_picture(type: String, level: int, dims: Vector2, building := false) -> PanelContainer:
+func _room_picture(type: String, level: int, dims: Vector2, building := false, with_art := true) -> PanelContainer:
 	var frame := Kit.inset()
-	var pic := Kit.image(FortCutaway.room_texture_path(type, level, building), dims)
+	var source: Variant = FortCutaway.room_texture_path(type, level, building) if with_art else null
+	var pic := Kit.image(source, dims)
 	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	pic.clip_contents = true
 	frame.add_child(pic)

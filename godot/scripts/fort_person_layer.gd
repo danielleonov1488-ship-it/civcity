@@ -40,6 +40,7 @@ func setup(view_name: String, tilt: float, antialias := true) -> void:
 	viewport = SubViewport.new()
 	viewport.name = view_name
 	viewport.own_world_3d = true
+	viewport.positional_shadow_atlas_size = 0
 	viewport.transparent_bg = true
 	viewport.gui_disable_input = true
 	viewport.msaa_3d = Viewport.MSAA_2X if antialias else Viewport.MSAA_DISABLED

@@ -76,16 +76,21 @@ func setup(l: Land, c: City, g) -> void:
 	var tree := get_tree()
 	while not WorkerThreadPool.is_task_completed(task):
 		await tree.process_frame
+	var startup := Perf14.begin()
 	WorkerThreadPool.wait_for_task_completion(task)
 	grid = result[0]
+	Perf14.detail("load_nav_ready", startup)
 	var deadline := Time.get_ticks_usec() + 4000
 	for ch: Vector2i in land.road_chunks:
 		refresh([ch])
 		if Time.get_ticks_usec() >= deadline:
 			await tree.process_frame
 			deadline = Time.get_ticks_usec() + 4000
-	var startup := Perf14.begin()
+	startup = Perf14.begin()
 	_make_cart()
+	Perf14.detail("load_cart", startup)
+	await tree.process_frame
+	startup = Perf14.begin()
 	city.building_removed.connect(_on_building_removed)
 	city.building_added.connect(_on_building_added)
 	city.changed.connect(func():
@@ -130,6 +135,7 @@ func setup(l: Land, c: City, g) -> void:
 	await tree.process_frame
 	await _start_of_day(true)
 	await tree.process_frame
+
 	startup = Perf14.begin()
 	_cats_load()
 	hero_spawn()                             # свой герой (Д11): ходит по городу, в счёт жителей не входит

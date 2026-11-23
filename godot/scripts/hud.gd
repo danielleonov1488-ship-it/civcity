@@ -19,6 +19,8 @@ var icons := {}                      # картинки построек в ОЗ
 var _building_icon_textures: Dictionary = {}
 const BUILDING_ICON_CACHE := 24
 var _ico := {}
+static var _icon_pixels := {}
+const ICON_PIXELS_LIMIT := 256
 var _medals := {}
 var _grey_mat: ShaderMaterial
 
@@ -236,6 +238,7 @@ var _cursor_px := 0
 
 
 func _ready() -> void:
+	set_process(false)
 	layer = 10
 	marble = str(game.settings.get("ui_style", "marble")) == "marble" and not OS.get_cmdline_user_args().has("--paui")
 	_fonts()
@@ -246,37 +249,30 @@ func _ready() -> void:
 	root.theme = theme_main
 	root.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	add_child(root)
-	_badge_layer()
-	_city_card()
-	_class_chips()
-	_families()
-	_tasks()
-	_rank_button()
-	_top_right()
-	MagisUI.attach(self)
-	_bottom_left()
-	_bottom_center()
-	_bottom_right()
-	_tool_panel()
-	_overlay_panel()
-	_info_panel()
-	_advisor()
-	_notes()
-	_events_panel()
-	_research_panel()
-	_finance_panel()
-	_stats_panel()
-	_pause_panel()
-	_settings_panel()
-	_credits_panel()
-	_buy_panel()
-	_pointer()
-	_hover_tip_panel()
-	LegionUi.attach(self)                      # окно «Легион» и его медальон сверху справа (scripts/legion_ui.gd)
-	CampUI.attach(self)                        # отдельный лагерь новой игры
-	_hero_button()                             # медальон «Герой» (Д11): лицо своего героя, щелчок — к нему
+
+
+## Заставка остаётся над интерфейсом, пока панели строятся по очереди.
+func prepare() -> void:
+	var panels: Array[Callable] = [_badge_layer, _city_card, _class_chips, _families, _tasks,
+		_rank_button, _top_right, MagisUI.attach.bind(self), _bottom_left, _bottom_center,
+		_bottom_right, _tool_panel, _overlay_panel, _info_panel, _advisor, _notes,
+		_events_panel, _research_panel, _finance_panel, _stats_panel, _pause_panel,
+		_settings_panel, _credits_panel, _buy_panel, _pointer, _hover_tip_panel,
+		LegionUi.attach.bind(self), CampUI.attach.bind(self), _hero_button]
+	var deadline := Time.get_ticks_usec() + 4500
+	for panel: Callable in panels:
+		var started := Perf14.begin()
+		if panel == _bottom_center:
+			await _bottom_center()
+		else:
+			panel.call()
+			Perf14.end(Perf14.START_HUD, started)
+			Perf14.detail("hud_" + String(panel.get_method()), started)
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 4500
 	if game != null and game.city != null:
-		game.city.rp_reward.connect(_fly_rp)      # просьба дала очки — «+25» летит к счётчику свитков (без звука и всплывашки)
+		game.city.rp_reward.connect(_fly_rp)
 	apply_scale(float(game.settings.get("ui_scale", 1.0)))
 	get_window().size_changed.connect(func():
 		apply_scale(float(game.settings.get("ui_scale", 1.0)))
@@ -284,6 +280,7 @@ func _ready() -> void:
 	get_tree().node_added.connect(_on_node_added)
 	_hook_buttons(self)
 	_make_icons()
+	set_process(true)
 
 
 ## Размер интерфейса из настроек, но не крупнее, чем помещается по ширине окна (MIN_W логических точек):
@@ -543,10 +540,15 @@ func ico(name: String, size := 64) -> Texture2D:
 	var key := "%s:%d" % [name, size]
 	if _ico.has(key):
 		return _ico[key]
-	var tex: Texture2D = null
 	var png := ui_tex("icons/" + name)
-	if ResourceLoader.exists(png):
-		var img := src_image(png)
+	var svg := "res://assets/ui/icons/%s.svg" % name
+	var painted_icon := ResourceLoader.exists(png)
+	var pixel_key := "%s:%d" % [png if painted_icon else svg, size]
+	var img: Image = _icon_pixels.get(pixel_key)
+	if img != null:
+		_icon_pixels.erase(pixel_key)
+	elif painted_icon:
+		img = src_image(png)
 		if img.is_compressed():
 			img.decompress()
 		img.clear_mipmaps()
@@ -555,21 +557,21 @@ func ico(name: String, size := 64) -> Texture2D:
 		if px != img.get_width():
 			img.resize(px, px, Image.INTERPOLATE_LANCZOS)
 		img.generate_mipmaps()
+	elif FileAccess.file_exists(svg):
+		img = Image.new()
+		img.load_svg_from_string(FileAccess.get_file_as_string(svg), size / 512.0)
+	elif ResourceLoader.exists(svg):         # собранная игра: только импортированная картинка 512
+		img = (load(svg) as Texture2D).get_image()
+		if img.is_compressed():
+			img.decompress()
+		img.convert(Image.FORMAT_RGBA8)
+		img.resize(maxi(1, roundi(img.get_width() * size / 512.0)), maxi(1, roundi(img.get_height() * size / 512.0)), Image.INTERPOLATE_LANCZOS)
+	var tex: Texture2D
+	if img != null and not img.is_empty():
+		_icon_pixels[pixel_key] = img
+		if _icon_pixels.size() > ICON_PIXELS_LIMIT:
+			_icon_pixels.erase(_icon_pixels.keys()[0])
 		tex = ImageTexture.create_from_image(img)
-	else:
-		var path := "res://assets/ui/icons/%s.svg" % name
-		if FileAccess.file_exists(path):
-			var img := Image.new()
-			img.load_svg_from_string(FileAccess.get_file_as_string(path), size / 512.0)
-			tex = ImageTexture.create_from_image(img)
-		elif ResourceLoader.exists(path):         # собранная игра: исходных SVG нет, только импортированная картинка 512
-			var img := (load(path) as Texture2D).get_image()
-			if img.is_compressed():
-				img.decompress()
-			img.convert(Image.FORMAT_RGBA8)
-			img.resize(maxi(1, roundi(img.get_width() * size / 512.0)), maxi(1, roundi(img.get_height() * size / 512.0)), Image.INTERPOLATE_LANCZOS)
-			tex = ImageTexture.create_from_image(img)
-	if tex != null:
 		tex.set_meta("city_icon", name)
 	_ico[key] = tex
 	return tex
@@ -2766,6 +2768,9 @@ func _refresh_brush() -> void:
 
 
 func _bottom_center() -> void:
+	var tree := get_tree()
+	var started := Perf14.begin()
+	var deadline := Time.get_ticks_usec() + 4500
 	var p := _panel(null, "bar", 0, 1)
 	_put(p, Control.PRESET_CENTER_BOTTOM, Vector2(0, -6))
 	bar_mid = p
@@ -2773,6 +2778,12 @@ func _bottom_center() -> void:
 	h.add_theme_constant_override("separation", 12)
 	p.add_child(h)
 	for c: Array in Defs.CATS:
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.START_HUD, started)
+			Perf14.detail("hud_build_menu", started)
+			await tree.process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4500
 		var cid: String = c[0]
 		var short: String = Defs.CAT_SHORT.get(cid, c[1])
 		var v := _round_lbl(c[2], short, c[1], 46, func(): _toggle_cat(cid))
@@ -2798,6 +2809,12 @@ func _bottom_center() -> void:
 	top.add_child(tray_tabs)
 	v.add_child(top)
 	for n in Defs.NEED_ORDER:
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.START_HUD, started)
+			Perf14.detail("hud_build_menu", started)
+			await tree.process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4500
 		if n == "faith":
 			continue
 		var nn: String = n
@@ -2819,6 +2836,12 @@ func _bottom_center() -> void:
 	tray_dtabs.add_theme_constant_override("separation", 4)
 	top.add_child(tray_dtabs)
 	for ds: Array in Defs.DECOR_SUBS:
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.START_HUD, started)
+			Perf14.detail("hud_build_menu", started)
+			await tree.process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4500
 		var dn: String = ds[0]
 		var b := _round(ds[2], ds[1], 40, func(): open_dsub = dn; decor_mode = ""; _clear_search(); _fill_cards())
 		b.set_meta("sub", dn)
@@ -2833,6 +2856,8 @@ func _bottom_center() -> void:
 	tray_grid = HBoxContainer.new()
 	tray_grid.add_theme_constant_override("separation", 10)
 	sc.add_child(tray_grid)
+	Perf14.end(Perf14.START_HUD, started)
+	Perf14.detail("hud_build_menu", started)
 
 
 ## Свиток стройки помещается между панелью кисти слева и окном инструмента справа.
@@ -4695,7 +4720,7 @@ func _thumb_make() -> void:
 ## Облик будущей постройки (тип, этаж, фасад, цвет) — как у призрака; картинка перерисовывается один раз, только
 ## когда облик поменялся (без чтения с видеокарты: ViewportTexture прямо в панели)
 func thumb_update() -> void:
-	if thumb_rect == null or not thumb_rect.visible or game == null or not Defs.B.has(game.tool):
+	if thumb_rect == null or not thumb_rect.visible or game == null or game._preview_pending or not Defs.B.has(game.tool):
 		return
 	var t: String = game.tool
 	var pl: Dictionary = game.place_info if String(game.place_info.get("_t", "")) == t else {}
@@ -4732,11 +4757,23 @@ func thumb_update() -> void:
 	_thumb_cam.look_at_from_position(ctr + dir * rad / sin(deg_to_rad(15.0)) * 0.95, ctr, Vector3.UP)
 	_thumb_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
+func _refresh_money(c: City, show_cap := false) -> void:
+	var amount := fmt(c.money)
+	var full := "%s / %s" % [amount, fmt(c.money_cap())]
+	var text_now := full if show_cap else amount
+	if lbl_money.text != text_now:
+		lbl_money.text = text_now
+		# Мышь и замер текста могут прийти раньше отложенной раскладки.
+		lbl_money.size.x = maxf(lbl_money.size.x, lbl_money.get_minimum_size().x)
+		_fit_top.call_deferred()
+	lbl_money.tooltip_text = I18n.t("Денарии в казне") + ": " + full
+
+
 ## Пока ведут кисть: казна меняется сразу, у курсора — сколько стоит этот мазок (или что денег не хватило).
 ## done — мазок окончен, подпись мягко гаснет
 func stroke_live(cost: float, t: String, broke := false, done := false) -> void:
 	var c: City = game.city
-	lbl_money.text = "%s / %s" % [fmt(c.money), fmt(c.money_cap())]
+	_refresh_money(c, true)
 	if _stroke_lbl == null:
 		_stroke_lbl = _label("", 19, true, C_CREAM)
 		_stroke_lbl.add_theme_color_override("font_outline_color", Color("3a2412"))
@@ -7737,8 +7774,7 @@ func refresh_profiled(hour_part := 0) -> void:
 		if Renown.on(c):
 			lbl_day.text += " · " + Seasons.name_of(c.day)
 		show_city_name()
-		lbl_money.text = fmt(c.money)
-		lbl_money.tooltip_text = I18n.t("Денарии в казне") + ": %s / %s" % [fmt(c.money), fmt(c.money_cap())]
+		_refresh_money(c)
 		var net := c.projected_net()
 		lbl_income.text = ("+" if net >= 0 else "") + fmt(net) + "/ч"
 		lbl_income.tooltip_text = "Ожидаемый доход за час при нынешних жильцах и работниках. Прошедшие часы — в «Финансах»"

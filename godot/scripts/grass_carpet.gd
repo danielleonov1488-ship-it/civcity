@@ -83,7 +83,7 @@ func setup(g) -> void:
 	_mat_g.set_shader_parameter("tip_col", Vector3(TIP.r, TIP.g, TIP.b))
 	_mat_f = _mat_g.duplicate() as ShaderMaterial
 	_mat_f.set_shader_parameter("flowers", true)
-	_mat_f.set_shader_parameter("tex_arr", _flower_array())
+	_mat_f.set_shader_parameter("tex_arr", await _flower_array())
 	Synty.season_mats.append(_mat_g)          # времена года (Synty.set_season ставит season и им)
 	mats = [_mat_g, _mat_f]
 	g.city.building_added.connect(func(b): _invalidate_cells(b.get("cells", PackedInt32Array())))
@@ -102,20 +102,45 @@ func _clump_mesh(nm: String) -> Mesh:
 
 
 ## Картинки цветов набора — массивом (у каждого кустика цветов своя), 1024² с мипмапами
+static var _flower_texture: Texture2DArray
+
+
 func _flower_array() -> Texture2DArray:
+	if _flower_texture != null:
+		return _flower_texture
+	var tree := get_tree()
+	var paths := {}
+	for n: String in ["WildFlowers_01", "WildFlowers_02", "WildFlowers_03"]:
+		paths[Meadow._tex_path(n)] = true
+	var textures := await Game.CityWarmup.fetch(tree, paths)
+	var source: Array[Image] = []
+	for path: String in paths:
+		var started := Perf14.begin()
+		var t: Texture2D = textures.get(path)
+		source.append(t.get_image())
+		Perf14.detail("load_grass_flower_read", started)
+		await tree.process_frame
 	var imgs: Array[Image] = []
-	for n in ["WildFlowers_01", "WildFlowers_02", "WildFlowers_03"]:
-		var t: Texture2D = load(Meadow._tex_path(n))
-		var im := t.get_image()
+	var task := WorkerThreadPool.add_task(_flower_images.bind(source, imgs), false, "Картинки лугов")
+	while not WorkerThreadPool.is_task_completed(task):
+		await tree.process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	var started := Perf14.begin()
+	if _flower_texture == null:
+		_flower_texture = Texture2DArray.new()
+		_flower_texture.create_from_images(imgs)
+	Perf14.detail("load_grass_flower_upload", started)
+	return _flower_texture
+
+
+static func _flower_images(source: Array[Image], result: Array[Image]) -> void:
+	for im: Image in source:
 		if im.is_compressed():
 			im.decompress()
 		im.convert(Image.FORMAT_RGBA8)
 		im.resize(1024, 1024, Image.INTERPOLATE_LANCZOS)
 		im.generate_mipmaps()
-		imgs.append(im)
-	var arr := Texture2DArray.new()
-	arr.create_from_images(imgs)
-	return arr
+		result.append(im)
 
 
 func set_quality(q: String) -> void:

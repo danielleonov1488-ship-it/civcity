@@ -11,6 +11,8 @@ extends RefCounted
 ## «Средней» и «Высокой»; деревья набора (листва — тысячи карточек) на «Низкой» и «Очень низкой» рисуются прежними
 ## лёгкими деревьями Synty того же роста (подмена сетки в тех же MultiMesh — места и ручки природы не меняются).
 
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+const Perf14 = preload("res://scripts/perf14_timers.gd")
 const SEED := 1313
 
 ## Рост моделей набора (верх, м при масштабе 1) — масштаб подбирается под нужную высоту
@@ -119,23 +121,27 @@ static func extra(rng: RandomNumberGenerator, forest: float) -> Array:
 
 ## Земля и дороги из набора (shaders/land.gdshader, meadow_on): трава с клевером, цветами и мхом, мостовая из булыжника,
 ## тропы — утоптанная земля, кромки и дворики — гравий, берега — земля
-static func ground(g) -> void:
+static func ground(g, tree: SceneTree) -> void:
 	if not on():
 		return
 	var m: ShaderMaterial = g.land_mat
-	var t := func(n: String) -> Texture2D: return load(Meadow._tex_path(n))
-	m.set_shader_parameter("g_tex_a", t.call("Grass_Texture_01"))
-	m.set_shader_parameter("g_tex_b", t.call("Grass_Texture_02"))
-	m.set_shader_parameter("g_clover", t.call("Grass_Clovers_Texture_01"))
-	m.set_shader_parameter("g_flower", t.call("Grass_Flowers_Texture_01"))
-	m.set_shader_parameter("g_moss", t.call("Moss_Texture_01"))
-	m.set_shader_parameter("path_tex", t.call("Dirt_Cracked_Pebbles_Texture_01"))
-	m.set_shader_parameter("gravel_tex", t.call("Gravel_Texture_01"))
-	m.set_shader_parameter("earth_tex", t.call("Dirt_Texture_01"))
-	m.set_shader_parameter("tile_road", t.call("Cobblestone_Texture_01"))
+	var names := {
+		"g_tex_a": "Grass_Texture_01", "g_tex_b": "Grass_Texture_02",
+		"g_clover": "Grass_Clovers_Texture_01", "g_flower": "Grass_Flowers_Texture_01",
+		"g_moss": "Moss_Texture_01", "path_tex": "Dirt_Cracked_Pebbles_Texture_01",
+		"gravel_tex": "Gravel_Texture_01", "earth_tex": "Dirt_Texture_01",
+		"tile_road": "Cobblestone_Texture_01"}
+	var paths := {}
+	for param: String in names:
+		var path := Meadow._tex_path(names[param])
+		names[param] = path
+		paths[path] = true
+	var textures := await CityWarmup.fetch(tree, paths)
+	var started := Perf14.begin()
+	for param: String in names:
+		m.set_shader_parameter(param, textures.get(names[param]))
 	m.set_shader_parameter("road_scale", 3.2)
 	m.set_shader_parameter("road_tint", Vector3(1.12, 1.03, 0.88))
-	m.set_shader_parameter("noise_tex", noise_tex())
 	m.set_shader_parameter("meadow_on", true)
 	if v2:
 		# природа 2: земля под травой — сочная жёлто-зелёная (в тон траве-ковру: вдали, где ковра нет, — тот же цвет)
@@ -143,14 +149,24 @@ static func ground(g) -> void:
 		m.set_shader_parameter("pal1", Vector3(0.16, 0.25, 0.034))
 		m.set_shader_parameter("pal2", Vector3(0.2, 0.3, 0.042))
 		m.set_shader_parameter("pal3", Vector3(0.26, 0.34, 0.05))
+	Perf14.end(Perf14.START_GROUND, started)
+	if _noise == null:
+		var images: Array[Image] = []
+		var task := WorkerThreadPool.add_task(_noise_image.bind(images), false, "Шум земли")
+		while not WorkerThreadPool.is_task_completed(task):
+			await tree.process_frame
+		WorkerThreadPool.wait_for_task_completion(task)
+		started = Perf14.begin()
+		if _noise == null:
+			_noise = ImageTexture.create_from_image(images[0])
+		Perf14.end(Perf14.START_GROUND, started)
+	m.set_shader_parameter("noise_tex", _noise)
 
 
 ## Плавный шум для пятен травы (shaders/land.gdshader noise_tex): 4 бесшовных симплекс-шума (разные семена) в каналах
 ## RGBA, 256², с мипмапами; один раз за запуск (~десятки мс)
 static var _noise: ImageTexture = null
-static func noise_tex() -> ImageTexture:
-	if _noise != null:
-		return _noise
+static func _noise_image(images: Array[Image]) -> void:
 	var S := 256
 	var chans := []
 	for i in 4:
@@ -173,8 +189,7 @@ static func noise_tex() -> ImageTexture:
 		data[k * 4 + 3] = c3[k]
 	var img := Image.create_from_data(S, S, false, Image.FORMAT_RGBA8, data)
 	img.generate_mipmaps()
-	_noise = ImageTexture.create_from_image(img)
-	return _noise
+	images.append(img)
 
 
 ## Своя и чужая земля для травы (shaders/land.gdshader own_tex): точка на участок, белое — чужая; при загрузке

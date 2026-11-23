@@ -49,7 +49,13 @@ func _run() -> void:
 	for q: String in str(args.get("q", "high,low")).split(","):
 		for kind: String in str(args.get("city", "owner,new")).split(","):
 			scenario = "%s/%s" % [kind, q]
-			if not await boot_city(kind, q, true):
+			if args.has("focus"):
+				_begin()
+				_mark("загрузка")
+			var booted := await boot_city(kind, q, true)
+			if args.has("focus"):
+				await _finish(true)
+			if not booted:
 				_fail("не открыт город " + scenario)
 				continue
 			game.hud.set_speed(0.0)
@@ -142,10 +148,17 @@ func _actions() -> void:
 			game.rig.set_view(camera_target, 15, 42, 64)
 			view_pos = camera_target
 			await frames(12)
+		var level_before := game.city.level
+		if args.has("focus") and key == "academy":
+			game.city.level = maxi(level_before, 6)
 		for pass_index in 2:
 			_mark("строительство %s #%d" % [key, pass_index + 1])
 			game._place_refresh_frame = Engine.get_process_frames()
-			var b := game.city.place(key, cell, 0.0, 0, 0, true)
+			var b: Dictionary
+			if args.has("focus"):
+				b = await _place_focus(key, cell)
+			else:
+				b = game.city.place(key, cell, 0.0, 0, 0, true)
 			if b.is_empty() or not is_finite(float(b.get("y", INF))):
 				_fail("постройка " + key)
 				continue
@@ -159,6 +172,7 @@ func _actions() -> void:
 			_mark("снос тестовой постройки " + key)
 			game.city.remove(b, false)
 			await frames(2)
+		game.city.level = level_before
 		if had_credit:
 			game.city.wonder_credits[key] = original_credit
 		else:
@@ -246,14 +260,15 @@ func _actions() -> void:
 func _colosseum_normal() -> void:
 	_mark("Колизей · предварительный просмотр")
 	await game._request_preview("colosseum", 0, 0)
-	game.ghost = Parts.ghost(Catalog.make("colosseum", 0, 0))
-	game.ghost_key = "colosseum:0:0:0:" + str(Vector2i.ZERO)
-	game.add_child(game.ghost)
 	_mark("Колизей · обычная анимация стройки")
 	game.speed = 3.0
-	game.build_anim = true
-	var b := game.city.place("colosseum", Vector2(62, 80), 0.0, 0, 0, true)
-	game.build_anim = false
+	var before := int(game.city.wonder_credits.get("colosseum", 0))
+	game.city.wonder_credits["colosseum"] = 1
+	var b := await _place_focus("colosseum", Vector2(62, 80))
+	if before > 0:
+		game.city.wonder_credits["colosseum"] = before
+	else:
+		game.city.wonder_credits.erase("colosseum")
 	game.speed = 0.0
 	if b.is_empty():
 		_fail("Колизей: стройка не запущена")
@@ -264,9 +279,68 @@ func _colosseum_normal() -> void:
 		await frames(1)
 	if not game.visuals.has(id) or not game.spectacle.venues.has(id):
 		_fail("Колизей: после стройки нет трибун")
+	_mark("снос тестового Колизея")
 	game.city.remove(b, false)
 	game._clear_preview_models()
 	await frames(8)
+
+
+## Настоящее нажатие «поставить» с выбранной постройкой, затем сверка итогов пересчёта.
+func _place_focus(type: String, at: Vector2) -> Dictionary:
+	var action := phase
+	_mark("предварительный просмотр " + type)
+	game.set_tool(type)
+	game.next_variant = 0
+	while game._preview_pending:
+		await frames(1)
+	game.hover = at
+	var pl := game.placement(type, at)
+	await game._request_preview(type, int(pl["tier"]), int(pl["variant"]), int(pl["color"]))
+	if pl["err"] != "":
+		_fail("%s: %s" % [type, pl["err"]])
+		game.set_tool("")
+		return {}
+	if is_instance_valid(game.ghost):
+		game.ghost.queue_free()
+	game.ghost = Parts.ghost(Catalog.make(type, pl["tier"], pl["variant"], pl["color"]))
+	game.ghost_key = "%s:%d:%d:%d:%s" % [type, pl["tier"], pl["variant"], pl["color"], Vector2i.ZERO]
+	game.add_child(game.ghost)
+	await frames(2)
+	_mark(action)
+	var id := game.city.next_id
+	game.hover = at
+	game._build_here()
+	while game._placement_running:
+		await frames(1)
+	await frames(2)
+	var b: Dictionary = game.city.buildings.get(id, {})
+	if not b.is_empty() and args.has("focus"):
+		_verify_placement(type)
+	game.set_tool("")
+	return b
+
+
+func _verify_placement(type: String) -> void:
+	# Сама сверка не входит в замер игрового кадра.
+	active = false
+	var c := game.city
+	var snapshot := JSON.stringify(c.save_data(true))
+	var stats := c.stats.duplicate(true)
+	var fields := {}
+	for b: Dictionary in c.buildings.values():
+		fields[b["id"]] = [b["road"], b["staff"], b["active"], b["needs"].duplicate(true), b.get("happy_target")]
+	c.compute(true)
+	var match_ok := snapshot == JSON.stringify(c.save_data(true)) and stats == c.stats
+	for b: Dictionary in c.buildings.values():
+		match_ok = match_ok and fields[b["id"]] == [b["road"], b["staff"], b["active"], b["needs"], b.get("happy_target")]
+	if not match_ok:
+		_fail("сохранение или поля расчёта отличаются после стройки: " + type)
+	else:
+		_line("Сверка полей после стройки %s: совпали." % type)
+	Timers.reset_frame()
+	CityTimers.usec.fill(0)
+	before = Time.get_ticks_usec()
+	active = true
 
 
 func _free_play() -> void:
@@ -282,6 +356,9 @@ func _free_play() -> void:
 func _prepare_sites() -> void:
 	# Две площадки вдали от исходного города, одна с тестовым прудом.
 	var land := game.land
+	for x in [28.0, 62.0, 96.0]:
+		for z in [46.0, 80.0, 114.0, 152.0, 171.0]:
+			land.owned[land.plot_of(Vector2(x, z))] = true
 	land.flatten_cells(land.footprint_cells([Rect2(-34, -34, 68, 68)], Vector2(62, 80), 0.0),
 		Land.BASE_Y, Land.Kind.GRASS)
 	land.flatten_cells(land.footprint_cells([Rect2(-25, -19, 50, 38)], Vector2(62, 152), 0.0),
@@ -327,15 +404,17 @@ func _frame() -> void:
 				split[CityTimers.LABELS[id]] = CityTimers.usec[id] / 1000.0
 		var vp := get_viewport().get_viewport_rid()
 		var extras := {}
-		for sub: SubViewport in game.find_children("*", "SubViewport", true, false):
-			if sub.render_target_update_mode != SubViewport.UPDATE_DISABLED:
-				var sub_rid := sub.get_viewport_rid()
-				RenderingServer.viewport_set_measure_render_time(sub_rid, true)
-				extras[str(sub.get_path())] = RenderingServer.viewport_get_measured_render_time_gpu(sub_rid)
+		if phase != "загрузка" and is_instance_valid(game):
+			for sub: SubViewport in game.find_children("*", "SubViewport", true, false):
+				if sub.render_target_update_mode != SubViewport.UPDATE_DISABLED:
+					var sub_rid := sub.get_viewport_rid()
+					RenderingServer.viewport_set_measure_render_time(sub_rid, true)
+					extras[str(sub.get_path())] = RenderingServer.viewport_get_measured_render_time_gpu(sub_rid)
 		var row := {"scenario": scenario, "frame": frame_count, "ms": ms, "phase": phase,
 			"actions": pending.duplicate(), "sections_ms": split, "loads_us": Timers.load_paths.duplicate(),
-			"process_ms": process_ms, "draw_ms": draw_ms, "game_hour": game.hour,
-			"clock_busy": game._clock_busy, "hour_total_ms": CityTimers.usec[CityTimers.CITY_HOUR] / 1000.0, "render_cpu_ms": RenderingServer.viewport_get_measured_render_time_cpu(vp),
+			"process_ms": process_ms, "draw_ms": draw_ms, "game_hour": game.hour if is_instance_valid(game) else 0.0,
+			"loading_step": game.loading_step if is_instance_valid(game) and phase == "загрузка" else "",
+			"clock_busy": is_instance_valid(game) and game._clock_busy, "hour_total_ms": CityTimers.usec[CityTimers.CITY_HOUR] / 1000.0, "render_cpu_ms": RenderingServer.viewport_get_measured_render_time_cpu(vp),
 			"gpu_root_ms": RenderingServer.viewport_get_measured_render_time_gpu(vp), "gpu_sub_ms": extras,
 			"pipeline_canvas_mesh_surface_draw_specialization": []}
 		for i in pipes.size():
@@ -362,7 +441,7 @@ func _frame() -> void:
 	before = Time.get_ticks_usec()
 
 
-func _finish() -> void:
+func _finish(startup := false) -> void:
 	await frames(1)
 	active = false
 	Timers.enabled = false
@@ -372,9 +451,10 @@ func _finish() -> void:
 	events.flush()
 	var free: PackedInt64Array = phase_counts.get("свободная симуляция ×3", PackedInt64Array([0, 0, 0, 0]))
 	_line("")
-	_line("Свободная игра ×3 (%s): %d / %d / %d / %d кадров >25 / >33 / >50 / >100 мс." % [scenario, free[0], free[1], free[2], free[3]])
-	_line("")
-	_line("## %s · %d кадров" % [scenario, frame_count])
+	if not startup:
+		_line("Свободная игра ×3 (%s): %d / %d / %d / %d кадров >25 / >33 / >50 / >100 мс." % [scenario, free[0], free[1], free[2], free[3]])
+		_line("")
+	_line("## %s%s · %d кадров" % [scenario, " · загрузка" if startup else "", frame_count])
 	_line("")
 	_line("| >25 мс | >33 мс | >50 мс | >100 мс |")
 	_line("|---:|---:|---:|---:|")

@@ -16,6 +16,7 @@ static var trace_vram := false
 static var usec := PackedInt64Array()
 static var load_paths := {}
 static var person_sections := {}
+static var detail_sections := {}
 
 
 static func memory(label: String) -> void:
@@ -46,8 +47,14 @@ static func loaded(path: String, started: int) -> void:
 			load_paths[path] = elapsed
 
 
+static func detail(label: String, started: int) -> void:
+	if started != 0:
+		detail_sections[label] = float(detail_sections.get(label, 0.0)) + (Time.get_ticks_usec() - started) / 1000.0
+
+
 static func sections() -> Dictionary:
 	var values := person_sections.duplicate()
+	values.merge(detail_sections)
 	for id in LABELS.size():
 		if usec[id] > 0:
 			values[LABELS[id]] = usec[id] / 1000.0
@@ -59,3 +66,4 @@ static func reset_frame() -> void:
 	usec.fill(0)
 	load_paths.clear()
 	person_sections.clear()
+	detail_sections.clear()

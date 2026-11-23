@@ -2,7 +2,7 @@ extends RefCounted
 
 const EFFECTS := ["citizen_cloth", "foliage", "meadow_foliage", "wheat", "field_cover",
 	"water", "stream_flow", "pool_water", "land", "grass_carpet", "cat_fur", "crowd",
-	"cover", "outline", "outline_hull", "kit_reveal", "meadow_rock", "meadow_spin"]
+	"cover", "tint", "outline", "outline_hull", "kit_reveal", "meadow_rock", "meadow_spin"]
 static var _rendered := {}
 static var _materials := {}
 

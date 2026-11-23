@@ -121,6 +121,9 @@ static func opening_art(legion: Legion) -> Dictionary:
 	for room: Dictionary in legion.fort.get("plots", []):
 		var path := room_texture_path(String(room["b"]), int(room["lv"]), not legion.fort_plot_timer(int(room["id"])).is_empty())
 		paths[path] = true
+	paths[room_texture_path("", 0, true)] = true
+	if legion.fort_guide_step() <= Legion.FortGuide.STORE:
+		paths[room_texture_path("store", 1)] = true
 	return paths
 
 
@@ -172,6 +175,10 @@ func setup(legion: Legion, game: Node) -> bool:
 	return true
 
 
+func remember_art(path: String, texture: Texture2D) -> void:
+	_textures[path] = texture
+
+
 func _texture(path: String) -> Texture2D:
 	if not _textures.has(path):
 		var loading := Perf14.begin()
@@ -221,12 +228,12 @@ func _sync_cutaway(sliced: bool) -> void:
 	lg._fort_init()
 	var entries: Array = (lg.fort.get("plots", []) as Array).duplicate()
 	entries.sort_custom(func(a: Dictionary, b: Dictionary): return int(a["id"]) < int(b["id"]))
-	var layout_data: Array = [lg.fort.get("exp", 0), lg.fort.get("grid", [])]
+	var layout_data: Array = [lg.fort.get("exp", 0), lg.fort_grid()]
 	var newcomers := lg.fort_newcomers()
 	var people_data: Array = [newcomers]
 	for p: Dictionary in entries:
-		layout_data.append([p["id"], p["b"], p["lv"], not lg.fort_plot_timer(int(p["id"])).is_empty()])
-		people_data.append(p.get("workers", []))
+		layout_data.append(p["id"])
+		people_data.append([p["b"], p["lv"], p.get("workers", []), not lg.fort_plot_timer(int(p["id"])).is_empty()])
 	for person: Dictionary in lg.soldiers:
 		var state := lg.s_state(person)
 		people_data.append([person["id"], state, person.get("look", {}), lg.worn(person)])
@@ -242,6 +249,14 @@ func _sync_cutaway(sliced: bool) -> void:
 			await get_tree().process_frame
 			if not active or is_queued_for_deletion():
 				return
+	else:
+		var layout_started := Perf14.begin()
+		var room_changed := false
+		for p: Dictionary in entries:
+			room_changed = _update_room(p) or room_changed
+		if room_changed:
+			_refresh_rims()
+		Perf14.detail("fort_room_updates", layout_started)
 	var people_sig := str(people_data)
 	if rebuilt or _people_sig != people_sig:
 		var people_started := Perf14.begin()
@@ -250,6 +265,10 @@ func _sync_cutaway(sliced: bool) -> void:
 		Perf14.end(Perf14.FORT_PEOPLE, people_started)
 	if drag_sid != 0:
 		_refresh_drop_rims()
+
+
+var _room_art_paths := {}
+var _construction_clouds := {}
 
 
 func _build_cutaway(entries: Array) -> void:
@@ -264,6 +283,8 @@ func _build_cutaway(entries: Array) -> void:
 	plots.clear()
 	room_rects.clear()
 	room_sprites.clear()
+	_room_art_paths.clear()
+	_construction_clouds.clear()
 	room_stages.clear()
 	_empty_lights.clear()
 	highlights.clear()
@@ -302,12 +323,7 @@ func _build_cutaway(entries: Array) -> void:
 		var center := rect.get_center()
 		plots[key] = Vector3(center.x, center.y, 0)
 		room_rects[id] = rect
-		var building := not lg.fort_plot_timer(id).is_empty()
-		var level := int(p["lv"])
-		var room := _paint(_rooms, _texture(room_texture_path(String(p["b"]), level, building)), rect)
-		room.name = "Room_%d" % id
-		room_sprites[id] = room
-		room_stages[id] = room_stage(level)
+		_update_room(p)
 		var rim := ReferenceRect.new()
 		rim.position = rect.position
 		rim.size = rect.size
@@ -318,11 +334,7 @@ func _build_cutaway(entries: Array) -> void:
 		_rim_layer.add_child(rim)
 		rim.hide()
 		highlights[key] = rim
-		if building:
-			scaffolds[key] = room
-			_construction_overlay(id, rect)
-		elif String(p["b"]).is_empty():
-			_shade_empty(room, rect, id)
+
 	# У старых фортов бывают ячейки без игрового участка.
 	for i in range(index, cells.size()):
 		var cell := cells[i]
@@ -341,6 +353,41 @@ func _build_cutaway(entries: Array) -> void:
 		zoom = default_zoom
 		_target_zoom = zoom
 	_update_camera()
+
+
+## При стройке меняется только картинка выбранной комнаты, стены и жители остаются на месте.
+func _update_room(plot: Dictionary) -> bool:
+	var id := int(plot["id"])
+	var type := String(plot["b"])
+	var level := int(plot["lv"])
+	var building := not lg.fort_plot_timer(id).is_empty()
+	var path := room_texture_path(type, level, building)
+	room_stages[id] = room_stage(level)
+	if _room_art_paths.get(id, "") == path:
+		return false
+	var rect: Rect2 = room_rects[id]
+	var previous: Sprite2D = room_sprites.get(id)
+	if is_instance_valid(previous):
+		previous.hide()
+		previous.queue_free()
+	if _construction_clouds.has(id):
+		var cloud: Node2D = _construction_clouds[id]
+		cloud.hide()
+		cloud.queue_free()
+		_construction_clouds.erase(id)
+	_empty_lights.erase(id)
+	var key := "plot_%d" % id
+	scaffolds.erase(key)
+	var room := _paint(_rooms, _texture(path), rect)
+	room.name = "Room_%d" % id
+	room_sprites[id] = room
+	_room_art_paths[id] = path
+	if building:
+		scaffolds[key] = room
+		_construction_overlay(id, rect)
+	elif type.is_empty():
+		_shade_empty(room, rect, id)
+	return true
 
 
 func _shade_empty(room: Sprite2D, rect: Rect2, id: int) -> void:
@@ -433,6 +480,7 @@ func _construction_overlay(id: int, rect: Rect2) -> void:
 	dust.name = "ConstructionCloud_%d" % id
 	dust.position = rect.position
 	_rooms.add_child(dust)
+	_construction_clouds[id] = dust
 	var scaffold := Node2D.new()
 	scaffold.name = "Scaffold"
 	dust.add_child(scaffold)
