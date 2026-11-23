@@ -481,9 +481,6 @@ func door(b: Dictionary, hold: float) -> void:
 
 
 func _door_tick(sdt: float) -> void:
-	# Обычное снятие постройки удаляет запись двери через hidden().
-	# Только ролик может временно обнулить детали, сохранив эту запись.
-	var check_hidden: bool = game.stories != null and not game.stories._hid_parts.is_empty()
 	for id in _doors.keys():
 		var d: Dictionary = _doors[id]
 		var k: float = d["k"]
@@ -497,20 +494,16 @@ func _door_tick(sdt: float) -> void:
 		if k <= 0.0:
 			for s: Array in d["subs"]:
 				var mm: MultiMesh = s[0]
-				var slot: int = s[1]
-				if slot < mm.instance_count and (not check_hidden or not _dead(mm.get_instance_transform(slot))):
-					mm.set_instance_transform(slot, s[2])       # как было — в точности
+				if int(s[1]) < mm.instance_count and not _dead(mm.get_instance_transform(int(s[1]))):
+					mm.set_instance_transform(int(s[1]), s[2])       # как было — в точности
 			_doors.erase(id)
 			continue
 		if k == k0:
 			continue
 		var subs: Array = d["subs"]
-		if check_hidden:
-			var s0: Array = subs[0]
-			var first_mesh: MultiMesh = s0[0]
-			var first_slot: int = s0[1]
-			if first_slot >= first_mesh.instance_count or _dead(first_mesh.get_instance_transform(first_slot)):
-				continue                   # постройку спрятали (ролик) — не показывать её дверь
+		var s0: Array = subs[0]
+		if int(s0[1]) >= (s0[0] as MultiMesh).instance_count or _dead((s0[0] as MultiMesh).get_instance_transform(int(s0[1]))):
+			continue                       # постройку спрятали (ролик) — не показывать её дверь
 		var a := DOOR_ANG * smoothstep(0.0, 1.0, k)
 		var ra := Basis(Vector3.UP, a)
 		var rb := Basis(Vector3.UP, -a)

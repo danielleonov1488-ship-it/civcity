@@ -16,7 +16,6 @@ const BASE := 0.72
 const K := SIZE / BASE
 var anim: AnimationPlayer
 var lod_acc := 0.0                       # движения по удалённости (Gfx._anims): накопленное время до следующего шага
-var walk_offscreen := false              # за краем кадра с запасом (People)
 var lod_k := 1                           # …и раз во сколько кадров его считать (1 — каждый кадр); им же пользуется People
 # Ручной шаг хранит игровое время, уже с учётом speed_scale.
 var batch_acc := 0.0
@@ -903,12 +902,9 @@ func batch_flush(force := false) -> void:
 	if is_zero_approx(batch_acc) and not force:
 		return
 	var sp := anim.speed_scale
-	if sp == 1.0:
-		anim.advance(batch_acc)
-	else:
-		anim.speed_scale = 1.0
-		anim.advance(batch_acc)
-		anim.speed_scale = sp
+	anim.speed_scale = 1.0
+	anim.advance(batch_acc)
+	anim.speed_scale = sp
 	batch_acc = 0.0
 	batch_dirty = false
 	batch_steps += 1
@@ -967,9 +963,8 @@ func set_carry(on: bool) -> void:
 func set_alpha(a: float) -> void:
 	if meshes.is_empty():
 		meshes = find_children("*", "MeshInstance3D", true, false)
-	var transparency := clampf(1.0 - a, 0.0, 1.0)
 	for m: MeshInstance3D in meshes:
-		m.transparency = transparency
+		m.transparency = clampf(1.0 - a, 0.0, 1.0)
 
 
 ## Длина движения в секундах (0 — нет такого)
