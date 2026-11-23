@@ -87,6 +87,28 @@ func set_view(t: Vector3, yaw_deg: float, pitch_deg: float, d: float) -> void:
 	_update(true)
 
 
+## Вид и цели сглаживания на время проверки скорости.
+func capture_view() -> Array:
+	return [target, yaw, pitch, dist, _target_t, _yaw_t, _pitch_t, _dist_t, cam.transform,
+		attrs.dof_blur_far_distance, attrs.dof_blur_far_transition, attrs.dof_blur_near_distance, attrs.dof_blur_near_transition]
+
+
+func restore_view(view: Array) -> void:
+	target = view[0]
+	yaw = view[1]
+	pitch = view[2]
+	dist = view[3]
+	_target_t = view[4]
+	_yaw_t = view[5]
+	_pitch_t = view[6]
+	_dist_t = view[7]
+	cam.transform = view[8]
+	attrs.dof_blur_far_distance = view[9]
+	attrs.dof_blur_far_transition = view[10]
+	attrs.dof_blur_near_distance = view[11]
+	attrs.dof_blur_near_transition = view[12]
+
+
 ## Кадр ролика: камера в pos смотрит на look; резкость миниатюры — на look
 func cine_look(pos: Vector3, look: Vector3) -> void:
 	cam.global_position = pos

@@ -2687,6 +2687,7 @@ func _process(dt: float) -> void:
 func _process_profiled(dt: float) -> void:
 	if not ready_done:
 		return
+	var testing_speed := gfx.speed_test_active()
 	var hidden := legion_city_hidden()
 	_city_visuals(hidden)
 	if not hidden:
@@ -2742,7 +2743,7 @@ func _process_profiled(dt: float) -> void:
 				for ap in a.find_children("*", "AnimationPlayer", true, false):
 					(ap as AnimationPlayer).speed_scale = speed
 	if not hidden:
-		if rig and (rig.cine or (photo != null and photo.on)):
+		if rig and (testing_speed or rig.cine or (photo != null and photo.on)):
 			_plot_hover(Vector2i(-1, -1))         # в ролике камеру ведёт он (и в режиме фото): без подсветки участка под мышью
 			brush_ring.visible = false            # …и без кольца кисти на земле (подсветку домов прячет cover.gd)
 			brush_box.visible = false
@@ -2754,7 +2755,8 @@ func _process_profiled(dt: float) -> void:
 		rig._yaw_t += dt * 0.03
 		if _autogo != "" and frame == 60:
 			hud._menu_go(_autogo)
-	if autosave_t > 90.0 and not _clock_busy and can_save and settings.get("autosave", true) and moving.is_empty() and moving_nature.is_empty():
+	if autosave_t > 90.0 and not _clock_busy and can_save and not testing_speed \
+			and settings.get("autosave", true) and moving.is_empty() and moving_nature.is_empty():
 		autosave_t = 0.0
 		_autosave()
 	if shot_path != "" and frame == shot_frame:

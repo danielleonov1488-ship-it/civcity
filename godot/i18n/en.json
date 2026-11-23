@@ -5921,5 +5921,18 @@
 	"Жители…": "Residents…",
 	"Откройте дом семьи.": "Open the family’s house.",
 	"Открыть дом": "Open house",
-	"Семья въезжает…": "A family is moving in…"
+	"Семья въезжает…": "A family is moving in…",
+	"Проверка скорости": "Speed test",
+	"Готовим проверку…": "Preparing the test…",
+	"Идёт проверка… %d с": "Speed test running… %d s",
+	"Стоп": "Stop",
+	"Мало кадров для оценки": "Too few frames to rate",
+	"Игра идёт плавно (%d кадров/с)": "Smooth gameplay (%d FPS)",
+	"Иногда подтормаживает": "Occasional stutters",
+	"Игре тяжело": "Low performance",
+	"Советуем: %s": "Recommended: %s",
+	"Включить": "Apply",
+	"Скопировать отчёт": "Copy report",
+	"Отчёт скопирован": "Report copied",
+	"Не удалось сохранить отчёт": "Could not save the report"
 }
