@@ -33,6 +33,7 @@ var max_place_frame_usec := 0
 var _place_frame := -1
 var _place_frame_usec := 0
 
+static var reuse_tiled_sources := true      # проба PERF14-a6: кеш сцен деталей для плиток
 static var trim_freed_slots := true          # тест PERF14-e6 сравнивает прежний и короткий буфер
 static var split_on := true                # для сравнений «было/стало» (test_perf split=0)
 var _col := Color.WHITE                     # цвет экземпляра для последней группы из _group
@@ -94,7 +95,7 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 			(ssub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # нутро тени не бросает
 		g["subs"].append(ssub)
 	else:
-		var source_key := key.trim_suffix(ts) if tile.x >= 0 and share_perf_meshes else ""
+		var source_key := key.trim_suffix(ts) if tile.x >= 0 and share_perf_meshes and reuse_tiled_sources else ""
 		var sources: Array = _tiled_sources.get(source_key, [])
 		if not _tiled_sources.has(source_key):
 			var src := Synty.make(name, remap)

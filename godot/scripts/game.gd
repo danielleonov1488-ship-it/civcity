@@ -765,6 +765,8 @@ func _ready() -> void:
 		var baker := prepare_ground_bake()
 		if baker != null:
 			await baker.prime()
+	if stage_draw and shadow_depth != null and mode in ["play", "new"]:
+		await _warm_city_view(br.ffly)
 	_startup_mark("first_view")
 	ready_done = true
 	_startup_mark("ready_done")
@@ -1081,6 +1083,74 @@ static func land_shader(distance_lod: bool) -> Shader:
 func _update_shadow_depth() -> void:
 	# Солнце — единственный источник теней в мире города; свет Легиона в другом Viewport.
 	shadow_depth.update(get_viewport().get_camera_3d(), sun)
+
+
+func _warm_city_view(fireflies: GPUParticles3D) -> void:
+	# Те же параметры проходов и сетки, что в игре, пока город закрыт заставкой.
+	var view := rig.capture_view()
+	var was_cine: bool = rig.cine
+	var grass_processing := grass.is_processing()
+	var saved_hour := hour
+	rig.cine = true
+	grass.set_process(false)
+	var mid := Vector3(Land.SIZE * 0.5, Land.BASE_Y, Land.SIZE * 5.0 / 12.0)
+	var edge := Land.SIZE - 24.0
+	for view_angle: Array in [[mid, 15.0, 55.0, 240.0],
+			[Vector3(edge, Land.BASE_Y, 24.0), 155.0, 50.0, 130.0],
+			[Vector3(24.0, Land.BASE_Y, edge), -25.0, 50.0, 130.0]]:
+		rig.set_view(view_angle[0], view_angle[1], view_angle[2], view_angle[3])
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+	rig.restore_view(view)
+	if _applied_quality in ["high", "medium"]:
+		await _warm_verylow_view()
+	_set_hour(23.0)
+	await RenderingServer.frame_post_draw
+	# Широкий ночной кадр покрывает фонари и материалы за границей стартового вида.
+	rig.set_view(Vector3(Land.START.x, Land.BASE_Y, Land.START.y), 15.0, 42.0, 100.0)
+	if _applied_quality == "verylow":
+		await RenderingServer.frame_post_draw
+	else:
+		await CityWarmup.render_particles(self, weather, seasons, fireflies, rig.cam)
+	rig.restore_view(view)
+	_set_hour(saved_hour)
+	grass.set_process(grass_processing)
+	rig.cine = was_cine
+	await RenderingServer.frame_post_draw
+	_startup_mark("city_pipelines")
+
+
+func _warm_verylow_view() -> void:
+	# Первый переход убирает MSAA и меняет сетки лугов. Рисуем этот проход за заставкой.
+	var vp := get_viewport()
+	var msaa := vp.msaa_3d
+	var scale_mode := vp.scaling_3d_mode
+	var scale := vp.scaling_3d_scale
+	var shadows := sun.shadow_enabled
+	var ssao := env.ssao_enabled
+	var glow := env.glow_enabled
+	var near_blur := rig.attrs.dof_blur_near_enabled
+	var far_blur := rig.attrs.dof_blur_far_enabled
+	sun.shadow_enabled = false
+	env.ssao_enabled = false
+	env.glow_enabled = false
+	rig.attrs.dof_blur_near_enabled = false
+	rig.attrs.dof_blur_far_enabled = false
+	vp.msaa_3d = Viewport.MSAA_DISABLED
+	Gfx._set_scale(vp, "verylow", Gfx.BASE_SCALE["verylow"], Gfx.hidpi_scale())
+	MeadowNature.quality(self, true)
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	MeadowNature.quality(self, false)
+	CityWarmup.release_sources()
+	vp.msaa_3d = msaa
+	vp.scaling_3d_mode = scale_mode
+	vp.scaling_3d_scale = scale
+	sun.shadow_enabled = shadows
+	env.ssao_enabled = ssao
+	env.glow_enabled = glow
+	rig.attrs.dof_blur_near_enabled = near_blur
+	rig.attrs.dof_blur_far_enabled = far_blur
 
 
 # ---------- небо, солнце, свет, цвет ----------

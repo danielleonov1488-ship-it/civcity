@@ -49,14 +49,18 @@ static var _tex_small := false         # «Очень низкая»: больш
 static var _grand_low := false         # большие постройки этапа 5 показаны с лёгкими деталями («Низкая», CatGrand.LOW)
 static var _small := {}                # путь картинки 4096² → её копия 2048² (ImageTexture)
 static var _not_big := {}              # картинки меньше 4096² — копия не нужна
-static var _queue := []                # [материал, свойство]: картинки меняются по одной за кадр (Gfx._process), не в нажатии
+static var _queue: Dictionary[String, Array] = {}  # путь → [материал, свойство]
+static var _swap_rescan := false       # подхватить материалы, созданные при смене качества
 static var _jobs := {}                 # путь → задача WorkerThreadPool: копия готовится в фоне
 static var _imgs := {}                 # путь → готовая в фоне копия (Image; null — не вышло); под _mx
 static var _req := {}                  # оригиналы, которые читаются в фоне (ResourceLoader) при возврате с «Очень низкой»
 static var _mx := Mutex.new()
 static var _tdir := ""
+static var swap_trace: FileAccess
+static var _job_timings := {}
 static var readbacks := 0              # сколько копий сделано чтением с видеокарты (запасной путь; test_gfx ждёт 0)
 const SMALL_FROM := 4096
+const SWAP_READERS := 2
 const T2K := "T2K1"                    # копия на диске: метка, ширина, высота, формат, мипмапы, точки (zstd)
 
 var game
@@ -375,7 +379,6 @@ static func apply(g) -> void:
 			for id in g.visuals:
 				for a in (g.visuals[id] as Dictionary).get("actors", []):
 					HandProps.drop(a)
-	small_textures(q == "verylow")
 	Perf14.detail("quality_props_and_textures", started)
 	started = Perf14.begin()
 	if g.has_method("meadow_quality"):
@@ -397,6 +400,7 @@ static func apply(g) -> void:
 					g._show(g.city.buildings[id])
 	if g.get("clouds") != null:
 		g.clouds.set_enabled(not low)          # тени облаков — только «Высокая» и «Средняя»
+	small_textures(q == "verylow")
 	if g.gfx == null:
 		swap_all()                         # загрузка (узла Gfx ещё нет), снимки — сразу; в игре — по одной за кадр
 	# предел кадров (владелец 12.11: «минимум 120»): по умолчанию — сколько показывает монитор (вертикальная синхронизация,
@@ -418,39 +422,59 @@ static func _set_scale(vp: Viewport, q: String, scale: float, hidpi: float) -> v
 ## уровни — снова оригиналы. Без чтений с видеокарты (на слабых падала игра): копия делается из файла картинки (.ctex);
 ## у сжатой (Basis, 1.9) это её же мипмапы со второго (десятки мс), у несжатой — уменьшение, и она один раз на сборку
 ## кладётся на диск (user://tex2k, как значки в hud._icon_dir) — дальше берётся оттуда, без картинки 4096².
-## Смена уровня в игре — по одной картинке за кадр (копии и оригиналы готовятся в фоне), а не всё в нажатии.
+## Копии и оригиналы готовятся в фоне, а готовые меняются в пределах бюджета кадра.
 ## Новые материалы (новый облик, новый житель) берут картинки через Gfx.tex — сразу маленькие
 static func small_textures(on: bool) -> void:
 	if on == _tex_small:
 		return
 	_tex_small = on
 	_queue.clear()
+	_swap_rescan = true
+	_collect_swap()
+	_trace_swap("small" if on else "original", "", 0)
+
+
+static func _collect_swap() -> void:
 	var mats := []
 	mats.append_array(Synty._mats.values())
 	mats.append_array(Citizen._plain_mats.values())
 	mats.append_array(Citizen._mats.values())
+	mats.append_array(Crowd._mats.values())
+	mats.append_array(KitLib._mats.values())
 	var mb = Parts._special.get("#marble")
 	if mb is PrimitiveMesh and (mb as PrimitiveMesh).material:
 		mats.append((mb as PrimitiveMesh).material)
 	for m in mats:
 		if m is BaseMaterial3D:
-			for p: String in ["albedo_texture", "normal_texture"]:
-				if m.get(p) is Texture2D:
-					_queue.append([m, p])
-		elif m is ShaderMaterial and (m as ShaderMaterial).get_shader_parameter("albedo_tex") is Texture2D:
-			_queue.append([m, "albedo_tex"])
-	# Оригиналы запрашиваем сразу. Копии запускает очередь, когда до них доходит.
-	for e: Array in _queue:
-		var t := _tex_get(e[0], e[1])
-		if not on and t.has_meta("orig"):
-			var o := str(t.get_meta("orig"))
-			if not _req.has(o) and not ResourceLoader.has_cached(o) and ResourceLoader.load_threaded_request(o) == OK:
-				_req[o] = true
+			_enqueue(m, "albedo_texture")
+			_enqueue(m, "normal_texture")
+		elif m is ShaderMaterial:
+			_enqueue(m, "albedo_tex")
+
+
+static func _enqueue(m: Material, property: String) -> void:
+	var t := _tex_get(m, property)
+	if t == null:
+		return
+	var path := _swap_path(t)
+	if path == "":
+		return
+	if not _queue.has(path):
+		_queue[path] = []
+	_queue[path].append([m, property])
+
+
+static func _swap_path(t: Texture2D) -> String:
+	if not _tex_small:
+		return str(t.get_meta("orig")) if t.has_meta("orig") else ""
+	if t is CompressedTexture2D and t.get_width() >= SMALL_FROM and not _not_big.has(t.resource_path):
+		return t.resource_path
+	return ""
 
 
 ## Идёт замена картинок (Gfx._process зовёт swap_step каждый кадр)
 static func swap_busy() -> bool:
-	return not _queue.is_empty() or not _req.is_empty() or (not _tex_small and not _jobs.is_empty())
+	return _swap_rescan or not _queue.is_empty()
 
 
 ## Всё сразу, без фона: загрузка города (узла Gfx ещё нет), снимки, замеры test_perf
@@ -458,41 +482,61 @@ static func swap_all() -> void:
 	swap_step(0.0, true)
 
 
-## Картинки из очереди: за кадр — пока не прошло ms (хотя бы одна); то, что ещё готовится в фоне, ждёт следующего
-## кадра. sync — всё сейчас. true — ещё не всё
-static func swap_step(ms := 4.0, sync := false) -> bool:
+## Пока один файл читается, можно применить другой. За кадр загружаем в видеопамять не больше одной копии.
+static func swap_step(ms := 2.0, sync := false) -> bool:
 	var t0 := Time.get_ticks_usec()
+	var deadline := t0 + int(ms * 1000.0)
 	_drop_stale(sync)
-	while not _queue.is_empty():
-		var e: Array = _queue[0]
-		var t := _tex_get(e[0], e[1])
-		var r = _next(t, sync)                 # картинка или false — ещё готовится
+	for path: String in _queue.keys():
+		var item_started := Time.get_ticks_usec()
+		var upload := _tex_small and not _small.has(path)
+		var r = _next(path, sync)
 		if typeof(r) == TYPE_BOOL:
-			return true
-		if r != t:
-			_tex_set(e[0], e[1], r)
-		_queue.pop_front()
-		if not sync and Time.get_ticks_usec() - t0 > ms * 1000.0:
+			_trace_swap("wait", path, item_started)
+			continue
+		var slots: Array = _queue[path]
+		var applied := 0
+		if r != null:
+			while not slots.is_empty():
+				var e: Array = slots.pop_back()
+				var t := _tex_get(e[0], e[1])
+				if t != null and _swap_path(t) == path:
+					_tex_set(e[0], e[1], r)
+					applied += 1
+				if not sync and Time.get_ticks_usec() >= deadline:
+					break
+		if slots.is_empty() or r == null:
+			_queue.erase(path)
+		_trace_swap("set:%d" % applied if r != null else "skip", path, item_started)
+		if not sync and ((upload and r != null) or Time.get_ticks_usec() >= deadline):
 			break
-	if _queue.is_empty() and not _tex_small:
-		_drain_original_requests(sync)
-		if _jobs.is_empty():
+	if _queue.is_empty():
+		if _swap_rescan:
+			_swap_rescan = false
+			_collect_swap()
+			if not _queue.is_empty():
+				_trace_swap("rescan", "", 0)
+				if sync:
+					return swap_step(ms, true)
+		if _queue.is_empty() and not _tex_small:
+			_drain_original_requests(sync)
 			_small.clear()                         # оригиналы вернулись — копии больше не нужны
+	if swap_trace:
+		_trace_swap("step", "", t0)
 	return swap_busy()
 
 
 ## Уровень успели сменить обратно: ненужные копии и оригиналы из фона — забрать и отпустить
 static func _drop_stale(sync: bool) -> void:
-	if not _tex_small:
-		for k: String in _jobs.keys():
-			if sync or WorkerThreadPool.is_task_completed(_jobs[k]):
-				WorkerThreadPool.wait_for_task_completion(_jobs[k])
-				_jobs.erase(k)
-		if _jobs.is_empty() and not _imgs.is_empty():
+	for path: String in _jobs.keys():
+		if _tex_small and _queue.has(path):
+			continue
+		if sync or WorkerThreadPool.is_task_completed(_jobs[path]):
+			_finish_job(path)
 			_mx.lock()
-			_imgs.clear()
+			_imgs.erase(path)
 			_mx.unlock()
-	else:
+	if _tex_small:
 		_drain_original_requests(sync)
 
 
@@ -506,38 +550,47 @@ static func _drain_original_requests(sync: bool) -> void:
 		_req.erase(path)
 
 
-## Что поставить вместо картинки t сейчас (та же — менять нечего); false — ещё готовится в фоне
-static func _next(t: Texture2D, sync: bool):
-	if t == null:
-		return t
+## null — оставляем оригинал, false — файл ещё готовится.
+static func _next(path: String, sync: bool):
 	if _tex_small:
-		if not (t is CompressedTexture2D) or t.resource_path == "" or t.get_width() < SMALL_FROM:
-			return t
-		var key := t.resource_path
-		if _small.has(key):
-			return _small[key]
-		if not sync and not _jobs.has(key):
-			_start(key)
-		if _jobs.has(key):
-			if not sync and not WorkerThreadPool.is_task_completed(_jobs[key]):
+		if _small.has(path):
+			return _small[path]
+		if not sync and not _jobs.has(path) and not _not_big.has(path):
+			if _jobs.size() >= SWAP_READERS:
 				return false
-			WorkerThreadPool.wait_for_task_completion(_jobs[key])
-			_jobs.erase(key)
-		var it := _small_tex(key)
-		return it if it else (t if _not_big.has(key) else _readback(t))
-	if not t.has_meta("orig"):
-		return t
-	var o := str(t.get_meta("orig"))
-	if _req.has(o):
-		var s := ResourceLoader.load_threaded_get_status(o)
-		if s == ResourceLoader.THREAD_LOAD_IN_PROGRESS and not sync:
+			_start(path)
+		if _jobs.has(path):
+			if not sync and not WorkerThreadPool.is_task_completed(_jobs[path]):
+				return false
+			_finish_job(path)
+		return _small_tex(path)
+	if not _req.has(path):
+		var cached := ResourceLoader.get_cached_ref(path) as Texture2D
+		if cached != null:
+			return cached
+		if sync:
+			return load(path)
+		if _req.size() >= SWAP_READERS:
 			return false
-		_req.erase(o)
-		if s == ResourceLoader.THREAD_LOAD_LOADED or s == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
-			var r = ResourceLoader.load_threaded_get(o)
-			if r is Texture2D:
-				return r
-	return load(o)
+		if ResourceLoader.load_threaded_request(path) != OK:
+			return null
+		_req[path] = true
+		_trace_swap("request", path, 0)
+	var status := ResourceLoader.load_threaded_get_status(path)
+	if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS and not sync:
+		return false
+	_req.erase(path)
+	return ResourceLoader.load_threaded_get(path) if status != ResourceLoader.THREAD_LOAD_INVALID_RESOURCE else null
+
+
+static func _finish_job(path: String) -> void:
+	WorkerThreadPool.wait_for_task_completion(_jobs[path])
+	_jobs.erase(path)
+	if _job_timings.has(path):
+		var timings: Array = _job_timings[path]
+		_job_timings.erase(path)
+		_trace_swap("worker_wait", path, 0, timings[0])
+		_trace_swap("worker_decode", path, 0, timings[1])
 
 
 static func _tex_get(m: Material, p: String) -> Texture2D:
@@ -556,9 +609,14 @@ static func tex(path: String) -> Texture2D:
 	if path == "":
 		return null
 	if _tex_small:
+		# Пока копия готовится, новый материал берёт оригинал. Повторный обход подменит его тоже.
+		if _queue.has(path) and not _small.has(path):
+			var original := ResourceLoader.get_cached_ref(path) as Texture2D
+			if original != null:
+				_swap_rescan = true
+				return original
 		if _jobs.has(path):
-			WorkerThreadPool.wait_for_task_completion(_jobs[path])
-			_jobs.erase(path)
+			_finish_job(path)
 		var it := _small_tex(path)
 		if it:
 			return it
@@ -586,6 +644,7 @@ static func _small_tex(path: String) -> ImageTexture:
 			return null
 		img = _prep_img(ctex, _cache_file(path, ctex))
 	if img == null:
+		_not_big[path] = true
 		return null
 	var it := ImageTexture.create_from_image(img)
 	it.set_meta("orig", path)
@@ -595,21 +654,34 @@ static func _small_tex(path: String) -> ImageTexture:
 
 ## Копия — в фоне (WorkerThreadPool): чтение файла, распаковка, уменьшение и запись на диск — без видеокарты
 static func _start(path: String) -> void:
-	if _small.has(path) or _jobs.has(path) or _not_big.has(path):
-		return
-	var ctex := _ctex(path)
-	if ctex == "":
-		return
-	if not _ctex_small_ok(ctex):
-		_not_big[path] = true
-		return
-	var cache := _cache_file(path, ctex)
+	_tex_dir()
+	var queued := Time.get_ticks_usec()
+	var timings: Array[int] = []
+	var tracing := swap_trace != null
+	if swap_trace:
+		_job_timings[path] = timings
 	var job := func():
-		var img := _prep_img(ctex, cache)
+		var started := Time.get_ticks_usec()
+		var img: Image
+		var ctex := _ctex(path)
+		if ctex != "" and _ctex_small_ok(ctex):
+			img = _prep_img(ctex, _cache_file(path, ctex))
+		if tracing:
+			timings.append(started - queued)
+			timings.append(Time.get_ticks_usec() - started)
 		_mx.lock()
 		_imgs[path] = img
 		_mx.unlock()
-	_jobs[path] = WorkerThreadPool.add_task(job, false, "Gfx: копия картинки")
+	_jobs[path] = WorkerThreadPool.add_task(job, true, "Gfx: копия картинки")
+	_trace_swap("start", path, 0)
+
+
+static func _trace_swap(event: String, path: String, started: int, measured := 0) -> void:
+	if swap_trace == null:
+		return
+	var now := Time.get_ticks_usec()
+	swap_trace.store_csv_line(PackedStringArray([str(now), str(Engine.get_process_frames()), event,
+		str(_queue.size()), str(_jobs.size()), str(_req.size()), str(now - started if started else measured), path]), "\t")
 
 
 ## Копия с диска, иначе из файла картинки (и сразу на диск). Можно из фона
@@ -1047,8 +1119,8 @@ func _in_city() -> bool:
 
 
 func _process(dt: float) -> void:
-	if swap_busy():
-		swap_step()                            # «Очень низкая» и обратно: по картинке за кадр
+	if swap_busy() or not _jobs.is_empty() or not _req.is_empty():
+		swap_step()                            # «Очень низкая» и обратно: готовые картинки в пределах бюджета кадра
 	if not game.ready_done:
 		return
 	var real := dt / maxf(0.0001, Engine.time_scale)
