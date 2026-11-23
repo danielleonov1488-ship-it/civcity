@@ -300,9 +300,8 @@ func _timed_press(b: BaseButton) -> float:
 func _press_quality(panel: Control, quality: String) -> void:
 	var b := panel.find_child("q_" + quality, true, false) as Button
 	var ms := _timed_press(b)
-	var depth := not Gfx.is_low(quality)
-	check(game.settings["quality"] == quality and Gfx.depth_prepass() == depth
-		and game.env.ssao_enabled == depth, "%s: нажатие за %.1f мс, проход глубины и SSAO по пресету" % [b.text, ms])
+	check(game.settings["quality"] == quality and Gfx.depth_prepass()
+		and game.env.ssao_enabled == not Gfx.is_low(quality), "%s: нажатие за %.1f мс, проход глубины сохранён, SSAO по пресету" % [b.text, ms])
 	await frames(3)
 
 
@@ -377,8 +376,8 @@ func _run() -> void:
 	var press_ms := _timed_press(bv)
 	var busy := Gfx.swap_busy()
 	await frames(3)
-	check(busy and press_ms < SWITCH_LIMIT_MS and not Gfx.depth_prepass(),
-		"«Очень низкая»: без прохода глубины, картинки меняются по одной за кадр (нажатие — %.1f мс)" % press_ms, [busy, press_ms])
+	check(busy and press_ms < SWITCH_LIMIT_MS and Gfx.depth_prepass(),
+		"«Очень низкая»: проход глубины сохранён, картинки меняются по одной за кадр (нажатие — %.1f мс)" % press_ms, [busy, press_ms])
 	var vp := get_viewport()
 	check(game.settings["quality"] == "verylow" and bool(game.settings.get("quality_user", false)), "«Очень низкая» нажата: выбор игрока (quality_user)")
 	check(not game.sun.shadow_enabled and not game.env.ssao_enabled and game.people.max_vis == 40

@@ -279,9 +279,8 @@ static func apply(g) -> void:
 	var ml := q == "medium" and medium_light
 	var tune := low and weak_tuning
 	var started := Perf14.begin()
-	var prepass := not low
-	if depth_prepass() != prepass:
-		ProjectSettings.set_setting(DEPTH_PREPASS, prepass)
+	# Forward+ кэширует конвейеры с проверкой глубины на равенство.
+	# Если выключить проход на ходу, ранее собранные конвейеры теряют геометрию.
 	env.sdfgi_enabled = false
 	env.ssil_enabled = false
 	env.ssao_enabled = not low or tune
