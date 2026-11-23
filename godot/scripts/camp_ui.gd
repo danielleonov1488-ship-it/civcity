@@ -790,7 +790,7 @@ func _roster_signature() -> String:
 func _refresh() -> void:
 	lg.watch_fort_lessons()
 	FortPerson.bind_portrait(_profile_art, FortPerson.hero_person(lg), lg.worn(lg.hero_dweller()))
-	if is_instance_valid(diorama):
+	if is_instance_valid(diorama) and not opening:
 		diorama.sync()
 	population_button.text = "%d/%d" % [lg.fort_population(), lg.roster_cap()]
 	population_button.tooltip_text = I18n.t("Жители форта · у ворот: %d") % lg.fort_newcomers().size()
@@ -1893,6 +1893,21 @@ func _open_diorama(serial: int) -> void:
 		return
 	var started := Perf14.begin()
 	_start_diorama()
+	Perf14.end(Perf14.CAMP_BUILD, started)
+	if diorama is FortCutaway:
+		var cutaway := diorama as FortCutaway
+		await tree.process_frame
+		if serial != _opening_serial or not visible:
+			return
+		await cutaway.prepare_opening()
+		if serial != _opening_serial or not visible:
+			return
+		await tree.process_frame
+		if serial != _opening_serial or not visible:
+			return
+		cutaway.show()
+		background.hide()
+	started = Perf14.begin()
 	_refresh()
 	_layout()
 	opening = false
@@ -1909,6 +1924,9 @@ func _start_diorama() -> void:
 	if not USE_3D or not lg.v3() or is_instance_valid(diorama):
 		return
 	var scene: Camp3D = FortCutaway.new() if use_cutaway else Camp3D.new()
+	if scene is FortCutaway:
+		(scene as FortCutaway).defer_initial_sync = true
+		scene.hide()
 	add_child(scene)
 	move_child(scene, 1)
 	if not scene.setup(lg, hud.game):
@@ -1944,7 +1962,8 @@ func _start_diorama() -> void:
 	else:
 		diorama.view_changed.connect(_layout)
 	diorama.building_pressed.connect(_select_fort_room if diorama is FortCutaway else show_building)
-	background.hide()
+	if not (diorama is FortCutaway):
+		background.hide()
 
 
 func _stop_diorama() -> void:

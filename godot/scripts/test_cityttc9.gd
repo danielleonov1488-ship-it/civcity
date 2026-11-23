@@ -217,5 +217,5 @@ func check_house(home: Dictionary, overflow: bool) -> void:
 	for picture: TextureRect in sources:
 		var type := String(picture.get_meta("building_type", ""))
 		var bonus := picture.get_parent().get_node_or_null("SourceBonus") as Label
-		check(hud.icons.has(type) and picture.texture == hud.icons[type], "actual building thumbnail " + type)
+		check(hud.icons.has(type) and picture.texture == hud.building_icon(type), "actual building thumbnail " + type)
 		check(bonus != null and bonus.text.begins_with("+") and bonus.text.ends_with("%"), "covering bonus shown under picture " + type)

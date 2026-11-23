@@ -1,5 +1,7 @@
 extends Node3D
 
+const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
+
 const Step = Legion.FortGuide
 const Look = preload("res://scripts/legion_look.gd")
 const Fixture = preload("res://scripts/test_fort_fixture.gd")
@@ -22,7 +24,7 @@ func _ready() -> void:
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
 	if not check(DirAccess.make_dir_recursive_absolute(out) == OK, "shot directory " + out):
 		print("LEGION12 DONE fails=", fails)
-		get_tree().quit(1)
+		TestSuite.finish(self, 1)
 		return
 	Game.boot = {"new": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate() as Game
@@ -32,7 +34,7 @@ func _ready() -> void:
 	await _run()
 	Legion.clock = previous_clock
 	print("LEGION12 DONE fails=", fails)
-	get_tree().quit(0 if fails == 0 else 1)
+	TestSuite.finish(self, 0 if fails == 0 else 1)
 
 
 func check(ok: bool, reason: String) -> bool:
@@ -49,6 +51,10 @@ func frames(count: int) -> void:
 
 func ready_ui() -> void:
 	await frames(6)
+	var deadline := Time.get_ticks_msec() + 10000
+	while camp.opening and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	check(not camp.opening, "fort room controls ready")
 	camp._layout_guide()
 	await frames(2)
 
@@ -94,6 +100,8 @@ func drag(sid: int, room: int, newcomer: bool) -> bool:
 	await ready_ui()
 	spot("person %d" % sid)
 	var view := camp.diorama as FortCutaway
+	if not check(is_instance_valid(view), "fort cutaway ready for drag"):
+		return false
 	view.begin_person_move(sid, newcomer, view.person_project(sid, newcomer))
 	view.update_person_move(view.project(room))
 	await ready_ui()

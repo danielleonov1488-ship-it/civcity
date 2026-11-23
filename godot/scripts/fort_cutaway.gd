@@ -124,6 +124,9 @@ static func opening_art(legion: Legion) -> Dictionary:
 	return paths
 
 
+var defer_initial_sync := false
+
+
 func setup(legion: Legion, game: Node) -> bool:
 	lg = legion
 	city_game = game
@@ -162,7 +165,8 @@ func setup(legion: Legion, game: Node) -> bool:
 	_dust.fill_from = Vector2(0.5, 0.5)
 	_dust.fill_to = Vector2(1, 0.5)
 	active = true
-	sync()
+	if not defer_initial_sync:
+		sync()
 	resized.connect(_resize_view)
 	mouse_exited.connect(func(): highlight(""))
 	return true
@@ -202,6 +206,16 @@ func _paint(parent: Node2D, tex: Texture2D, dest: Rect2, region := Rect2()) -> S
 
 
 func sync() -> void:
+	if not defer_initial_sync:
+		_sync_cutaway(false)
+
+
+func prepare_opening() -> void:
+	await _sync_cutaway(true)
+	defer_initial_sync = false
+
+
+func _sync_cutaway(sliced: bool) -> void:
 	if not active:
 		return
 	lg._fort_init()
@@ -220,12 +234,20 @@ func sync() -> void:
 	var sig := str(layout_data)
 	var rebuilt := sig != _layout_sig
 	if rebuilt:
+		var layout_started := Perf14.begin()
 		_layout_sig = sig
 		_build_cutaway(entries)
+		Perf14.end(Perf14.FORT_LAYOUT, layout_started)
+		if sliced:
+			await get_tree().process_frame
+			if not active or is_queued_for_deletion():
+				return
 	var people_sig := str(people_data)
 	if rebuilt or _people_sig != people_sig:
+		var people_started := Perf14.begin()
 		_people_sig = people_sig
 		_build_people(entries, newcomers)
+		Perf14.end(Perf14.FORT_PEOPLE, people_started)
 	if drag_sid != 0:
 		_refresh_drop_rims()
 

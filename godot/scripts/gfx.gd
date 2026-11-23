@@ -391,8 +391,10 @@ static func swap_step(ms := 4.0, sync := false) -> bool:
 		_queue.pop_front()
 		if not sync and Time.get_ticks_usec() - t0 > ms * 1000.0:
 			break
-	if _queue.is_empty() and not _tex_small and _jobs.is_empty():
-		_small.clear()                         # оригиналы вернулись — копии больше не нужны
+	if _queue.is_empty() and not _tex_small:
+		_drain_original_requests(sync)
+		if _jobs.is_empty():
+			_small.clear()                         # оригиналы вернулись — копии больше не нужны
 	return swap_busy()
 
 
@@ -408,12 +410,17 @@ static func _drop_stale(sync: bool) -> void:
 			_imgs.clear()
 			_mx.unlock()
 	else:
-		for o: String in _req.keys():
-			var s := ResourceLoader.load_threaded_get_status(o)
-			if sync or s != ResourceLoader.THREAD_LOAD_IN_PROGRESS:
-				if s == ResourceLoader.THREAD_LOAD_LOADED or s == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
-					ResourceLoader.load_threaded_get(o)
-				_req.erase(o)
+		_drain_original_requests(sync)
+
+
+static func _drain_original_requests(sync: bool) -> void:
+	for path: String in _req.keys():
+		var status := ResourceLoader.load_threaded_get_status(path)
+		if not sync and status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			continue
+		if status != ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
+			ResourceLoader.load_threaded_get(path)
+		_req.erase(path)
 
 
 ## Что поставить вместо картинки t сейчас (та же — менять нечего); false — ещё готовится в фоне

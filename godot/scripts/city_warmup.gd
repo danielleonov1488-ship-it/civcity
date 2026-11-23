@@ -83,6 +83,7 @@ static func _render(game: Node3D, msaa: Viewport.MSAA, aa: Viewport.ScreenSpaceA
 	var viewport := SubViewport.new()
 	viewport.size = Vector2i(128, 128)
 	viewport.own_world_3d = true
+	viewport.positional_shadow_atlas_size = 0
 	viewport.msaa_3d = msaa
 	viewport.screen_space_aa = aa
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS

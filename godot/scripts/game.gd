@@ -307,20 +307,24 @@ func _ready() -> void:
 	MacUpdate.check_at_start(self)            # Mac: вышла ли новая версия (scripts/mac_update.gd), пока грузится город
 	_load_settings()
 	I18n.setup(settings)                      # язык (бета): русский или английский словарь (scripts/i18n.gd)
+	_loading_show()
+	var terrain: Array[Land] = []
+	_terrain_task = WorkerThreadPool.add_task(_make_land.bind(terrain), true, "Генерация земли")
+	await _step("Земля и холмы", 0.05)
+	var startup := Perf14.begin()
 	sound = Sound.new()
 	sound.game = self
 	add_child(sound)
 	_environment()
 	_grading()
-	_loading_show()
-	var terrain: Array[Land] = []
-	_terrain_task = WorkerThreadPool.add_task(_make_land.bind(terrain), true, "Генерация земли")
-	await _step("Земля и холмы", 0.05)
+	Perf14.end(Perf14.START_GROUND, startup)
+	await get_tree().process_frame
 	while not WorkerThreadPool.is_task_completed(_terrain_task):
 		await get_tree().process_frame
 	WorkerThreadPool.wait_for_task_completion(_terrain_task)
 	_terrain_task = -1
 	land = terrain[0]
+	startup = Perf14.begin()
 	MeadowNature.prepare(land)                # ложбины ручьёв считаются в фоне, пока грузится город
 	city = City.new(land)
 	city.want_nature = _want_nature_near
@@ -342,9 +346,13 @@ func _ready() -> void:
 	land_mat.set_shader_parameter("tile_plaza_c", tex.call("Floor_Tiles_01"))
 	land_mat.set_shader_parameter("tile_plaza_d", tex.call("Floor_Tiles_02"))
 	MeadowNature.ground(self)                 # трава, мостовая, тропы и берега из набора Meadow Forest (13.11)
+	Perf14.end(Perf14.START_GROUND, startup)
 	await _step("Вода, дорога и даль", 0.15)
+	startup = Perf14.begin()
 	_water()
 	_gate()
+	Perf14.end(Perf14.START_GROUND, startup)
+	await get_tree().process_frame
 	var birds := Birds.new()
 	birds.center = Vector3(Land.START.x, 0, Land.START.y)
 	birds.game = self
@@ -433,14 +441,24 @@ func _ready() -> void:
 	_ponds_life()
 	await get_tree().process_frame
 	await MeadowNature.life(self)                   # у ручьёв, мосты, луга в цветах, поля с оградами, мельницы (scripts/meadow_nature.gd)
+	startup = Perf14.begin()
 	_cliff_rocks()
-	surf_img = land.make_surface()
-	surf_img.generate_mipmaps()
+	Perf14.end(Perf14.START_GROUND, startup)
+	var masks: Array[Image] = []
+	_terrain_task = WorkerThreadPool.add_task(_make_startup_masks.bind(land, masks), false, "Маски земли")
+	while not WorkerThreadPool.is_task_completed(_terrain_task):
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(_terrain_task)
+	_terrain_task = -1
+	startup = Perf14.begin()
+	surf_img = masks.pop_front()
 	surf_tex = ImageTexture.create_from_image(surf_img)
 	land_mat.set_shader_parameter("surf", surf_tex)
 	land_mat.set_shader_parameter("map_size", Land.SIZE)
-	if not land.deco_cells.is_empty():
-		_deco_masks()                         # узор земли из сохранения (без него маски не заводим вовсе)
+	if not masks.is_empty():
+		_deco_masks(masks)
+	Perf14.end(Perf14.START_MASKS, startup)
+	await get_tree().process_frame
 	land.dirty.clear()
 	land.dirty_soft.clear()
 	land.dirty_walk.clear()
@@ -451,17 +469,27 @@ func _ready() -> void:
 		for i in Land.CHN:
 			order.append(Vector2i(i, j))
 	order.sort_custom(func(a, b): return (Vector2(a) - Vector2(8, 4)).length() < (Vector2(b) - Vector2(8, 4)).length())
+	var chunk_deadline := Time.get_ticks_usec() + 8000
 	for ch: Vector2i in order:
+		startup = Perf14.begin()
 		_build_chunk(ch)
+		Perf14.end(Perf14.START_LAND, startup)
 		built += 1
 		if built % 4 == 0:
 			await _step("Рисуем землю", 0.4 + 0.45 * built / total)
+			chunk_deadline = Time.get_ticks_usec() + 8000
+		elif Time.get_ticks_usec() >= chunk_deadline:
+			await get_tree().process_frame
+			chunk_deadline = Time.get_ticks_usec() + 8000
 	grass = GrassCarpet.new()                 # трава-ковёр вокруг камеры (14.11): куски строятся понемногу каждый кадр
 	add_child(grass)
 	grass.setup(self)
 	await _step("Жители", 0.9)
+	startup = Perf14.begin()
 	_hero_check()                             # свой герой (Д11): в своей игре он есть всегда (старый город — случайный, пока игрок не создаст)
+	Perf14.end(Perf14.START_PEOPLE, startup)
 	await people.setup(land, city, self)
+	await get_tree().process_frame
 	rig = CameraRig.new()
 	add_child(rig)
 	rig.land = land
@@ -473,9 +501,14 @@ func _ready() -> void:
 	add_child(clouds)
 	_make_markers()
 	_apply_quality()
+	await get_tree().process_frame
+	Perf14.memory("before_hud")
+	startup = Perf14.begin()
 	hud = Hud.new()
 	hud.game = self
 	add_child(hud)
+	Perf14.end(Perf14.START_HUD, startup)
+	await get_tree().process_frame
 	gfx = Gfx.new()
 	gfx.game = self
 	add_child(gfx)
@@ -525,14 +558,21 @@ func _ready() -> void:
 	if city.fest_left > 0:
 		_fest_look(true)                      # сохранение с идущими играми — город сразу наряжен
 	_set_hour(hour)
+	startup = Perf14.begin()
 	hud.refresh()
+	Perf14.end(Perf14.START_HUD, startup)
+	await get_tree().process_frame
 	_sync_all_actors()
 	if mode in ["new", "play"] and DisplayServer.get_name() != "headless":
 		while hud.icons_loading:
 			await get_tree().process_frame
+		Perf14.memory("icons_ready")
 		await CityWarmup.render_effects(self)
+		Perf14.memory("effects_released")
 		await PersonCard.prewarm(hud)
+		Perf14.memory("portrait_released")
 	CityWarmup.release_sources()
+	Perf14.memory("sources_released")
 	ready_done = true
 	_loading_hide()
 	if args.has("noui"):
@@ -566,6 +606,16 @@ func _ready() -> void:
 
 static func _make_land(result: Array[Land]) -> void:
 	result.append(Land.new())
+
+
+static func _make_startup_masks(terrain: Land, masks: Array[Image]) -> void:
+	var surface := terrain.make_surface()
+	surface.generate_mipmaps()
+	masks.append(surface)
+	if not terrain.deco_cells.is_empty():
+		for image: Image in terrain.make_deco_masks():
+			image.generate_mipmaps()
+			masks.append(image)
 
 
 func _step(text: String, k: float) -> void:
@@ -1694,11 +1744,12 @@ func _build_chunk(ch: Vector2i) -> void:
 
 ## Маски узора земли и улучшенных дорог (этап 5.7–5.8) и плитки к ним. Пока узора в городе нет — их нет совсем,
 ## шейдер земли его не читает (deco_on = false): картинка и память — как были
-func _deco_masks() -> void:
-	deco_imgs = land.make_deco_masks()
+func _deco_masks(images: Array = []) -> void:
+	deco_imgs = land.make_deco_masks() if images.is_empty() else images
 	deco_texs = []
 	for i in 2:
-		(deco_imgs[i] as Image).generate_mipmaps()
+		if not (deco_imgs[i] as Image).has_mipmaps():
+			(deco_imgs[i] as Image).generate_mipmaps()
 		deco_texs.append(ImageTexture.create_from_image(deco_imgs[i]))
 	land_mat.set_shader_parameter("surf2", deco_texs[0])
 	land_mat.set_shader_parameter("surf3", deco_texs[1])
@@ -7016,11 +7067,19 @@ func _load(path := "") -> bool:
 		path = save_path()
 	if not FileAccess.file_exists(path):
 		return false
-	var data = JSON.parse_string(FileAccess.get_file_as_string(path))
-	if typeof(data) != TYPE_DICTIONARY or int(data.get("version", 1)) < 2:
+	var loaded: Array[Dictionary] = []
+	_terrain_task = WorkerThreadPool.add_task(_read_city_save.bind(path, land, loaded), false, "Чтение города")
+	while not WorkerThreadPool.is_task_completed(_terrain_task):
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(_terrain_task)
+	_terrain_task = -1
+	if loaded.is_empty():
 		return false
-	land.load_changes(data.get("land", {}))
+	var data: Dictionary = loaded[0]
+	var startup := Perf14.begin()
 	city.load_data(data)
+	Perf14.end(Perf14.START_SAVE, startup)
+	await get_tree().process_frame
 	if clock_hours:
 		hour = float(data.get("hour", 8.0))
 	var batch := []
@@ -7036,12 +7095,20 @@ func _load(path := "") -> bool:
 	return true
 
 
+static func _read_city_save(path: String, terrain: Land, result: Array[Dictionary]) -> void:
+	var data = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if typeof(data) != TYPE_DICTIONARY or int(data.get("version", 1)) < 2:
+		return
+	terrain.load_changes(data.get("land", {}))
+	result.append(data)
+
+
 func _show_loaded(batch: Array) -> void:
 	if batch.is_empty():
 		return
 	var paths := {}
 	for b: Dictionary in batch:
-		CityWarmup.models(city.blueprint(b), paths)
+		CityWarmup.models(city.blueprint(b), paths, true)
 	var models := await CityWarmup.fetch(get_tree(), paths)
 	var deadline := Time.get_ticks_usec() + 5000
 	for b: Dictionary in batch:

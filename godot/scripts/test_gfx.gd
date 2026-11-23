@@ -1,4 +1,6 @@
 extends Node
+
+const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
 ## Этап 1 (1.1, 1.2, 1.3): графика по видеокарте, уровни, счётчик кадров, F3, сторож кадров.
 ##   bash .work/py/gpu_run.sh res://test_gfx.tscn   — в конце «GFX DONE fails=0»; снимки — .work/gd/b/gfx_*.png
 ## Таблица видеокарт (в т. ч. ноутбучные на ступень ниже и встроенная); у тех, кто уже играет, уровень не меняется;
@@ -490,4 +492,4 @@ func _finish() -> void:
 		game.queue_free()
 		await frames(2)
 	print("GFX DONE fails=%d" % fails)
-	get_tree().quit(1 if fails > 0 else 0)
+	TestSuite.finish(self, 1 if fails > 0 else 0)

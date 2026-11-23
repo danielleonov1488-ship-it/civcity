@@ -14,7 +14,6 @@ const PORTRAIT := 112                  # сторона портрета
 const LIST_MAX := 40                   # «Горожане»: строк в списке не больше
 
 static var _vp: SubViewport            # портрет: свой маленький мир с копией жителя (только пока карточка открыта)
-static var _idle_vp: SubViewport
 static var _vp_key := ""
 static var _who: Node3D                # копия в портрете (житель — Citizen, кошка — узел кошки)
 static var _face: Array = []           # [камера, скелет, кость головы, сдвиг, даль]
@@ -1078,11 +1077,7 @@ static func _portrait_box(hud: Hud, key: String, make: Callable) -> Control:
 	var started := Perf14.begin()
 	if not is_instance_valid(_vp) or _vp.get_parent() != hud or _vp_key != key:
 		close()
-		if is_instance_valid(_idle_vp) and _idle_vp.get_parent() == hud:
-			_vp = _idle_vp
-			_idle_vp = null
-		else:
-			_vp = _make_vp(hud)
+		_vp = _make_vp(hud)
 		_vp_key = key
 		_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		make.call(_vp)
@@ -1129,12 +1124,14 @@ static func prewarm(hud: Hud) -> void:
 	await RenderingServer.frame_post_draw
 	layout.queue_free()
 	close()
+	await hud.get_tree().process_frame
 
 
 static func _make_vp(hud: Hud) -> SubViewport:
 	var vp := SubViewport.new()
 	vp.size = Vector2i(192, 192)
 	vp.own_world_3d = true
+	vp.positional_shadow_atlas_size = 0
 	vp.msaa_3d = Viewport.MSAA_4X
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	hud.add_child(vp)
@@ -1222,17 +1219,11 @@ static func _aim() -> void:
 	cam.look_at(head - Vector3(0, 0.02, 0), Vector3.UP)
 
 
-## Карточку закрыли: освобождаем модель, мирок ждёт следующего портрета.
+## Закрытая карточка освобождает модель и буферы портрета.
 static func close() -> void:
 	if is_instance_valid(_vp):
 		_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
-		var subject := _vp.get_node_or_null("who")
-		if subject != null:
-			_vp.remove_child(subject)
-			subject.queue_free()
-		if is_instance_valid(_idle_vp) and _idle_vp != _vp:
-			_idle_vp.queue_free()
-		_idle_vp = _vp
+		_vp.queue_free()
 	_vp = null
 	_vp_key = ""
 	_who = null

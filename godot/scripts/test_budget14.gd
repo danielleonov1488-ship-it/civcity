@@ -1,5 +1,7 @@
 extends "res://scripts/test_perf14_base.gd"
 
+const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
+
 const CAP := 90
 const WARM := 90
 const SAMPLE := 180
@@ -22,6 +24,8 @@ var script_ms := PackedFloat32Array()
 
 func _ready() -> void:
 	setup_run()
+	var trace = preload("res://scripts/perf14_timers.gd")
+	trace.trace_vram = true
 	_run.call_deferred()
 
 
@@ -30,7 +34,7 @@ func _run() -> void:
 	report = FileAccess.open(file, FileAccess.WRITE)
 	if report == null or not await boot_city("owner", "high", false):
 		print("BUDGET14 FAIL исходный город или отчёт недоступен")
-		get_tree().quit(1)
+		TestSuite.finish(self, 1)
 		return
 	get_window().size = Vector2i(1920, 1200)
 	_line("# PERF14 · бюджет GPU")
@@ -48,11 +52,11 @@ func _run() -> void:
 	if args.has("owner_only"):
 		report.close()
 		print("BUDGET14 DONE ", file)
-		get_tree().quit()
+		TestSuite.finish(self)
 		return
 	if not await boot_city("new", "high", false):
 		print("BUDGET14 FAIL новый город не открыт")
-		get_tree().quit(1)
+		TestSuite.finish(self, 1)
 		return
 	get_window().size = Vector2i(1920, 1200)
 	Engine.max_fps = CAP
@@ -63,7 +67,7 @@ func _run() -> void:
 	await _battle_views()
 	if not await boot_city("owner", "high", false):
 		print("BUDGET14 FAIL город владельца не открыт для A/B")
-		get_tree().quit(1)
+		TestSuite.finish(self, 1)
 		return
 	get_window().size = Vector2i(1920, 1200)
 	game.hud.set_speed(0.0)
@@ -83,7 +87,7 @@ func _run() -> void:
 			_line("| %s | %s | %s | %.2f | %.2f | %+.2f |" % [Gfx.NAMES[q], row[0], row[1], row[3], row[4], row[3] - row[4]])
 	report.close()
 	print("BUDGET14 %s %s" % ["FAIL" if failed else "DONE", file])
-	get_tree().quit(1 if failed else 0)
+	TestSuite.finish(self, 1 if failed else 0)
 
 
 func _city_views(scenario: String, views: Array) -> void:

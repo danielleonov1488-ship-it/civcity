@@ -15,7 +15,9 @@ var font: Font
 var font_bold: Font
 var font_title: Font
 var theme_main: Theme
-var icons := {}                      # картинки построек для карточек
+var icons := {}                      # картинки построек в ОЗУ
+var _building_icon_textures: Dictionary = {}
+const BUILDING_ICON_CACHE := 24
 var _ico := {}
 var _medals := {}
 var _grey_mat: ShaderMaterial
@@ -198,6 +200,7 @@ var _pointer_badge := {}
 var pointer_text: Label
 var _pointer_id := 0
 var _pointer_side := Vector2.ZERO
+var _pointer_hire_key := ""
 var _pointer_blocked := 0.0
 var _pointer_clear_frame := -1
 var _pointer_goal := Vector2.ZERO
@@ -3251,7 +3254,7 @@ func _fill_cards_profiled() -> void:
 		img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		img.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		img.texture = icons.get(type)
+		img.texture = building_icon(type)
 		img.name = "img"
 		v.add_child(img)
 		var pr := HBoxContainer.new()
@@ -3449,7 +3452,7 @@ func _update_cards() -> void:
 				b.tooltip_text = tip
 		var img: TextureRect = b.find_child("img", true, false)
 		if img and img.texture == null:
-			img.texture = icons.get(type)
+			img.texture = building_icon(type)
 		var pr: HBoxContainer = b.find_child("price", true, false)
 		for x in pr.get_children():
 			x.queue_free()
@@ -4189,7 +4192,10 @@ func _place_tutorial_pointer(target: Control, world: Vector2, dt: float) -> void
 		else:
 			obstacles.append(panel.get_global_rect())
 
-	var new_target := target.get_instance_id() != _pointer_id
+	var hire_key := ""
+	if tutorial_busy() and target.has_meta("hire_class"):
+		hire_key = "%d:%s" % [int(info_b.get("id", -1)), String(target.get_meta("hire_class"))]
+	var new_target := target.get_instance_id() != _pointer_id and (hire_key == "" or hire_key != _pointer_hire_key)
 	var side := _pointer_side
 	if not new_target:
 		var box := Rect2(_guidance_arrow_at(rect, side), pointer.size)
@@ -4236,6 +4242,7 @@ func _place_tutorial_pointer(target: Control, world: Vector2, dt: float) -> void
 		_pointer_glide = create_tween()
 		_pointer_glide.tween_property(self, "_pointer_progress", 1.0, POINTER_GLIDE_TIME).set_trans(Tween.TRANS_SINE)
 	_pointer_id = target.get_instance_id()
+	_pointer_hire_key = hire_key
 	_pointer_side = side
 	_pointer_goal = goal
 	pointer.rotation = Vector2.UP.angle_to(side)
@@ -9090,9 +9097,14 @@ func _drop_category_models() -> void:
 
 func _make_icons() -> void:
 	icons_loading = true
+	_icons_async()
+
+
+func _make_icon_view() -> Array:
 	var vp := SubViewport.new()
 	vp.size = Vector2i(200, 168)
 	vp.own_world_3d = true
+	vp.positional_shadow_atlas_size = 0
 	vp.transparent_bg = true
 	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	vp.msaa_3d = Viewport.MSAA_4X
@@ -9118,7 +9130,7 @@ func _make_icons() -> void:
 	vp.add_child(cam)
 	var holder := Node3D.new()
 	vp.add_child(holder)
-	_icons_async(vp, cam, holder)
+	return [vp, cam, holder]
 
 
 ## Папка готовых картинок построек (user://icons/…): своя у каждой сборки — поменялись файлы игры (код, модели), и
@@ -9147,7 +9159,10 @@ func _icon_dir() -> String:
 
 ## Картинки построек для карточек: готовые берём из папки (имя — тип и отпечаток деталей облика), рисуем только
 ## недостающие — при запуске почти нет чтений картинки с видеокарты (на слабых видеокартах на них падала игра)
-func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
+func _icons_async() -> void:
+	var vp: SubViewport
+	var cam: Camera3D
+	var holder: Node3D
 	var col := 0
 	var idir := _icon_dir()
 	var drawn := 0
@@ -9171,9 +9186,14 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		if FileAccess.file_exists(path):
 			var ci := Image.load_from_file(path)
 			if ci != null and not ci.is_empty():
-				icons[type] = ImageTexture.create_from_image(ci)
+				icons[type] = ci
 				_refresh_building_pictures(type)
 				continue
+		if vp == null:
+			var view := _make_icon_view()
+			vp = view[0]
+			cam = view[1]
+			holder = view[2]
 		drawn += 1
 		var paths := {}
 		CityWarmup.models(bp, paths)
@@ -9223,7 +9243,7 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 			if r.size.x > 8 and r.size.y > 8:
 				r = r.grow(int(maxf(r.size.x, r.size.y) * 0.05)).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
 				img = img.get_region(r)
-		icons[type] = ImageTexture.create_from_image(img)
+		icons[type] = img
 		_refresh_building_pictures(type)
 		img.save_png(path)
 		g.queue_free()
@@ -9231,7 +9251,8 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		await get_tree().process_frame
 		if not _icons_alive(vp):
 			return
-	vp.queue_free()
+	if is_instance_valid(vp):
+		vp.queue_free()
 	icons_loading = false
 	if drawn > 0:
 		print("Картинки построек: нарисовано %d, остальные — из %s" % [drawn, idir])
@@ -9293,7 +9314,7 @@ static func shop_prop(e: Array) -> Node3D:
 
 ## Картинки карточек ещё можно рисовать: игра не закрывается, интерфейс и его окошко для картинок на месте
 func _icons_alive(vp: SubViewport) -> bool:
-	return _quitting == false and is_inside_tree() and not is_queued_for_deletion() and is_instance_valid(vp) 		and vp.is_inside_tree() and get_tree() != null
+	return _quitting == false and is_inside_tree() and not is_queued_for_deletion() and (vp == null or vp.is_inside_tree()) and get_tree() != null
 
 
 var _quitting := false
@@ -9394,9 +9415,25 @@ func _building_picture(type: String, size: Vector2) -> TextureRect:
 	return picture
 
 
+func building_icon(type: String) -> Texture2D:
+	var tex: Texture2D = _building_icon_textures.get(type)
+	if tex:
+		_building_icon_textures.erase(type)
+	else:
+		var image: Image = icons.get(type)
+		if image == null:
+			return null
+		tex = ImageTexture.create_from_image(image)
+	_building_icon_textures[type] = tex
+	if _building_icon_textures.size() > BUILDING_ICON_CACHE:
+		_building_icon_textures.erase(_building_icon_textures.keys()[0])
+	return tex
+
+
 func _update_building_picture(picture: TextureRect, type: String) -> void:
-	if icons.has(type):
-		picture.texture = icons[type]
+	var icon := building_icon(type)
+	if icon:
+		picture.texture = icon
 		picture.modulate = Color.WHITE
 	else:
 		picture.texture = CityStyle.icon(String(Defs.B[type].get("icon", "housing")))

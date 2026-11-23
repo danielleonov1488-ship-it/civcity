@@ -149,10 +149,11 @@ func _fit() -> void:
 	world.scale = Vector2.ONE * maxf(0.001, design_scale / (_zoom if legacy_layout else 1.0))
 	var half := size.x * 0.5 / world.scale.x
 	_field_bounds = Rect2(-half, -_trail_depth, half * 2.0, _trail_depth * 2.0)
-	people_layer.fit(size)
-	if not legacy_layout:
+	if legacy_layout:
+		people_layer.fit(size)
+	else:
 		# ?? ????????? ???? ?????? ?????????? ???? ????.
-		people_layer.crop_to(Rect2(0.0, world.position.y - world.scale.y * 444.0,
+		people_layer.fit(size, Rect2(0.0, world.position.y - world.scale.y * 444.0,
 			size.x, world.scale.y * (486.0 + _trail_depth)))
 	people_layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	for id in views:
@@ -252,14 +253,23 @@ static func _effect_frames(kind: String) -> SpriteFrames:
 
 
 func prewarm(waves: Array = []) -> void:
-	# Листы будущих волн и эффекты подгружаются под занавесом.
+	# Листы будущих волн и эффекты готовим под занавесом.
+	var tree := get_tree()
+	var started := Perf14.begin()
+	var deadline := Time.get_ticks_usec() + 4000
 	for atlas: String in SILHOUETTE:
 		_unit_frames(atlas)
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.BATTLE_FIELD, started)
+			await tree.process_frame
+			started = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4000
 	for kind: String in ["fx_hit", "fx_heal", "fx_arrow"]:
 		_effect_frames(kind)
 	_stone = load("res://assets/ui/ai/icons/rock.png")
-	await get_tree().process_frame
-	await Enemy.prewarm(waves, get_tree())
+	Perf14.end(Perf14.BATTLE_FIELD, started)
+	await tree.process_frame
+	await Enemy.prewarm(waves, tree)
 
 
 func add_unit(u: LegionSim.Unit) -> Fighter:
@@ -1251,11 +1261,14 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 func clear_visible() -> void:
 	var started := Perf14.begin()
 	var deadline := Time.get_ticks_usec() + 3500
+	var count := 0
 	for root: Node2D in [units, effects]:
 		for child: Node in root.get_children():
 			root.remove_child(child)
 			child.queue_free()
-			if Time.get_ticks_usec() >= deadline:
+			count += 1
+			if count >= 4 or Time.get_ticks_usec() >= deadline:
+				count = 0
 				Perf14.end(Perf14.BATTLE_CLOSE, started)
 				await get_tree().process_frame
 				started = Perf14.begin()

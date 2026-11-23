@@ -230,7 +230,7 @@ func step(ms: float) -> bool:
 		if _tile_dist(jk, cam) > r:
 			_job = {}                         # камера ушла — этот кусок не нужен
 	if near_hole:
-		ms = maxf(ms, 10.0)
+		ms = maxf(ms, 4.0)
 	while Time.get_ticks_usec() - t0 < ms * 1000.0:
 		if _job.is_empty():
 			if want.is_empty():
@@ -238,10 +238,12 @@ func step(ms: float) -> bool:
 			var k: Vector2i = want.pop_front()[1]
 			_job = {"key": k, "row": 0, "rows": int(TILE / spacing), "g": [], "f": []}
 			dirty.erase(k)
-		_rows(_job, 4)
 		if int(_job["row"]) >= int(_job["rows"]):
-			_finish(_job)
+			if not dirty.has(_job["key"]):
+				_finish(_job)
 			_job = {}
+		else:
+			_rows(_job, 4)
 	return not want.is_empty() or not _job.is_empty()
 
 

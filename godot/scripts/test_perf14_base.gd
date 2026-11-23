@@ -17,6 +17,7 @@ func setup_run() -> void:
 	for arg in OS.get_cmdline_user_args():
 		var pair := arg.trim_prefix("--").split("=", true, 1)
 		args[pair[0]] = pair[1] if pair.size() > 1 else "1"
+	args.merge(get_meta("perf14_args", {}), true)
 	out = str(args.get("out", TASK))
 	DirAccess.make_dir_recursive_absolute(out)
 	started = "%d_%d" % [int(Time.get_unix_time_from_system()), OS.get_process_id()]

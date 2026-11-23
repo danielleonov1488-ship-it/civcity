@@ -84,6 +84,7 @@ func setup(l: Land, c: City, g) -> void:
 		if Time.get_ticks_usec() >= deadline:
 			await tree.process_frame
 			deadline = Time.get_ticks_usec() + 4000
+	var startup := Perf14.begin()
 	_make_cart()
 	city.building_removed.connect(_on_building_removed)
 	city.building_added.connect(_on_building_added)
@@ -99,6 +100,10 @@ func setup(l: Land, c: City, g) -> void:
 	city.family_assigned.connect(_on_assigned)
 	city.rehomed.connect(_on_rehomed)
 	_old_couples()
+	Perf14.end(Perf14.START_PEOPLE, startup)
+	await tree.process_frame
+	startup = Perf14.begin()
+	deadline = Time.get_ticks_usec() + 4000
 	# жители уже заселённых домов (загрузка, готовый город)
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
@@ -107,6 +112,11 @@ func setup(l: Land, c: City, g) -> void:
 				break
 			for f in b["families"]:
 				_make_family(f["name"], int(f["n"]), id, city.door_point(b), "", f)
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.START_PEOPLE, startup)
+			await tree.process_frame
+			startup = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4000
 	# семьи, которые ждут жилья на площади
 	for f in city.arrivals:
 		var fam := _make_family(f["name"], int(f["n"]), -1, Land.CENTER, f["cls"], f)
@@ -116,10 +126,15 @@ func setup(l: Land, c: City, g) -> void:
 			_arrive(r)
 		waiting_fams.append({"name": f["name"], "members": fam.map(func(x): return x["id"])})
 	_assign_jobs()
-	_start_of_day(true)
+	Perf14.end(Perf14.START_PEOPLE, startup)
+	await tree.process_frame
+	await _start_of_day(true)
+	await tree.process_frame
+	startup = Perf14.begin()
 	_cats_load()
 	hero_spawn()                             # свой герой (Д11): ходит по городу, в счёт жителей не входит
 	set_process(true)
+	Perf14.end(Perf14.START_PEOPLE, startup)
 
 
 static func _create_grid(result: Array[AStarGrid2D]) -> void:
@@ -1516,7 +1531,15 @@ func work_door(r: Dictionary) -> Vector2:
 ## В начале игры и после загрузки: кто уже на работе, кто гуляет
 func _start_of_day(instant: bool) -> void:
 	var h: float = game.hour
+	var tree := get_tree()
+	var startup := Perf14.begin()
+	var deadline := Time.get_ticks_usec() + 4000
 	for r in residents:
+		if Time.get_ticks_usec() >= deadline:
+			Perf14.end(Perf14.START_PEOPLE, startup)
+			await tree.process_frame
+			startup = Perf14.begin()
+			deadline = Time.get_ticks_usec() + 4000
 		if int(r["home"]) <= 0:
 			continue
 		if r["job"] >= 0 and h >= 8.0 and h < 17.0:
@@ -1531,6 +1554,7 @@ func _start_of_day(instant: bool) -> void:
 			r["p"] = d["p"]
 			r["goal"] = "errand"
 			_arrive(r)
+	Perf14.end(Perf14.START_PEOPLE, startup)
 
 
 func _hours_to(a: Vector2, b: Vector2) -> float:
@@ -1558,56 +1582,91 @@ func _sched_ok() -> bool:
 
 func _schedule(dh: float) -> void:
 	var h: float = game.hour
-	var night := h >= 21.5 or h < 5.0
 	_sched_left = SCHED_GO
 	_sched_deadline = Time.get_ticks_usec() + 3300
-	for r in residents.duplicate():
-		match r["state"]:
-			"home":
-				if int(r["home"]) <= 0:
-					continue
-				if r["job"] >= 0:
-					var b: Dictionary = city.buildings.get(r["job"], {})
-					if b.is_empty():
-						continue
-					var dep := 8.0 - _hours_to(r["p"], work_door(r)) + float(r["dep"])
-					if h >= dep and h < 16.5 and not r["done_today"] and _sched_ok():
-						r["done_today"] = true
-						_go(r, work_door(r), "work")
-				elif not night and h >= 8.5 and h < 19.5:
-					var chance := 0.02 if r["child"] else 0.025
-					if rng.randf() < chance * dh * 4.0 * 10.0 and _sched_ok():
-						r["outs"] = 0
-						_errand(r)
-			"work":
-				if h >= 17.0 + float(r["ret"]) or h < 6.0:
-					var hp: Dictionary = city.buildings.get(r["home"], {})
-					if hp.is_empty() or not _sched_ok():
-						continue
-					if rng.randf() < 0.3 and h < 19.0:
-						r["outs"] = 1
-						_errand(r)
-					else:
-						_go(r, city.door_point(hp), "home")
-				elif int(city.cozy_v) >= 1 and h >= 9.0 and h < 15.5:
-					_porter(r, dh)
-			"idle":
-				r["t"] = float(r["t"]) - dh
-				if r["goal"] == "arrived":
-					if float(r["t"]) <= 0.0 and int(r["home"]) > 0:
-						var hb: Dictionary = city.buildings.get(r["home"], {})
-						if hb.is_empty():
-							r["home"] = -1
-						elif _sched_ok():
-							_go(r, city.door_point(hb), "settle")
-					continue
-				if r["act"] != "" and not night:
-					continue                     # занят делом (лавка, скамья, разговор) — сам решит, когда уйти
-				if float(r["t"]) <= 0.0 or night:
-					var hp: Dictionary = city.buildings.get(r["home"], {})
-					if hp.is_empty() or not _sched_ok():
-						continue
+	for r: Dictionary in residents.duplicate():
+		_schedule_resident(r, h, dh)
+	_schedule_day(h)
+
+
+var _sched_batch: Array = []
+var _sched_index := 0
+var _sched_pending := 0.0
+var _sched_dh := 0.0
+var _sched_hour := 0.0
+
+
+func _schedule_slice() -> void:
+	if _sched_batch.is_empty():
+		_sched_batch = residents.duplicate()
+		_sched_index = 0
+		_sched_hour = game.hour
+		_sched_dh = _sched_pending
+		_sched_pending = 0.0
+		_sched_left = SCHED_GO
+	_sched_deadline = Time.get_ticks_usec() + 1800
+	var stop := mini(_sched_index + 64, _sched_batch.size())
+	while _sched_index < stop and Time.get_ticks_usec() < _sched_deadline:
+		var r: Dictionary = _sched_batch[_sched_index]
+		_sched_index += 1
+		if by_id.has(r["id"]):
+			_schedule_resident(r, _sched_hour, _sched_dh)
+	if _sched_index >= _sched_batch.size():
+		_sched_batch.clear()
+		_schedule_day(_sched_hour)
+
+
+func _schedule_resident(r: Dictionary, h: float, dh: float) -> void:
+	var night := h >= 21.5 or h < 5.0
+	match r["state"]:
+		"home":
+			if int(r["home"]) <= 0:
+				return
+			if r["job"] >= 0:
+				var b: Dictionary = city.buildings.get(r["job"], {})
+				if b.is_empty():
+					return
+				var dep := 8.0 - _hours_to(r["p"], work_door(r)) + float(r["dep"])
+				if h >= dep and h < 16.5 and not r["done_today"] and _sched_ok():
+					r["done_today"] = true
+					_go(r, work_door(r), "work")
+			elif not night and h >= 8.5 and h < 19.5:
+				var chance := 0.02 if r["child"] else 0.025
+				if rng.randf() < chance * dh * 4.0 * 10.0 and _sched_ok():
+					r["outs"] = 0
+					_errand(r)
+		"work":
+			if h >= 17.0 + float(r["ret"]) or h < 6.0:
+				var hp: Dictionary = city.buildings.get(r["home"], {})
+				if hp.is_empty() or not _sched_ok():
+					return
+				if rng.randf() < 0.3 and h < 19.0:
+					r["outs"] = 1
+					_errand(r)
+				else:
 					_go(r, city.door_point(hp), "home")
+			elif int(city.cozy_v) >= 1 and h >= 9.0 and h < 15.5:
+				_porter(r, dh)
+		"idle":
+			r["t"] = float(r["t"]) - dh
+			if r["goal"] == "arrived":
+				if float(r["t"]) <= 0.0 and int(r["home"]) > 0:
+					var hb: Dictionary = city.buildings.get(r["home"], {})
+					if hb.is_empty():
+						r["home"] = -1
+					elif _sched_ok():
+						_go(r, city.door_point(hb), "settle")
+				return
+			if r["act"] != "" and not night:
+				return                     # занят делом (лавка, скамья, разговор) — сам решит, когда уйти
+			if float(r["t"]) <= 0.0 or night:
+				var hp: Dictionary = city.buildings.get(r["home"], {})
+				if hp.is_empty() or not _sched_ok():
+					return
+				_go(r, city.door_point(hp), "home")
+
+
+func _schedule_day(h: float) -> void:
 	# новый день — снова можно на работу
 	if h < _hour - 12.0:
 		for r in residents:
@@ -3318,19 +3377,24 @@ func _process_body(dt: float) -> void:
 	var pf := perf or Perf14.enabled
 	var tm := Time.get_ticks_usec() if pf else 0
 	_tick += dt
+	var jobs_reassigned := false
 	if _tick >= 0.25:
-		var dh: float = _tick * speed * 24.0 / Game.DAY_LEN
+		_sched_pending += _tick * speed * 24.0 / Game.DAY_LEN
 		_tick = 0.0
 		if _jobs_dirty:
 			_assign_jobs()
-		if speed > 0.0:
-			_schedule(dh)
+			jobs_reassigned = true
+	if speed > 0.0 and not jobs_reassigned and (_sched_pending > 0.0 or not _sched_batch.is_empty()):
+		_schedule_slice()
 	if pf:
 		tm = _pf("sched", tm)
 	_prop_t -= dt
-	if _prop_t <= 0.0 and not hidden:
-		_prop_t = 0.3
-		_props_tick()
+	if not hidden:
+		if _prop_t <= 0.0 and _prop_changes.is_empty():
+			_prop_t = 0.3
+			_props_tick(true)
+		if not _prop_changes.is_empty():
+			_props_slice()
 	if pf:
 		tm = _pf("props", tm)
 	if speed <= 0.0:
@@ -3492,46 +3556,78 @@ func props_want(r: Dictionary) -> Array:
 ## Раздать и забрать вещи: ближним к тому, куда смотрит камера (не дальше PROP_R, не больше PROP_CAP), остальным —
 ## без вещей. Мерим от точки взгляда, а не от самой камеры: при обычном приближении камера в 80 м от города, и вещей
 ## не было бы видно вовсе; в ролике — от камеры (она у героев)
-func _props_tick() -> void:
+var _prop_changes: Array[Array] = []
+var _prop_index := 0
+var _prop_lyres := {}
+var _prop_quality := true
+
+
+func _props_tick(sliced := false) -> void:
 	var rig = game.rig
 	var cam: Camera3D = rig.cam if rig else null
 	var at := Vector3.ZERO
 	if cam:
 		at = cam.global_position if rig.cine else rig.target
 	var cands := []
-	var lyres := {}
+	_prop_changes.clear()
+	_prop_lyres.clear()
+	_prop_index = 0
+	_prop_quality = props_on
 	for r in residents:
 		var c: Citizen = r["node"]
-		if c == null:
+		if not is_instance_valid(c):
 			continue
 		var want: Array = props_want(r) if props_on and cam else []
-		var d2 := INF
-		if not want.is_empty():
-			d2 = c.global_position.distance_squared_to(at)
-		if want.is_empty() or d2 > PROP_R * PROP_R:
-			if HandProps.held(c) != "":
-				HandProps.drop(c)
-			c.set_carry(false)
-			_slot_clip(r, false)
-			continue
-		cands.append([d2, r, want])
+		if want.is_empty() or c.global_position.distance_squared_to(at) > PROP_R * PROP_R:
+			_prop_changes.append([r, []])
+		else:
+			cands.append([c.global_position.distance_squared_to(at), r, want])
 	cands.sort_custom(func(a, b): return a[0] < b[0])
-	for i in cands.size():
-		var r: Dictionary = cands[i][1]
-		var c: Citizen = r["node"]
-		if i >= PROP_CAP:
-			HandProps.drop(c)
-			c.set_carry(false)
-			_slot_clip(r, false)
-			continue
-		var carrying: bool = r["state"] != "work"
-		if not carrying:
-			_slot_clip(r, true)              # сначала движение с вещью (лира): хват считается по его позе
-		HandProps.hold(c, cands[i][2], "Idle" if carrying else String(r.get("slot_anim", "Idle")))
-		c.set_carry(carrying)
-		if not carrying and "lyre" in cands[i][2]:
-			lyres[int(r["job"])] = true
-	_bench_lyres(lyres)
+	for i in range(PROP_CAP, cands.size()):
+		_prop_changes.append([cands[i][1], []])
+	for i in mini(PROP_CAP, cands.size()):
+		_prop_changes.append([cands[i][1], cands[i][2]])
+	if not sliced:
+		_props_slice(false)
+	elif _prop_changes.is_empty():
+		_bench_lyres(_prop_lyres)
+
+
+func _props_slice(sliced := true) -> void:
+	if props_on != _prop_quality:
+		_prop_changes.clear()
+		_prop_t = 0.0
+		return
+	var deadline := Time.get_ticks_usec() + 1600
+	while _prop_index < _prop_changes.size():
+		var change: Array = _prop_changes[_prop_index]
+		_prop_index += 1
+		_apply_prop(change[0], change[1])
+		if sliced and Time.get_ticks_usec() >= deadline:
+			break
+	if _prop_index >= _prop_changes.size():
+		_prop_changes.clear()
+		_bench_lyres(_prop_lyres)
+
+
+func _apply_prop(r: Dictionary, want: Array) -> void:
+	var c: Citizen = r["node"]
+	if not is_instance_valid(c):
+		return
+	if want.is_empty():
+		HandProps.drop(c)
+		c.set_carry(false)
+		_slot_clip(r, false)
+		return
+	if props_want(r) != want:
+		return
+	var carrying: bool = r["state"] != "work"
+	if not carrying:
+		_slot_clip(r, true)              # хват считается по движению с вещью
+	HandProps.hold(c, want, "Idle" if carrying else String(r.get("slot_anim", "Idle")))
+	c.set_carry(carrying)
+	if not carrying and "lyre" in want:
+		_prop_lyres[int(r["job"])] = true
 
 
 ## Движение работника — в лад с вещью в руках: с лирой музыкант играет (HandProps.WORK_CLIP), без неё — как в чертеже

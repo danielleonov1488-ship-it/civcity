@@ -84,11 +84,17 @@ func _light(color: Color, energy: float, angles: Vector3) -> void:
 	viewport.add_child(light)
 
 
-func fit(area: Vector2) -> void:
-	extent = area.max(Vector2.ONE)
+func fit(area: Vector2, bounds := Rect2()) -> void:
+	var next_extent := area.max(Vector2.ONE)
+	if extent != next_extent:
+		extent = next_extent
+		_render_rect = Rect2()
 	_units_per_pixel = 10.0 / extent.y
-	_render_rect = Rect2()
-	_view_rect(Rect2(Vector2.ZERO, extent))
+	if bounds.has_area():
+		crop_to(bounds)
+	else:
+		overlay.show()
+		_view_rect(Rect2(Vector2.ZERO, extent))
 
 
 func crop_to(bounds: Rect2) -> void:

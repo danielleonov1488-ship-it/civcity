@@ -1,5 +1,7 @@
 extends Node
 
+const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
+
 const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Этап 1 (1.12): замеры скорости и проверка «Средняя и Высокая — ни пикселя не изменилось» (против эталона GOLDEN).
 ##   bash .work/py/gpu_run.sh res://test_perf.tscn -- mode=regress          — для regress.sh: в конце «PERF DONE fails=0»
@@ -180,7 +182,7 @@ func _run(mode: String) -> void:
 	if A.has("legion"):
 		await _perf13_legion()
 	print("PERF DONE fails=%d" % fails)
-	get_tree().quit(1 if fails > 0 else 0)
+	TestSuite.finish(self, 1 if fails > 0 else 0)
 
 
 # ---------- замеры ----------

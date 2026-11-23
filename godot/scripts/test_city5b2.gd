@@ -75,7 +75,7 @@ func _card_bounds() -> void:
 			var type := String(picture.get_meta("building_type", ""))
 			check(picture.texture != null, "nonempty covering picture " + type)
 			if hud.icons.has(type):
-				check(picture.texture == hud.icons[type] and picture.modulate == Color.WHITE, "colored covering building picture " + type)
+				check(picture.texture == hud.building_icon(type) and picture.modulate == Color.WHITE, "colored covering building picture " + type)
 			var bonus := picture.get_parent().get_child(1) as Label
 			check(bonus != null and bonus.text.begins_with("+") and bonus.text.ends_with("%") and not bonus.clip_text, "covering bonus visible " + type)
 			var overlay := picture.get_parent().get_parent().get_child(1) as Button
