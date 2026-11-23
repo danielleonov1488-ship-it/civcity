@@ -29,7 +29,7 @@ static var _ed_scroll := 0               # где прокрутка «Внеш�
 # ---------- карточка ----------
 
 ## Заполнить карточку (Hud._fill_info_body): sel — {"r": житель} или {"cat": кошка}. false — показывать некого
-static func fill(hud: Hud, box: VBoxContainer, sel: Dictionary) -> bool:
+static func fill(hud: Hud, box: VBoxContainer, sel: Dictionary, rest: Variant = null) -> bool:
 	var ppl: People = hud.game.people
 	if ppl == null:
 		return false
@@ -39,7 +39,7 @@ static func fill(hud: Hud, box: VBoxContainer, sel: Dictionary) -> bool:
 		var ct: Dictionary = sel["cat"]
 		if not ppl.cats.has(ct):
 			return false
-		_fill_cat(hud, box, ct)
+		_fill_cat(hud, box, ct, rest)
 		return true
 	var r: Dictionary = ppl.by_id.get(int((sel.get("r", {}) as Dictionary).get("id", -1)), {})
 	if r.is_empty():
@@ -50,11 +50,11 @@ static func fill(hud: Hud, box: VBoxContainer, sel: Dictionary) -> bool:
 	if r.has("hero"):
 		_fill_hero(hud, box, r)                 # свой герой (Д11): своя карточка — Легион, снаряжение, «Гардероб»
 		return true
-	_fill_person(hud, box, r)
+	_fill_person(hud, box, r, rest)
 	return true
 
 
-static func _fill_person(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
+static func _fill_person(hud: Hud, box: VBoxContainer, r: Dictionary, rest: Variant = null) -> void:
 	var ppl: People = hud.game.people
 	var c: City = hud.game.city
 	var m: Dictionary = r.get("m", {})
@@ -116,6 +116,18 @@ static func _fill_person(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 		flow.add_child(b)
 	if flow.get_child_count() > 0:
 		box.add_child(flow)
+	var details := _fill_person_details.bind(hud, box, r)
+	if rest is Array:
+		rest.append(details)
+	else:
+		details.call()
+
+
+static func _fill_person_details(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
+	var ppl: People = hud.game.people
+	var c: City = hud.game.city
+	var m: Dictionary = r.get("m", {})
+	var h: Dictionary = c.buildings.get(int(r["home"]), {})
 	# работа
 	var jb: Dictionary = c.buildings.get(int(r["job"]), {})
 	if not jb.is_empty():
@@ -639,7 +651,7 @@ static func _item_row(hud: Hud, title: String, its: Array, cur: String, cb: Call
 
 # ---------- кошка ----------
 
-static func _fill_cat(hud: Hud, box: VBoxContainer, ct: Dictionary) -> void:
+static func _fill_cat(hud: Hud, box: VBoxContainer, ct: Dictionary, rest: Variant = null) -> void:
 	var ppl: People = hud.game.people
 	var c: City = hud.game.city
 	var nm := People.cat_name(ct)
@@ -672,6 +684,16 @@ static func _fill_cat(hud: Hud, box: VBoxContainer, ct: Dictionary) -> void:
 	_now.custom_minimum_size = Vector2(240, 0)
 	_now.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	box.add_child(nr)
+	var details := _fill_cat_details.bind(hud, box, ct)
+	if rest is Array:
+		rest.append(details)
+	else:
+		details.call()
+
+
+static func _fill_cat_details(hud: Hud, box: VBoxContainer, ct: Dictionary) -> void:
+	var ppl: People = hud.game.people
+	var h: Dictionary = ppl.city.buildings.get(int(ct.get("home", -1)), {})
 	# вещицы из «Кошачьей лавки» (Д14): что у неё есть и что можно выбрать ей самим
 	var rec := People.cat_rec(ct)
 	if not rec.is_empty():
@@ -1115,12 +1137,15 @@ static func prewarm(hud: Hud) -> void:
 	if who.is_empty():
 		return
 	var layout := VBoxContainer.new()
+	layout.theme = hud.theme_main
 	layout.hide()
 	hud.add_child(layout)
 	if ppl.residents.is_empty():
 		layout.add_child(_portrait_box(hud, "warm", func(vp: SubViewport): _person_subject(vp, ppl, who)))
 	else:
 		_fill_person(hud, layout, who)
+	CityStyle.apply(layout)
+	layout.get_combined_minimum_size()
 	await RenderingServer.frame_post_draw
 	layout.queue_free()
 	close()

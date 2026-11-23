@@ -1102,11 +1102,22 @@ func _place_fam() -> void:
 
 
 ## Значки семей на площади: щелчок — выбрать им дом
+var _family_display: Array = []
+
+
 func _fill_families() -> void:
+	var c: City = game.city
+	var shown: bool = not c.arrivals.is_empty() and game.mode != "demo"
+	var selected: String = game.settle_fam.get("name", "") if game.tool == "settle" else ""
+	var state: Array = [shown, selected, I18n.lang]
+	for f: Dictionary in c.arrivals:
+		state.append([f["name"], f["n"], f["cls"], f.get("want", "")])
+	if state == _family_display:
+		return
+	_family_display = state
 	_clear(fam_box)
 	_snug(fam_box)
-	var c: City = game.city
-	fam_box.visible = not c.arrivals.is_empty() and game.mode != "demo"
+	fam_box.visible = shown
 	if not fam_box.visible:
 		_fam_known = {}
 		return
@@ -3200,7 +3211,7 @@ func _decor_list() -> Array:
 
 
 func _fill_cards() -> void:
-	var started := Perf14.begin()
+	var started := 0 if _refreshing else Perf14.begin()
 	_fill_cards_profiled()
 	Perf14.end(Perf14.UI, started)
 
@@ -3395,7 +3406,7 @@ func _card_box(name: String) -> StyleBoxTexture:
 	return s
 
 
-func _card_tip(type: String) -> String:
+func _card_tip(type: String, cnt := -1) -> String:
 	var d: Dictionary = Defs.B[type]
 	var t: String = d["name"].to_upper() + "\n" + d["desc"]
 	match d["kind"]:
@@ -3442,11 +3453,8 @@ func _card_tip(type: String) -> String:
 		var rr := Defs.research(uid)
 		if not rr.is_empty() and int(rr["lvl"]) > game.city.level:
 			t += " (уровень «%s»)" % Defs.LEVELS[int(rr["lvl"])]["name"]
-	var cnt := 0
-	if game and game.city:
-		for id in game.city.buildings:
-			if game.city.buildings[id]["type"] == type:
-				cnt += 1
+	if cnt < 0:
+		cnt = game.city.count_type(type) if game and game.city else 0
 	var mx: int = game.city.build_max(type) if game and game.city else -1
 	if mx >= 0:
 		t += "\nВ городе: %d из %d" % [cnt, mx]
@@ -3471,61 +3479,61 @@ func _jobs_text(d: Dictionary) -> String:
 func _update_cards() -> void:
 	_sync_build_menu()
 	var c: City = game.city
+	var counts := {}
+	for building: Dictionary in c.buildings.values():
+		var type: String = building["type"]
+		counts[type] = int(counts.get(type, 0)) + 1
 	for b in tray_grid.get_children():
 		if not b.has_meta("type"):
 			continue
 		var type: String = b.get_meta("type")
 		var d: Dictionary = Defs.B[type]
-		if c.build_max(type) >= 0 or d.get("sub", "") == "wonders":
-			var tip := _card_tip(type)       # «В городе: N из M» меняется с каждой постройкой и рангом
-			if b.tooltip_text != tip:
-				b.tooltip_text = tip
 		var img: TextureRect = b.find_child("img", true, false)
-		if img and img.texture == null:
+		if img.texture == null:
 			img.texture = building_icon(type)
-		var pr: HBoxContainer = b.find_child("price", true, false)
-		for x in pr.get_children():
-			x.queue_free()
-		if c.cap_err(type) != "":
-			# предел уровня города: больше таких не поставить, пока город не вырастет
-			var lm := _label("Предел: %d" % c.build_max(type), 12, true, C_SOFT)
-			lm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			lm.custom_minimum_size = Vector2(84, 0)
-			pr.add_child(lm)
-			b.add_theme_stylebox_override("normal", _card_box("g_card"))
+		var limit := c.build_max(type)
+		var count := int(counts.get(type, 0))
+		var capped := limit >= 0 and count >= limit
+		var credit := c.wonder_credit_ready(type)
+		var gifts: Array = c.gifts.get(type, [])
+		var field := Catalog.field_type(type)
+		var price := c.build_price(type, Vector2i(2, 2) if field else Vector2i.ZERO)
+		var state := [capped, limit, credit, gifts.size(), price, c.money >= price, I18n.lang]
+		if state != b.get_meta("price_state", []):
+			b.set_meta("price_state", state)
+			var pr: HBoxContainer = b.find_child("price", true, false)
+			_clear(pr)
+			if capped:
+				var lm := _label("Предел: %d" % limit, 12, true, C_SOFT)
+				lm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				lm.custom_minimum_size = Vector2(84, 0)
+				pr.add_child(lm)
+			elif credit:
+				pr.add_child(_icon("laurels", 22, C_GOOD))
+				pr.add_child(_label("Даром", 16, true, C_GOOD))
+			elif c.gift_ready(type):
+				pr.add_child(_icon("mail", 22, C_GOOD))
+				pr.add_child(_label("Подарок ×%d" % gifts.size(), 16, true, C_GOOD))
+			elif d.get("trophy", false):
+				pr.add_child(_icon("laurels", 22))
+				pr.add_child(_label("Трофей", 16, true, C_GOOD))
+			else:
+				pr.add_child(_icon("coins", 22))
+				var cost := I18n.t("от %s ден.") % fmt(price) if field else fmt(price)
+				pr.add_child(_label(cost, 18, true, C_INK if c.money >= price else C_BAD))
 			img.modulate = Color.WHITE
-			_grey(img)
-		elif c.wonder_credit_ready(type):
-			pr.add_child(_icon("laurels", 22, C_GOOD))
-			pr.add_child(_label("Даром", 16, true, C_GOOD))
-			b.tooltip_text = _card_tip(type) + "\nПрежняя покупка: одна постановка даром"
-			b.add_theme_stylebox_override("normal", _card_box("g_card"))
-			img.modulate = Color.WHITE
-			_grey(img, false)
-		elif c.gift_ready(type):
-			# подарок друга (SocialNet): даром, сколько штук осталось
-			pr.add_child(_icon("mail", 22, C_GOOD))
-			pr.add_child(_label("Подарок ×%d" % (c.gifts[type] as Array).size(), 16, true, C_GOOD))
-			b.tooltip_text = "Подарок из «%s» — ставится даром" % String((c.gifts[type] as Array)[0])
-			b.add_theme_stylebox_override("normal", _card_box("g_card"))
-			img.modulate = Color.WHITE
-			_grey(img, false)
-		elif d.get("trophy", false):
-			# трофей Легиона — бесплатно
-			pr.add_child(_icon("laurels", 22))
-			pr.add_child(_label("Трофей", 16, true, C_GOOD))
-			b.add_theme_stylebox_override("normal", _card_box("g_card"))
-			img.modulate = Color.WHITE
-			_grey(img, false)
-		else:
-			pr.add_child(_icon("coins", 22))
-			var field := Catalog.field_type(type)
-			var price := c.build_price(type, Vector2i(2, 2) if field else Vector2i.ZERO)
-			var cost := I18n.t("от %s ден.") % fmt(price) if field else fmt(price)
-			pr.add_child(_label(cost, 18, true, C_INK if c.money >= price else C_BAD))
-			b.add_theme_stylebox_override("normal", _card_box("g_card"))
-			img.modulate = Color.WHITE
-			_grey(img, false)
+			_grey(img, capped)
+		var gift := String(gifts[0]) if not capped and not credit and not gifts.is_empty() else ""
+		var rp := c.rp_per_hour(type) if d["kind"] == "rp" else 0.0
+		var tip_state := [count, limit, c.level, credit, gifts.size(), gift, rp, I18n.lang]
+		if tip_state != b.get_meta("tip_state", []):
+			b.set_meta("tip_state", tip_state)
+			if not capped and not credit and not gifts.is_empty():
+				b.tooltip_text = "Подарок из «%s» — ставится даром" % gift
+			else:
+				b.tooltip_text = _card_tip(type, count)
+				if not capped and credit:
+					b.tooltip_text += "\nПрежняя покупка: одна постановка даром"
 
 
 ## from_tray — взяли карточку в самом свитке: вкладку, ★/«Недавние» и поиск не трогаем (там и так видна эта карточка)
@@ -4877,8 +4885,38 @@ func open_person(sel: Dictionary) -> void:
 	_close_windows()
 	info_b = {}
 	info_p = sel
-	info_panel.visible = true
-	_fill_info()
+	info_panel.hide()
+	_person_open_serial += 1
+	var serial := _person_open_serial
+	person_opening = true
+	var rest: Array[Callable] = []
+	var steps: Array[Callable] = [_fill_info_body.bind(rest)]
+	while not steps.is_empty():
+		await get_tree().process_frame
+		if serial != _person_open_serial:
+			return
+		if not is_same(info_p, sel):
+			break
+		var step: Callable = steps.pop_front()
+		var started := Perf14.begin()
+		step.call()
+		Perf14.end(Perf14.UI, started)
+		Perf14.detail("ui_person_" + String(step.get_method()), started)
+		if step.get_method() == &"_fill_info_body":
+			steps.append_array(rest)
+			steps.append(_finish_person_open)
+	person_opening = false
+
+
+var person_opening := false
+var _person_open_serial := 0
+
+
+func _finish_person_open() -> void:
+	CityStyle.apply(info_panel)
+	info_panel.show()
+	_snug(info_panel)
+	_refit(info_panel)
 
 
 ## Подпись у курсора над жителем или кошкой («Гай Юлий · пекарь») — маленькая кремовая табличка, не окно
@@ -5231,7 +5269,7 @@ func _row(icon: String, text: String, val: String, col := C_INK) -> HBoxContaine
 ## Карточку пересобирают при каждом обновлении города (раз в игровой час) — и каждый раз она должна
 ## сжаться ровно по содержимому: прикрепляем заново сразу и ещё раз через кадр (после переноса строк)
 func _fill_info() -> void:
-	var started := Perf14.begin()
+	var started := 0 if _refreshing else Perf14.begin()
 	_fill_info_profiled()
 	Perf14.end(Perf14.UI, started)
 
@@ -5246,7 +5284,7 @@ func _fill_info_profiled() -> void:
 	_refit(info_panel)
 
 
-func _fill_info_body() -> void:
+func _fill_info_body(rest: Variant = null) -> void:
 	_clear(info_box)
 	info_box.tooltip_text = ""
 	lg_upg_btn = null
@@ -5256,7 +5294,7 @@ func _fill_info_body() -> void:
 		info_panel.custom_minimum_size = Vector2(370, 0)
 		info_box.custom_minimum_size.x = 330
 		# карточка жителя или кошки (этапы 6.3–6.5) — в том же окне справа сверху
-		if not PersonCard.fill(self, info_box, info_p):
+		if not PersonCard.fill(self, info_box, info_p, rest):
 			info_p = {}
 			PersonCard.close()
 			info_panel.visible = false
@@ -7807,10 +7845,17 @@ func plot_cap_note() -> String:
 
 # ---------- обновление ----------
 
+const REFRESH_PARTS := 8
+var _refreshing := false
+
+
 func refresh(hour_part := 0) -> void:
 	var started := Perf14.begin()
+	_refreshing = true
 	refresh_profiled(hour_part)
+	_refreshing = false
 	Perf14.end(Perf14.UI, started)
+	Perf14.detail("ui_refresh_%d" % hour_part, started)
 
 
 func refresh_profiled(hour_part := 0) -> void:
@@ -7842,6 +7887,8 @@ func refresh_profiled(hour_part := 0) -> void:
 		for sb in speed_btns:
 			_set_on(sb[0], is_equal_approx(game.speed, sb[1]))
 		_update_full_marks()
+	if hour_part == 0 or hour_part == 2:
+		var c: City = game.city
 		_update_rank_ui()
 		_update_floor_btn()
 		_update_upg_btn()
@@ -7854,22 +7901,26 @@ func refresh_profiled(hour_part := 0) -> void:
 		_fit_bottom()                             # «Полки полны» — правая полоса шире
 		_fill_classes()
 		_fit_top()
-	if hour_part == 0 or hour_part == 2:
+	if hour_part == 0 or hour_part == 3:
 		_fill_families()
 		_fill_tasks()
 		_once_tips()
-	if hour_part == 0 or hour_part == 3:
+	if hour_part == 0 or hour_part == 4:
 		if tray.visible:
 			_update_cards()
+	if hour_part == 0 or hour_part == 5:
 		if info_panel.visible and not PersonCard.editing(info_p):     # открыт «Гардероб» / «Внешность» — не пересобираем («Сейчас» живёт сам)
 			_fill_info()
+	if hour_part == 0 or hour_part == 6:
 		if research_panel.visible:
 			_research_head()
 			research_tree.refresh()
 		if overview_panel.visible:
 			_refresh_overview()
+	if hour_part == 0 or hour_part == 7:
 		_update_world_icons()
-		game._update_noroad_marks()
+	if hour_part == 0 or hour_part == 8:
+		game._update_noroad_marks(hour_part != 0 and game.ready_done)
 		_update_pointer()
 		if hover_src:
 			_fill_hover()                       # числа в открытой подсказке живые
@@ -8271,12 +8322,23 @@ func bell(_text: String, _icon := "info", seen := false, advisor_tip := false) -
 	bell_badge.text = str(bell_count)
 
 
+var _class_display: Array = []
+
+
 func _fill_classes() -> void:
+	var c: City = game.city
+	var state := [I18n.lang, c.manual_hiring()]
+	for cl: String in Defs.CLASS_ORDER:
+		state.append([c.unlocked(Defs.CLASSES[cl]["house"]), c.stats["residents"].get(cl, 0),
+			c.stats["class_happy"].get(cl, 0), c.stats["jobs"].get(cl, 0),
+			c.stats["workers"].get(cl, 0), c.stats.get("free", {}).get(cl, 0)])
+	if state == _class_display:
+		return
+	_class_display = state
 	var hover_cls := ""                     # мышь над фишкой класса — после пересборки подсказка остаётся на новой фишке
 	if hover_src and is_instance_valid(hover_src) and hover_src.has_meta("cls"):
 		hover_cls = hover_src.get_meta("cls")
 	_clear(class_box)
-	var c: City = game.city
 	for cl in Defs.CLASS_ORDER:
 		var cd: Dictionary = Defs.CLASSES[cl]
 		if not c.unlocked(cd["house"]) and int(c.stats["residents"].get(cl, 0)) == 0:
@@ -8329,19 +8391,26 @@ func _fill_classes() -> void:
 
 
 func _fill_tasks() -> void:
-	_clear(tasks_box)
 	var c: City = game.city
 	var goals := c.active_goals(3)
 	var sto = game.get("stories")
-	var story: bool = sto != null and (not sto.row_info().is_empty() or sto.journal_any() or Chronicle.any(c))   # история горожан — золотая строка сверху
-	tasks_panel.visible = (not goals.is_empty() or story) and game.mode != "demo" and ui_level() >= 3
+	var story_row: bool = sto != null and not sto.row_info().is_empty()
+	var story: bool = sto != null and (story_row or sto.journal_any() or Chronicle.any(c))
+	var shown: bool = (not goals.is_empty() or story) and game.mode != "demo" and ui_level() >= 3
 	if _fold_city != c:
 		_fold_city = c                           # другой город (новая игра, загрузка) — счёт «✓» с нуля
 		_fold_done0 = c.goals_done.size()
-	if tasks_panel.visible:
-		_tasks_frame(tasks_folded())
-		if tasks_folded():                       # свёрнут — маленький значок-свиток со счётчиком, без рамки
-			_fill_tasks_folded(goals)
+	var folded := tasks_folded()
+	var state := [shown, folded, goals.size(), c.goals_done.size() - _fold_done0, story_row, I18n.lang]
+	if (folded or not shown) and state == _tasks_display and tasks_panel.visible == shown:
+		return
+	_tasks_display = state
+	_clear(tasks_box)
+	tasks_panel.visible = shown
+	if shown:
+		_tasks_frame(folded)
+		if folded:                              # свёрнут — маленький значок-свиток со счётчиком, без рамки
+			_fill_tasks_folded(goals, story_row)
 		else:
 			_fill_tasks_body(goals)
 	# свиток пересобирается при каждом обновлении города (в большом городе на ×3 — раз в несколько секунд): кнопки
@@ -8358,6 +8427,7 @@ func _fill_tasks() -> void:
 
 # ---------- свиток просьб сворачивается (отзыв 17): узкая полоска «Просьбы · 3», сам не разворачивается ----------
 
+var _tasks_display: Array = []
 var _fold_city: City = null
 var _fold_done0 := 0                         # сколько просьб было выполнено, когда свиток свернули
 var _fold_badge: Label = null                # «✓1» на свёрнутом свитке
@@ -8408,7 +8478,7 @@ func _tasks_frame(compact: bool) -> void:
 
 ## Свёрнутый свиток: маленький медальон-свиток; на нём число просьб, зелёное «✓1», если что-то выполнилось,
 ## золотая точка — история ждёт. Подробности — по наведению, щелчок разворачивает
-func _fill_tasks_folded(goals: Array) -> void:
+func _fill_tasks_folded(goals: Array, story_row: bool) -> void:
 	var c: City = game.city
 	var done := c.goals_done.size() - _fold_done0
 	var b := _round("scroll", "", 46, fold_tasks.bind(false))
@@ -8435,8 +8505,7 @@ func _fill_tasks_folded(goals: Array) -> void:
 		if done > _fold_badge_n:
 			_fold_glow_until = Time.get_ticks_msec() + 2000    # новое — мягко светится 2 с
 	_fold_badge_n = done
-	var sto = game.get("stories")
-	if sto != null and not sto.row_info().is_empty():
+	if story_row:
 		var dot := GoldDot.new()                 # история горожан ждёт
 		dot.name = "story_dot"
 		dot.custom_minimum_size = Vector2(14, 14)
@@ -9619,7 +9688,15 @@ func _category_types(cat: String) -> Array:
 	return out
 
 
+var _build_menu_state: Array = []
+
+
 func _sync_build_menu() -> void:
+	var c: City = game.city
+	var state := [c.level, c.cozy_v, c.decor_v, c.legion_v, c.research, c.gifts, c.wonder_credits]
+	if state == _build_menu_state:
+		return
+	_build_menu_state = state.duplicate(true)
 	var key := ""
 	for cid: String in cats:
 		var types := _category_types(cid)

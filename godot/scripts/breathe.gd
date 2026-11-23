@@ -5,6 +5,9 @@ extends Node3D
 ## (где игрок, там и жизнь; за краем экрана ничего не считается). На «Очень низкой» выключено, на «Низкой» — вдвое меньше.
 ## Картинки бабочек и птиц рисуются кодом (крылья — два кадра: взмах), без файлов.
 
+const Perf14 = preload("res://scripts/perf14_timers.gd")
+const CityWarmup = preload("res://scripts/city_warmup.gd")
+const BUTTERFLY_MODEL := "res://assets/animals/Butterfly.glb"
 const AREA := 12.0                       # полуширина квадрата вокруг точки взгляда, м (вблизи их и видно; дальше — мелочь)
 const BUTTERFLY_H := [7.0, 18.5]         # часы бабочек
 const FIREFLY_H := [20.5, 4.8]           # часы светлячков (через полночь)
@@ -25,15 +28,24 @@ var _bird_t := 20.0
 var _q := "high"
 
 
-func setup(g) -> void:
+func setup(g, tree: SceneTree) -> void:
 	game = g
-	bfly = _butterflies()
-	ffly = _fireflies()
-	birds = _birds()
-	mist = _mist()
-	for p: GPUParticles3D in [bfly, ffly, birds, mist]:
-		add_child(p)
-		p.emitting = false
+	var source := await CityWarmup.fetch(tree, {BUTTERFLY_MODEL: true})
+	var effects: Array[Callable] = [_butterflies, _fireflies, _birds, _mist]
+	var nodes: Array[GPUParticles3D] = []
+	for make: Callable in effects:
+		var started := Perf14.begin()
+		var particles: GPUParticles3D = make.call()
+		add_child(particles)
+		particles.emitting = false
+		nodes.append(particles)
+		Perf14.detail("load_breathe_" + String(make.get_method()), started)
+		await tree.process_frame
+	bfly = nodes[0]
+	ffly = nodes[1]
+	birds = nodes[2]
+	mist = nodes[3]
+	source.clear()
 	roof = RoofBirds.new()
 	add_child(roof)
 	roof.setup(g)
@@ -198,7 +210,7 @@ static var _bf_mesh: ArrayMesh
 func _butterfly_mesh() -> ArrayMesh:
 	if _bf_mesh != null:
 		return _bf_mesh
-	var path := "res://assets/animals/Butterfly.glb"
+	var path := BUTTERFLY_MODEL
 	if not ResourceLoader.exists(path):
 		return _butterfly_mesh_simple()
 	var root := (load(path) as PackedScene).instantiate() as Node3D
