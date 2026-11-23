@@ -7,8 +7,35 @@ const PROP_PIXELS := 1.5
 const PROP_MAX_SIZE := 0.8
 const PROP_KINDS := ["Vase", "Senser", "Censer", "FlowerPot", "Basket", "Seat", "Jar", "Jug", "Stool", "Sack", "Amphora", "Goblet", "Bowl"]
 
+# Модели, у которых PERF14-c2 добавил индексные LOD.
+const C2_LOD := [
+	"SM_Bld_Door_Half_02", "SM_Bld_Door_Half_03", "SM_Bld_Door_Large_01",
+	"SM_Bld_Floor_Trim_01", "SM_Bld_Pillar_06", "SM_Bld_Pillar_Large_04",
+	"SM_Bld_Roof_Base_Corner_01", "SM_Bld_Roof_Base_Straight_Side_01", "SM_Bld_Roof_Edge_Straight_01",
+	"SM_Bld_Roof_Topper_02", "SM_Bld_Trim_03", "SM_Bld_Trim_04",
+	"SM_Bld_Trim_05", "SM_Bld_Trim_Large_Corner_01", "SM_Bld_Trim_Large_Single_01",
+	"SM_Bld_Trim_Large_Single_02", "SM_Bld_Wall_Balcony_03", "SM_Bld_Wall_Balcony_06",
+	"SM_Bld_Wall_Beam_Detail_01", "SM_Bld_Wall_Door_Double_01", "SM_Bld_Wall_Door_Large_01",
+	"SM_Bld_Wall_Window_01", "SM_Bld_Wall_Window_02", "SM_Env_Tree_01",
+	"SM_Prop_Basket_02", "SM_Prop_Basket_03", "SM_Prop_Basket_05",
+	"SM_Prop_Basket_06", "SM_Prop_Basket_07", "SM_Prop_Basket_08",
+	"SM_Prop_Basket_10", "SM_Prop_Basket_12", "SM_Prop_Basket_Insert_02",
+	"SM_Prop_Basket_Set_01", "SM_Prop_Basket_Set_03", "SM_Prop_Basket_Set_04",
+	"SM_Prop_Bowl_04", "SM_Prop_Bowl_05", "SM_Prop_Brazier_01",
+	"SM_Prop_FlowerPot_Fancy_01", "SM_Prop_FlowerPot_Hanging_01", "SM_Prop_FlowerPot_Hanging_02",
+	"SM_Prop_FlowerPot_Hanging_03", "SM_Prop_FlowerPot_Hanging_04", "SM_Prop_FlowerPot_Hanging_05",
+	"SM_Prop_FlowerPot_Hanging_06", "SM_Prop_Goblet_01", "SM_Prop_Jug_01",
+	"SM_Prop_Jug_04", "SM_Prop_Jug_05", "SM_Prop_Rug_Drape_01",
+	"SM_Prop_Sack_03", "SM_Prop_Sack_04", "SM_Prop_Sack_05",
+	"SM_Prop_Senser_02", "SM_Prop_Senser_04", "SM_Prop_Statue_03",
+	"SM_Prop_Stool_01", "SM_Prop_Table_07", "SM_Prop_Vase_01",
+	"SM_Prop_Vase_02", "SM_Prop_Vase_03", "SM_Prop_Vase_04",
+	"SM_Prop_Vase_06", "SM_Prop_Vase_Pile_04",
+]
+
 var tile_m := 0.0
 var lods := false
+var prepare_c2 := false
 var tiny := false
 var shadows := 0                   # 1 — мелочь без тени, 2 — отдельная сетка для тени
 var area_keys := {}                 # выбор дорогих групп для замера
@@ -42,8 +69,10 @@ static func small_end(diameter: float, radius: float) -> float:
 	return radius + diameter * REF_HEIGHT / (2.0 * tan_y * PROP_PIXELS) * (1.0 + tan_x * tan_x + tan_y * tan_y)
 
 
-func copy_mesh(source: Mesh, tile: Vector2i) -> Mesh:
+func copy_mesh(source: Mesh, tile: Vector2i, name := "") -> Mesh:
 	if lods and tile.x < 0:
+		if prepare_c2 and name in C2_LOD:
+			return with_missing_lods(source).duplicate() as Mesh
 		var entry: Dictionary = prepared.get(source.get_instance_id(), {})
 		var ready: ArrayMesh = entry.get("lod")
 		if ready != null:
@@ -133,7 +162,16 @@ func bounds(sub: Dictionary, xf: Transform3D, area: bool, use_range: bool) -> vo
 			if diameter <= PROP_MAX_SIZE and mmi.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF else 0.0
 
 
-static func prepare(source: ArrayMesh, cache_dir: String) -> Dictionary:
+static func with_missing_lods(source: Mesh) -> Mesh:
+	if not source is ArrayMesh or (source as ArrayMesh).get_blend_shape_count() != 0:
+		return source
+	prepare(source, "", false)
+	var entry: Dictionary = prepared[source.get_instance_id()]
+	var ready: ArrayMesh = entry["lod"]
+	return source if ready == null else ready
+
+
+static func prepare(source: ArrayMesh, cache_dir: String, make_proxy := true) -> Dictionary:
 	var id := source.get_instance_id()
 	if prepared.has(id):
 		return {}
@@ -144,12 +182,13 @@ static func prepare(source: ArrayMesh, cache_dir: String) -> Dictionary:
 	for s in importer.get_surface_count():
 		var arrays := importer.get_surface_arrays(s)
 		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
-		signatures.append([hash(arrays[Mesh.ARRAY_VERTEX]), hash(arrays[Mesh.ARRAY_NORMAL]), hash(arrays[Mesh.ARRAY_COLOR]), hash(indices)])
+		if not cache_dir.is_empty():
+			signatures.append([hash(arrays[Mesh.ARRAY_VERTEX]), hash(arrays[Mesh.ARRAY_NORMAL]), hash(arrays[Mesh.ARRAY_COLOR]), hash(indices)])
 		if importer.get_surface_lod_count(s) == 0 and indices.size() >= 96 and importer.get_surface_primitive_type(s) == Mesh.PRIMITIVE_TRIANGLES:
 			missing.append(s)
-	var path := cache_dir.path_join("%d_%s.lod" % [CACHE_VERSION, var_to_bytes(signatures).hex_encode().sha256_text()])
+	var path := "" if cache_dir.is_empty() else cache_dir.path_join("%d_%s.lod" % [CACHE_VERSION, var_to_bytes(signatures).hex_encode().sha256_text()])
 	var indexed := {}
-	var cached := FileAccess.open(path, FileAccess.READ)
+	var cached := FileAccess.open(path, FileAccess.READ) if not cache_dir.is_empty() else null
 	if cached != null:
 		var value: Variant = cached.get_var()
 		if value is Dictionary:
@@ -164,14 +203,14 @@ static func prepare(source: ArrayMesh, cache_dir: String) -> Dictionary:
 				variants[importer.get_surface_lod_size(s, level)] = importer.get_surface_lod_indices(s, level)
 			if not variants.is_empty():
 				indexed[s] = variants
-		var file := FileAccess.open(path, FileAccess.WRITE)
+		var file := FileAccess.open(path, FileAccess.WRITE) if not cache_dir.is_empty() else null
 		if file != null:
 			file.store_var(indexed)
 	var original := ImporterMesh.from_mesh(source) if not missing.is_empty() else importer
 	var with_lods: ArrayMesh
 	if not indexed.is_empty():
 		with_lods = _with_lods(source, original, indexed)
-	var proxy := _shadow_proxy(original, indexed)
+	var proxy := _shadow_proxy(original, indexed) if make_proxy else null
 	prepared[id] = {"source": source, "lod": with_lods, "proxy": proxy}
 	return {"missing": missing.size(), "with_lod": indexed.size(), "proxy": proxy != null, "us": Time.get_ticks_usec() - start}
 
@@ -197,6 +236,9 @@ static func _with_lods(source: ArrayMesh, original: ImporterMesh, indexed: Dicti
 	# Оставляем исходные сжатые атрибуты, меняем лишь индексные LOD.
 	mesh.set("_surfaces", surfaces)
 	mesh.custom_aabb = source.custom_aabb
+	mesh.resource_name = source.resource_name
+	for s in mesh.get_surface_count():
+		mesh.surface_set_material(s, source.surface_get_material(s))
 	if shadow.get_surface_count() == surfaces.size():
 		mesh.shadow_mesh = shadow
 	return mesh

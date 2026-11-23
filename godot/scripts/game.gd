@@ -38,6 +38,12 @@ var photo: PhotoMode                  # режим фото (P): интерфе�
 var weather: Weather                  # дождь (scripts/weather.gd)
 var seasons: Seasons                  # времена года: листва, трава, листопад (scripts/seasons.gd)
 var clouds: Clouds                    # тени облаков по городу (scripts/clouds.gd)
+# PERF14-e3: отдельные пробы. Включаются до загрузки города.
+static var perf14_land := false
+static var perf14_foliage := false
+static var perf14_parts := false
+static var _perf14_land_shader: Shader
+
 var land_mat: ShaderMaterial
 var surf_img: Image
 var surf_tex: ImageTexture
@@ -315,6 +321,13 @@ func _ready() -> void:
 	parts.tint_split = Parts.split_on           # одинаковые детали разных цветов — один MultiMesh (12.11, скорость)
 	if mode in ["play", "new", "demo"] and DisplayServer.get_name() != "headless":
 		parts.detail = Parts.detail_config
+		parts.foliage_lod = perf14_foliage
+		if perf14_parts and parts.detail == null:
+			parts.detail = Parts.Detail.new()
+			parts.detail.tile_m = 48.0
+			parts.detail.lods = true
+			parts.detail.shadows = 1
+			parts.detail.prepare_c2 = true
 	add_child(parts)
 	cover = Cover.new()
 	add_child(cover)
@@ -322,7 +335,7 @@ func _ready() -> void:
 	actors_root = Node3D.new()
 	add_child(actors_root)
 	land_mat = ShaderMaterial.new()
-	land_mat.shader = load("res://shaders/land.gdshader")
+	land_mat.shader = land_shader(perf14_land)
 	Synty._index()
 	var tex := func(n: String) -> Texture2D: return load(Synty._tex_path(n))
 	land_mat.set_shader_parameter("tile_road", tex.call("Floor_Tiles_04"))
@@ -690,6 +703,16 @@ func apply_settings() -> void:
 ## Уровни графики «Высокая / Средняя / Низкая / Очень низкая» — scripts/gfx.gd (Средняя и Высокая — как были)
 func _apply_quality() -> void:
 	Gfx.apply(self)
+
+
+static func land_shader(distance_lod: bool) -> Shader:
+	var base: Shader = load("res://shaders/land.gdshader")
+	if not distance_lod:
+		return base
+	if _perf14_land_shader == null:
+		_perf14_land_shader = Shader.new()
+		_perf14_land_shader.code = "#define PERF14_LAND\n" + base.code
+	return _perf14_land_shader
 
 
 # ---------- небо, солнце, свет, цвет ----------
@@ -1126,7 +1149,9 @@ func _far_nature() -> void:
 			continue
 		var y := far_y(x, z) - (0.1 if name.contains("Rock") else 0.0)
 		var small := name.contains("Grass") or name.contains("Flowers")
-		var key := "%s|%d,%d" % [name, floori(x / 160.0), floori(z / 160.0)]
+		# Мелочь сохраняет штатную дальность исчезновения, привязанную к куску.
+		var tile_m := 48.0 if perf14_foliage and not small and Parts.is_foliage(name) else 160.0
+		var key := "%s|%d,%d" % [name, floori(x / tile_m), floori(z / tile_m)]
 		if not batches.has(key):
 			batches[key] = {"name": name, "list": [], "shadow": not small, "range": 150.0 if small else 0.0}
 		batches[key]["list"].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(x, y, z)))
@@ -1140,12 +1165,14 @@ func _batch_mm(batches: Dictionary) -> Array:
 	for key in batches:
 		var bt: Dictionary = batches[key]
 		var nm: String = bt["name"]
+		var use_foliage_lod := perf14_foliage and Parts.is_foliage(nm)
 		if not srcs.has(nm):
 			var tinted := nm.begins_with("SM_Env_Tree") or nm.begins_with("SM_Env_Bush")
 			var src := Synty.make(nm, {"tint": Synty.GREEN} if tinted else {})
 			var subs := []
 			for smi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-				var mesh := smi.mesh.duplicate() as Mesh
+				var original := Parts.Detail.with_missing_lods(smi.mesh) if use_foliage_lod else smi.mesh
+				var mesh := original.duplicate() as Mesh
 				for si in mesh.get_surface_count():
 					var sm := smi.get_surface_override_material(si)
 					if sm:
@@ -1154,7 +1181,9 @@ func _batch_mm(batches: Dictionary) -> Array:
 			src.free()
 			srcs[nm] = subs
 		var list: Array = bt["list"]
-		for sub: Array in srcs[nm]:
+		var source_subs: Array = srcs[nm]
+		for part in source_subs.size():
+			var sub: Array = source_subs[part]
 			var mm := MultiMesh.new()
 			mm.transform_format = MultiMesh.TRANSFORM_3D
 			mm.mesh = sub[0]
@@ -1164,6 +1193,10 @@ func _batch_mm(batches: Dictionary) -> Array:
 				mm.set_instance_transform(k, (list[k] as Transform3D) * local)
 			var mmi := MultiMeshInstance3D.new()
 			mmi.multimesh = mm
+			mmi.set_meta("batch_model", nm)
+			mmi.set_meta("batch_part", part)
+			if use_foliage_lod:
+				mmi.lod_bias = Parts.FOLIAGE_LOD_BIAS
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if bt["shadow"] else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			if float(bt["range"]) > 0.0:
 				mmi.visibility_range_end = float(bt["range"])

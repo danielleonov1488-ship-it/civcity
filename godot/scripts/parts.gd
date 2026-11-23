@@ -18,6 +18,8 @@ var tint_split := false
 const Detail = preload("res://scripts/parts_detail.gd")
 static var detail_config: Detail
 var detail: Detail
+var foliage_lod := false
+const FOLIAGE_LOD_BIAS := 0.65
 static var profile_place := false
 var place_usec := 0
 var max_place_usec := 0
@@ -87,19 +89,43 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 	else:
 		var src := Synty.make(name, remap)
 		for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-			var mesh: Mesh = detail.copy_mesh(mi.mesh, tile) if detail != null else mi.mesh.duplicate() as Mesh
+			var mesh := _copy_mesh(mi.mesh, tile, name)
 			for s in mesh.get_surface_count():
 				var m := mi.get_surface_override_material(s)
 				if m:
 					mesh.surface_set_material(s, m)
 			var sub := _sub(mesh, Citizen._rel(mi, src))
 			_small(name, sub, tile)
+			_set_foliage_lod(sub, tile, name)
 			g["subs"].append(sub)
 			if detail != null and tile.x < 0:
 				detail.add_shadow(self, g, sub, name, mi.mesh)
 		src.free()
 	groups[key] = g
 	return g
+
+
+static func is_foliage(name: String) -> bool:
+	var model := name.trim_prefix("M:").trim_prefix("SM_Env_")
+	if model == name.trim_prefix("M:"):
+		return false
+	for prefix: String in ["Tree", "Bush", "Grass", "Flowers", "Wildflowers",
+			"Garden_Plants", "Ground_Cover", "Lillies", "Sunflower", "CropField", "Rapeseed"]:
+		if model.begins_with(prefix):
+			return true
+	return false
+
+
+func _copy_mesh(source: Mesh, tile: Vector2i, name: String) -> Mesh:
+	if foliage_lod and tile.x >= 0 and is_foliage(name):
+		return Detail.with_missing_lods(source).duplicate() as Mesh
+	return detail.copy_mesh(source, tile, name) if detail != null else source.duplicate() as Mesh
+
+
+func _set_foliage_lod(sub: Dictionary, tile: Vector2i, name: String) -> void:
+	if foliage_lod and tile.x >= 0 and is_foliage(name):
+		sub["foliage_lod"] = true
+		(sub["mmi"] as MultiMeshInstance3D).lod_bias = FOLIAGE_LOD_BIAS
 
 
 ## Группа без оттенка: модель с remap без цвета, у подкрашиваемых поверхностей — белый материал «умножить на цвет
@@ -112,7 +138,7 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 	var subs := []
 	var ok := true
 	for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
-		var mesh: Mesh = detail.copy_mesh(mi.mesh, tile) if detail != null else mi.mesh.duplicate() as Mesh
+		var mesh := _copy_mesh(mi.mesh, tile, name)
 		for s in mesh.get_surface_count():
 			var m := mi.get_surface_override_material(s)
 			if m == null:
@@ -136,6 +162,7 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 	for e: Array in subs:
 		var sub := _sub(e[0], e[1], true)
 		_small(name, sub, tile)
+		_set_foliage_lod(sub, tile, name)
 		g["subs"].append(sub)
 		if detail != null and tile.x < 0:
 			detail.add_shadow(self, g, sub, name, e[2])

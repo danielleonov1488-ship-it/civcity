@@ -32,6 +32,9 @@ static var medium_light := MEDIUM_LIGHT   # проверки (test_perf mode=off
 static var short_low_shadows := true       # PERF13: сокращённая дальность и одна полоса теней
 static var earlier_verylow_lod := true     # PERF13: дальние модели чаще берут готовый LOD
 
+static var perf14_ssao := false
+static var perf14_shadows := false
+static var _ssao_reduced := false
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
 static var _grand_low := false         # большие постройки этапа 5 показаны с лёгкими деталями («Низкая», CatGrand.LOW)
@@ -261,6 +264,17 @@ static func apply(g) -> void:
 	env.sdfgi_enabled = false
 	env.ssil_enabled = false
 	env.ssao_enabled = not low
+	var reduce_ssao := perf14_ssao and not low
+	if reduce_ssao != _ssao_reduced:
+		var prefix := "rendering/environment/ssao/"
+		var quality := int(ProjectSettings.get_setting(prefix + "quality", 3))
+		RenderingServer.environment_set_ssao_quality(maxi(0, quality - 1) if reduce_ssao else quality,
+			bool(ProjectSettings.get_setting(prefix + "half_size", true)),
+			float(ProjectSettings.get_setting(prefix + "adaptive_target", 0.5)),
+			int(ProjectSettings.get_setting(prefix + "blur_passes", 2)),
+			float(ProjectSettings.get_setting(prefix + "fadeout_from", 50.0)),
+			float(ProjectSettings.get_setting(prefix + "fadeout_to", 300.0)))
+		_ssao_reduced = reduce_ssao
 	env.glow_enabled = not low
 	var sun: DirectionalLight3D = g.sun
 	if sun:
@@ -275,9 +289,11 @@ static func apply(g) -> void:
 	# атлас теней солнца и его фильтр — общие настройки отрисовки (project.godot: 8192, мягкие высокие): «Высокая» — 4096 и
 	# средняя мягкость, «Средняя» и ниже — 4096 и низкая; прежняя «Средняя» (переключатель medium_light выключен) — как было
 	var full := q == "medium" and not ml
-	var sl := 2 if full else (0 if q == "high" else 1)
+	var smaller_atlas := perf14_shadows and q != "verylow"
+	var sl := (2 if full else (0 if q == "high" else 1)) + (3 if smaller_atlas else 0)
 	if sl != _sun_low:
-		RenderingServer.directional_shadow_atlas_set_size(8192 if full else 4096, true)
+		var atlas := (4096 if full else 2048) if smaller_atlas else (8192 if full else 4096)
+		RenderingServer.directional_shadow_atlas_set_size(atlas, true)
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH if full else
 			(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if q == "high" else RenderingServer.SHADOW_QUALITY_SOFT_LOW))
 		_sun_low = sl
