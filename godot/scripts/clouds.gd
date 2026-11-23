@@ -82,8 +82,10 @@ func set_enabled(on: bool) -> void:
 
 ## Свет суток (game._set_hour): ночью теней нет, в сумерках они тают
 func set_day(k: float) -> void:
-	day = clampf(k, 0.0, 1.0)
-	_alpha()
+	k = clampf(k, 0.0, 1.0)
+	if day != k:
+		day = k
+		_alpha()
 
 
 func _alpha() -> void:

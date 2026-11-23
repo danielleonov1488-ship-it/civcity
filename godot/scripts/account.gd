@@ -770,6 +770,9 @@ func destroy_city() -> void:
 
 ## Выход из игры: сначала город уходит в облако (не дольше QUIT_WAIT секунд)
 func quit_game() -> void:
+	var g = _g()
+	if g != null and g.gfx != null:
+		await g.gfx.prepare_speed_test_exit()
 	if _quitting:
 		get_tree().quit()
 		return

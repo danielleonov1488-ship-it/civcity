@@ -5925,5 +5925,20 @@
 	"Плавность": "Smooth performance",
 	"Меняет чёткость города, чтобы держать FPS.": "Adjusts city detail to keep frames smooth.",
 	"Игра идёт на встроенной видеокарте (%s). ": "The game is running on integrated graphics (%s). ",
-	"Подключите зарядку — без неё Mac сам замедляет видеокарту.": "Plug in the charger. The Mac slows graphics down on battery."
+	"Подключите зарядку — без неё Mac сам замедляет видеокарту.": "Plug in the charger. The Mac slows graphics down on battery.",
+	"Проверка скорости": "Speed test",
+	"Готовим проверку…": "Preparing the test…",
+	"Идёт проверка… %d с": "Speed test running… %d s",
+	"Стоп": "Stop",
+	"Мало кадров для оценки": "Too few frames to rate",
+	"Игра идёт плавно (%d кадров/с)": "Smooth gameplay (%d FPS)",
+	"Иногда подтормаживает": "Occasional stutters",
+	"Игре тяжело": "Low performance",
+	"Советуем: %s": "Recommended: %s",
+	"Включить": "Apply",
+	"Скопировать отчёт": "Copy report",
+	"Отчёт скопирован": "Report copied",
+	"Не удалось сохранить отчёт": "Could not save the report",
+	"Игра идёт плавно": "Smooth gameplay",
+	"кадров/с": "FPS"
 }

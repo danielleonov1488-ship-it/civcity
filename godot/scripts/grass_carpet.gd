@@ -55,6 +55,7 @@ var _fn := FastNoiseLite.new()  # большие пятна густоты (по
 var _fc := FastNoiseLite.new()  # кочки травы внутри зарослей
 var _ff := FastNoiseLite.new()  # цветочные поляны
 var _on := true
+var _settled_cam := Vector3.INF
 static var mats: Array = []     # материалы ковра (снимки сверки: MeadowNature.freeze — без качания)
 
 
@@ -144,6 +145,7 @@ static func _flower_images(source: Array[Image], result: Array[Image]) -> void:
 
 
 func set_quality(q: String) -> void:
+	_settled_cam = Vector3.INF
 	var p: Dictionary = Q.get(q, Q["high"])
 	var sp := float(p["sp"])
 	var rk := range_key(game.settings, q) if game != null else "near"
@@ -173,6 +175,7 @@ func invalidate_chunk(ch: Vector2i) -> void:
 	var k := Vector2i(int(ch.x * Land.CH * Land.CELL / TILE), int(ch.y * Land.CH * Land.CELL / TILE))
 	if tiles.has(k) or (not _job.is_empty() and _job["key"] == k):
 		dirty[k] = true
+		_settled_cam = Vector3.INF
 
 
 ## Кистью «Трава» / «Убрать траву» поменяли маску в прямоугольнике — куски под ним строятся заново
@@ -182,6 +185,7 @@ func invalidate_rect(a: Vector2, b: Vector2) -> void:
 			var k := Vector2i(i, j)
 			if tiles.has(k) or (not _job.is_empty() and _job["key"] == k):
 				dirty[k] = true
+				_settled_cam = Vector3.INF
 
 
 func _invalidate_cells(cells: PackedInt32Array) -> void:
@@ -192,6 +196,7 @@ func _invalidate_cells(cells: PackedInt32Array) -> void:
 			seen[k] = true
 			if tiles.has(k) or (not _job.is_empty() and _job["key"] == k):
 				dirty[k] = true
+				_settled_cam = Vector3.INF
 
 
 func _cam() -> Vector3:
@@ -219,6 +224,8 @@ func _process(_dt: float) -> void:
 ## Куски вокруг камеры: недостающие и поменявшиеся — строить (не дольше ms), дальние — убрать, густота вдали — реже
 func step(ms: float) -> bool:
 	var cam := _cam()
+	if cam == _settled_cam:
+		return false
 	var t0 := Time.get_ticks_usec()
 	var r := radius
 	var near_hole := false
@@ -251,7 +258,9 @@ func step(ms: float) -> bool:
 				if absi(vc - mmi.multimesh.visible_instance_count) > mmi.multimesh.instance_count / 20:
 					mmi.multimesh.visible_instance_count = vc   # только когда заметно поменялось (не каждый кадр)
 	if want.is_empty() and _job.is_empty():
+		_settled_cam = cam
 		return false
+	_settled_cam = Vector3.INF
 	want.sort_custom(func(a, b): return a[0] < b[0])
 	if not _job.is_empty():
 		var jk: Vector2i = _job["key"]

@@ -181,6 +181,11 @@ func _card() -> void:
 	actions.add_child(next_btn)
 
 
+func refresh_guidance_visibility() -> void:
+	card.visible = active() and not hud.guidance_suspended
+	camera_keys.visible = card.visible and cur_id() == "move"
+
+
 func _enter(i: int) -> void:
 	var changed := step != i
 	step = i
@@ -190,10 +195,9 @@ func _enter(i: int) -> void:
 	game.city.tips["tut"] = i
 	game.city.tips["tut_id"] = cur_id()
 	var s: Dictionary = STEPS[i]
-	card.show()
+	refresh_guidance_visibility()
 	title.text = s["title"]
 	text.text = s["text"]
-	camera_keys.visible = cur_id() == "move"
 	next_btn.visible = bool(s.get("next", false))
 	show_btn.text = "Открыть дом" if cur_id() == "house" else "Показать"
 	show_btn.visible = cur_id() not in ["move", "cart"] and not next_btn.visible
@@ -304,8 +308,11 @@ func layout() -> void:
 				break
 		if found:
 			break
-	hud._put(card, Control.PRESET_TOP_LEFT, pos)
-	camera_keys.position = pos + Vector2(10, card.size.y + 10)
+	if card.position != pos:
+		hud._put(card, Control.PRESET_TOP_LEFT, pos)
+	var keys_pos := pos + Vector2(10, card.size.y + 10)
+	if camera_keys.position != keys_pos:
+		camera_keys.position = keys_pos
 
 
 ## Та же цель, что у единственной стрелки: открываем нужный раздел и подводим камеру.
@@ -387,7 +394,7 @@ func _process(dt: float) -> void:
 			return
 		_cine_tick(dt)
 		return
-	if not active() or game == null or not game.ready_done or _opening or HeroScreen.is_open(game):
+	if not active() or game == null or not game.ready_done or _opening or hud.guidance_suspended or HeroScreen.is_open(game):
 		return
 	if _check(cur_id()):
 		_done()

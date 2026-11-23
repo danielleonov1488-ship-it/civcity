@@ -83,6 +83,8 @@ var _fps_t := 0.0
 var _dbg: PanelContainer
 var _dbg_text: Label
 var _half := 0
+var speed_test
+var _speed_exit_frame := 0
 
 
 # ---------- выбор уровня по видеокарте ----------
@@ -909,9 +911,42 @@ func refresh() -> void:
 
 
 func _set_measure(on: bool) -> void:
+	on = on or speed_test_active()
 	if on != _measure:
 		_measure = on
 		RenderingServer.viewport_set_measure_render_time(_vp, on)
+		if not on and speed_test != null:
+			_speed_exit_frame = Engine.get_process_frames() + 5
+
+
+## Дать рендеру закончить кадры с таймерами до освобождения viewport.
+func prepare_speed_test_exit() -> void:
+	if speed_test == null:
+		return
+	if speed_test_active():
+		speed_test._stop()
+	set_process(false)
+	set_process_unhandled_key_input(false)
+	_set_measure(false)
+	while Engine.get_process_frames() < _speed_exit_frame:
+		await get_tree().process_frame
+
+
+func _exit_tree() -> void:
+	if _measure:
+		RenderingServer.viewport_set_measure_render_time(_vp, false)
+
+
+func start_speed_test() -> void:
+	if speed_test == null:
+		speed_test = load("res://scripts/speed_test.gd").new()
+		speed_test.game = game
+		add_child(speed_test)
+	speed_test.start()
+
+
+func speed_test_active() -> bool:
+	return speed_test != null and speed_test.active
 
 
 static func _target_fps(settings: Dictionary, quality: String) -> float:
@@ -970,7 +1005,7 @@ func _check_due() -> bool:
 func _in_city() -> bool:
 	if not game.ready_done or not (game.mode in ["play", "new"]) or game.shot_path != "":
 		return false
-	if game.rig == null or game.rig.cine or LegionBattle.current != null or game.legion_city_hidden():
+	if game.rig == null or game.rig.cine or LegionBattle.current != null or game.legion_city_hidden() or speed_test_active():
 		return false
 	if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_MINIMIZED or game.minimized_test:
 		return false
@@ -983,12 +1018,12 @@ func _process(dt: float) -> void:
 	if not game.ready_done:
 		return
 	var real := dt / maxf(0.0001, Engine.time_scale)
-	if _fps.visible:
+	if _fps_box.visible and _fps.visible:
 		_fps_t -= real
 		if _fps_t <= 0.0:
 			_fps_t = 0.5
 			_fps.text = "%d FPS" % int(round(Engine.get_frames_per_second()))
-	if _dbg and _dbg.visible:
+	if _fps_box.visible and _dbg and _dbg.visible:
 		_dbg_text.text = report()
 	if perf:
 		var t0 := Time.get_ticks_usec()
@@ -1023,7 +1058,7 @@ func _process(dt: float) -> void:
 
 func _adv_free() -> bool:
 	var h = game.hud
-	if h == null or h.advisor_panel == null or h.advisor_panel.visible or not h.visible:
+	if h == null or h.advisor_panel == null or h.advisor_panel.visible or not h.visible or h.guidance_suspended:
 		return false
 	if h.tutorial_busy() or not h.guidance_queue.is_empty() or h.notes_box.get_child_count() > 0:
 		return false
@@ -1256,6 +1291,8 @@ func _anims(dt: float) -> void:
 # ---------- F3: подробно для проверяющих ----------
 
 func _unhandled_key_input(e: InputEvent) -> void:
+	if speed_test_active():
+		return
 	var k := e as InputEventKey
 	if k and k.pressed and not k.echo and k.keycode == KEY_F3:
 		_toggle_dbg()
@@ -1351,6 +1388,15 @@ static func settings_block(h, v: VBoxContainer, more: VBoxContainer = null) -> v
 		h.game.save_settings())
 	more.add_child(smooth)
 	more.add_child(h._wrap(h._label("Меняет чёткость города, чтобы держать FPS.", 15, false, h.C_SOFT), 470))
+	if h.game.mode in ["play", "new"]:
+		var speed := Button.new()
+		speed.name = "speed_test"
+		speed.text = "Проверка скорости"
+		speed.icon = h.ico("stats", 22)
+		speed.add_theme_font_size_override("font_size", 16)
+		speed.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		speed.pressed.connect(func(): h.game.gfx.start_speed_test())
+		v.add_child(speed)
 	# «Трава и цветы» (15.11): как далеко видна трава и мелочь природы
 	var gr := HBoxContainer.new()
 	gr.add_theme_constant_override("separation", 6)

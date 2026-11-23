@@ -68,6 +68,8 @@ var lbl_pop: Label
 var lbl_happy: Label
 var lbl_day: Label
 var lbl_clock: Label
+var _clock_slot := -1
+var _undo_tick := 0.0
 var save_quill: TextureRect               # перо у часов — идёт сохранение (saving)
 var _quill_tw: Tween
 var speed_btns := []
@@ -3594,6 +3596,8 @@ func _pointer() -> void:
 
 ## Стрелка обучения или временная подсказка по щелчку строки
 func _update_pointer() -> void:
+	if guidance_suspended:
+		return
 	pointer_target = null
 	_pointer_badge = {}
 	if game == null or game.city == null or game.mode == "demo" or game.mode == "menu":
@@ -4114,11 +4118,12 @@ func _process(_dt: float) -> void:
 
 func _process_timed(_dt: float) -> void:
 	var city_visible: bool = game == null or not game.legion_city_hidden()
-	if not _ptr_shown.is_empty() and Time.get_ticks_msec() >= int(_ptr_shown["until"]):
+	if not guidance_suspended and not _ptr_shown.is_empty() and Time.get_ticks_msec() >= int(_ptr_shown["until"]):
 		_ptr_shown = {}
 		_update_pointer()
-	if game and game.ready_done:
-		_flush_guidance()
+	if game and game.ready_done and not guidance_suspended:
+		if city_visible and (not guidance_queue.is_empty() or game.city.tips.has("arrive_wait")):
+			_flush_guidance()
 		if tutorial_busy():
 			advisor_panel.hide()
 			notes_box.hide()
@@ -4140,38 +4145,46 @@ func _process_timed(_dt: float) -> void:
 		_cursor_tick()
 		_hover_tick()
 		_person_tag_tick(_dt)
-	if not info_p.is_empty() and info_panel and info_panel.visible:
+	if not info_p.is_empty() and info_panel and info_panel.is_visible_in_tree():
 		PersonCard.tick(self, info_p, _dt)     # портрет следит за головой, «Сейчас» — дважды в секунду
-	if tool_panel and tool_panel.visible and Engine.get_process_frames() % 30 == 0:
-		refresh_undo()                        # отменить постройку можно 30 с — медаль сереет сама
-	if not _lg_live.is_empty() and info_panel and info_panel.visible:
+	if tool_panel and tool_panel.is_visible_in_tree():
+		_undo_tick -= _dt
+		if _undo_tick <= 0.0:
+			_undo_tick = 0.25
+			refresh_undo()                    # медаль сереет, когда истекает время отмены
+	else:
+		_undo_tick = 0.0
+	if not _lg_live.is_empty() and info_panel and info_panel.is_visible_in_tree():
 		_lg_live_t -= _dt
 		if _lg_live_t <= 0.0:
 			_lg_live_t = 0.25
 			_lg_tick()                        # карточка здания Легиона: идущее улучшение
-	if rank_btn and rank_btn.visible:
+	if rank_btn and rank_btn.is_visible_in_tree():
 		# город готов к новому уровню: кнопка и надпись уровня мягко светятся
 		var k := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 320.0)
 		rank_btn.self_modulate = Color.WHITE.lerp(Color(1.2, 1.16, 1.02), k)
 		lbl_level.modulate = Color.WHITE.lerp(Color(1.35, 1.35, 1.1), k)
 
-	if _fold_badge and is_instance_valid(_fold_badge):
+	if _fold_badge and is_instance_valid(_fold_badge) and _fold_badge.is_visible_in_tree():
 		# на свёрнутом свитке новое «✓» мягко светится 2 с
 		var gk := 0.0
 		if Time.get_ticks_msec() < _fold_glow_until:
 			gk = 0.5 + 0.5 * sin(Time.get_ticks_msec() / 140.0)
 		_fold_badge.modulate = Color.WHITE.lerp(Color(1.35, 1.4, 1.2), gk)
-	if city_visible and game and lbl_clock:
+	if city_visible and game and lbl_clock and lbl_clock.is_visible_in_tree():
 		var h := int(game.hour)
 		var m := int((game.hour - h) * 60.0) / 10 * 10
-		lbl_clock.text = "%02d:%02d" % [h, m]
-	if not _ptr_shown.is_empty():
+		var slot := h * 60 + m
+		if slot != _clock_slot:
+			_clock_slot = slot
+			lbl_clock.text = "%02d:%02d" % [h, m]
+	if not guidance_suspended and not _ptr_shown.is_empty():
 		# стрелка по щелчку строки: следует за тем, что открылось (раздел → вкладка → карточка), и гаснет через PTR_SHOW_MS
 		_ptr_tick -= _dt
 		if _ptr_tick <= 0.0:
 			_ptr_tick = 0.25
 			_update_pointer()
-	if pointer:
+	if pointer and not guidance_suspended:
 		var target := pointer_target
 		var world := _tutorial_pointer_projection()
 		if Engine.get_process_frames() != _pointer_clear_frame and root.visible and is_instance_valid(target) \
@@ -6216,6 +6229,35 @@ var adv_show: Button
 var _adv_target := {}
 var guidance_queue: Array[Dictionary] = []
 var _guidance_playing := false
+var guidance_suspended := false
+var _advisor_before_suspend := false
+var _guidance_suspended_at := 0
+var _toast_tween: Tween
+
+
+func set_guidance_suspended(suspended: bool) -> void:
+	if suspended == guidance_suspended:
+		return
+	guidance_suspended = suspended
+	if suspended:
+		_guidance_suspended_at = Time.get_ticks_msec()
+		_advisor_before_suspend = advisor_panel.visible
+		advisor_panel.hide()
+		_hide_guidance_pointer()
+		clear_badge("tutorial_target")
+	else:
+		advisor_panel.visible = _advisor_before_suspend and not tutorial_busy()
+		if not _ptr_shown.is_empty():
+			_ptr_shown["until"] += Time.get_ticks_msec() - _guidance_suspended_at
+		_update_pointer()
+	notes_box.visible = not suspended and not advisor_panel.visible and not tutorial_busy()
+	if _toast_tween != null and _toast_tween.is_valid():
+		if suspended:
+			_toast_tween.pause()
+		else:
+			_toast_tween.play()
+	if game.tutorial != null:
+		game.tutorial.refresh_guidance_visibility()
 
 
 ## Общий затвор, в том числе до создания Tutorial при загрузке.
@@ -6304,8 +6346,8 @@ func _advisor() -> void:
 	advisor_panel.custom_minimum_size = Vector2(512, 0)
 	advisor_panel.hide()
 	advisor_panel.visibility_changed.connect(func():
-		notes_box.visible = not advisor_panel.visible and not tutorial_busy()
-		if not advisor_panel.visible:
+		notes_box.visible = not guidance_suspended and not advisor_panel.visible and not tutorial_busy()
+		if not guidance_suspended and not advisor_panel.visible:
 			_tip_next = Time.get_ticks_msec() + TIP_GAP_MS)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 12)
@@ -6389,7 +6431,7 @@ func advisor_on() -> bool:
 ## Совет: заголовок и текст; skip — совет начинает обучение: рядом с «Понятно» кнопка «Пропустить обучение».
 ## force — игрок сам попросил (щёлкнул по просьбе): показываем всегда
 func advisor(title: String, text: String, skip := Callable(), force := false, corner := false, target: Dictionary = {}) -> void:
-	if tutorial_busy() or (not _guidance_playing and (advisor_panel.visible or not guidance_queue.is_empty() or notes_box.get_child_count() > 0)):
+	if guidance_suspended or tutorial_busy() or (not _guidance_playing and (advisor_panel.visible or not guidance_queue.is_empty() or notes_box.get_child_count() > 0)):
 		_queue_guidance({"kind": "advisor", "title": title, "text": text, "skip": skip, "force": force, "corner": corner, "target": target})
 		return
 	if not force and not skip.is_valid() and game != null and game.city != null and game.mode != "demo":
@@ -6530,7 +6572,7 @@ func notify(text: String, icon := "info", seen := false) -> void:
 
 ## Плашка наверху на TOAST_SEC секунд: одна за раз, одно и то же сообщение — не чаще раза в игровые сутки
 func _toast(text: String, icon: String) -> void:
-	if tutorial_busy() or (not _guidance_playing and (advisor_panel.visible or not guidance_queue.is_empty() or notes_box.get_child_count() > 0)):
+	if guidance_suspended or tutorial_busy() or (not _guidance_playing and (advisor_panel.visible or not guidance_queue.is_empty() or notes_box.get_child_count() > 0)):
 		_queue_guidance({"kind": "toast", "text": text, "icon": icon})
 		return
 	var day := _game_day()
@@ -6554,11 +6596,11 @@ func _toast(text: String, icon: String) -> void:
 		notes_box.remove_child(o)
 		o.queue_free()
 	p.modulate.a = 0.0
-	var tw := create_tween()
-	tw.tween_property(p, "modulate:a", 1.0, 0.2)
-	tw.tween_interval(TOAST_SEC - 0.6)
-	tw.tween_property(p, "modulate:a", 0.0, 0.4)
-	tw.tween_callback(p.queue_free)
+	_toast_tween = create_tween()
+	_toast_tween.tween_property(p, "modulate:a", 1.0, 0.2)
+	_toast_tween.tween_interval(TOAST_SEC - 0.6)
+	_toast_tween.tween_property(p, "modulate:a", 0.0, 0.4)
+	_toast_tween.tween_callback(p.queue_free)
 
 
 ## В гостях у другого игрока (Game.visiting, SocialNet): сверху плашка «Вы в гостях у «…»» — кто, сколько жителей,
@@ -8014,7 +8056,7 @@ func _plot_fits() -> bool:
 ## Можно ли сейчас показать совет советника (один раз на механику): своя игра, обучение кончилось,
 ## советник и ролик свободны. gap = false — совет по действию игрока (взял инструмент, открыл «Обзор»): без паузы
 func _tip_free(gap := true) -> bool:
-	if game == null or not (game.mode in ["new", "play"]) or game.shot_path != "" or not visible or not root.visible:
+	if guidance_suspended or game == null or not (game.mode in ["new", "play"]) or game.shot_path != "" or not visible or not root.visible:
 		return false
 	if tutorial_busy():
 		return false
@@ -9199,6 +9241,14 @@ func _icon_dir() -> String:
 	var root := "user://icons"
 	var name := key.md5_text().substr(0, 12)
 	DirAccess.make_dir_recursive_absolute(root.path_join(name))
+	if OS.get_environment("CIVCITY_NOMINPAUSE") == "1":
+		return root.path_join(name)       # проверки через общий замок берегут кэш других дорожек
+	for old in DirAccess.get_directories_at(root):
+		if old != name:
+			var od := root.path_join(old)
+			for f in DirAccess.get_files_at(od):
+				DirAccess.remove_absolute(od.path_join(f))
+			DirAccess.remove_absolute(od)
 	return root.path_join(name)
 
 
