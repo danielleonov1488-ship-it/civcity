@@ -451,9 +451,7 @@ func _close() -> void:
 
 
 func _apply_quality() -> void:
-	game.settings["quality"] = _recommended
-	game.settings["quality_user"] = true
-	game.save_settings()
+	game.select_quality(_recommended)
 	_apply.hide()
 
 

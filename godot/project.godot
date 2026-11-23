@@ -6,6 +6,7 @@ config_version=5
 [application]
 
 config/name="CivCity"
+config/project_settings_override="user://render.cfg"
 config/description="Римский город: уютная стройка как в Town to City, мир и дома в духе Synty"
 run/main_scene="res://main.tscn"
 config/version="1.0.0"
@@ -32,6 +33,7 @@ window/stretch/aspect="expand"
 
 [rendering]
 
+driver/depth_prepass/enable=true
 anti_aliasing/quality/msaa_3d=2
 anti_aliasing/quality/screen_space_aa=1
 lights_and_shadows/directional_shadow/size=8192

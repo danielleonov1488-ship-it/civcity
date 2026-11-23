@@ -12,6 +12,8 @@ extends Node
 
 const ORDER := ["verylow", "low", "medium", "high"]
 const SmoothScale = preload("res://scripts/smooth_scale.gd")
+const RENDER_OVERRIDE := "user://render.cfg"
+const DEPTH_PREPASS := "rendering/driver/depth_prepass/enable"
 const NAMES := {"high": "Высокая", "medium": "Средняя", "low": "Низкая", "verylow": "Очень низкая"}
 const BASE_SCALE := {"verylow": 0.5, "low": 0.75, "medium": 1.0, "high": 1.0}
 const CHECK_MS := 11.0                 # проверка в городе: видеокарте нужно больше — на ступень ниже
@@ -204,7 +206,7 @@ static func adapter() -> String:
 static func first_launch(g, had_file: bool) -> void:
 	var auto_on := OS.get_environment("CIVCITY_NOMINPAUSE") != "1" or OS.get_cmdline_user_args().has("--autoq")
 	if decide(g.settings, had_file, auto_on, adapter(), RenderingServer.get_video_adapter_type()):
-		_write(g)
+		g.write_settings()
 
 
 ## Уже играет (тогда уровень сам не меняется)? Файл настроек пишет и лаунчер — до первой игры в нём только «во весь
@@ -247,11 +249,17 @@ static func _pick(st: Dictionary, name: String, type: int) -> void:
 	st["quality_checked"] = false
 
 
-## Файл настроек без применения (окно и графика ещё не созданы)
-static func _write(g) -> void:
-	var f := FileAccess.open(g.settings_path(), FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify(g.settings))
+static func depth_prepass() -> bool:
+	return bool(ProjectSettings.get_setting_with_override(DEPTH_PREPASS))
+
+
+static func save_render_quality(quality: String) -> void:
+	var config := "[rendering]\n\ndriver/depth_prepass/enable=%s\n" % str(not is_low(quality)).to_lower()
+	if FileAccess.get_file_as_string(RENDER_OVERRIDE) == config:
+		return
+	var file := FileAccess.open(RENDER_OVERRIDE, FileAccess.WRITE)
+	if file:
+		file.store_string(config)
 
 
 static func lower(q: String) -> String:
@@ -1000,7 +1008,7 @@ func _check_due() -> bool:
 	var st: Dictionary = game.settings
 	var qa := str(st.get("quality_auto", ""))
 	return game.mode in ["play", "new"] and game.shot_path == "" and qa != "" and qa != "kept" and not bool(st.get("quality_checked", true)) \
-		and not bool(st.get("quality_user", false))
+		and not bool(st.get("quality_user", false)) and game.selected_quality() == st.get("quality")
 
 
 ## Сейчас обычная игра в городе (не меню, не ролик, не бой, окно не свёрнуто и в фокусе)
@@ -1049,7 +1057,7 @@ func _process(dt: float) -> void:
 	if not _pending.is_empty() and _adv_free():
 		var p: Array = _pending.pop_front()
 		game.settings[p[3]] = true
-		_write(game)
+		game.write_settings()
 		game.hud.advisor(p[0], p[1], p[4] if p.size() > 4 else Callable())
 		if p.size() > 4:
 			# вопрос с действием: действие — обычной кнопкой, «Понятно» — «Не надо» (иначе «Понятно» читается как «да»)
@@ -1113,7 +1121,7 @@ func _check_step(dt: float) -> void:
 	st["quality_auto"] = q
 	st["quality_checked"] = true
 	print("Графика: проверка в городе — %s %.1f мс, уровень «%s»" % ["кадр" if by_frames else "видеокарта", med, NAMES[q]])
-	_write(game)
+	game.write_settings()
 	game._apply_quality()
 	if not bool(st.get("tip_q_auto", false)):
 		_pending.push_front(_tip_auto(q))
@@ -1143,10 +1151,7 @@ func _watch_step(dt: float) -> void:
 	_pending.append(["Видеокарте тяжело", ("Город идёт рывками — около %d кадров в секунду. Включить «Низкую» графику? Тени станут проще, " +
 		"на улицах будет меньше прохожих, зато всё пойдёт плавнее. Вернуть можно в Настройках → Графика.") % int(avg), "Включить «Низкую»",
 		"tip_q_low", func():
-			game.settings["quality"] = "low"
-			game.settings["quality_user"] = true
-			_write(game)
-			game._apply_quality()])
+			game.select_quality("low")])
 
 
 # ---------- движения жителей по размеру на экране ----------
@@ -1373,14 +1378,16 @@ static func settings_block(h, v: VBoxContainer, more: VBoxContainer = null) -> v
 		b.name = "q_" + key
 		b.add_theme_font_size_override("font_size", 16)
 		b.pressed.connect(func():
-			if h.game.settings["quality"] != key:
+			if h.game.settings["quality"] != key and (depth_prepass() or is_low(key)):
 				h.game.fade_quality()
-			h.game.settings["quality"] = key
-			h.game.settings["quality_user"] = true            # ручной выбор — больше ничего само не меняет
-			h.game.save_settings()
+			h.game.select_quality(key)
 			h._open_settings(true))
 		q.add_child(b)
 	v.add_child(q)
+	var restart: Label = h._label("Ещё быстрее — после перезапуска игры", 15, false, h.C_SOFT)
+	restart.name = "quality_restart"
+	restart.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(restart)
 	var smooth := CheckBox.new()
 	smooth.name = "smooth"
 	smooth.text = "Плавность"
@@ -1454,10 +1461,14 @@ static func fps_cap(st: Dictionary) -> int:
 
 
 static func settings_refresh(h) -> void:
+	var quality: String = h.game.selected_quality()
 	for key: String in ["high", "medium", "low", "verylow"]:
 		var b: Button = h.settings_panel.find_child("q_" + key, true, false)
 		if b:
-			b.add_theme_stylebox_override("normal", h._box_pill(12, 6, "g_btn_on" if h.game.settings["quality"] == key else "g_btn"))
+			b.add_theme_stylebox_override("normal", h._box_pill(12, 6, "g_btn_on" if quality == key else "g_btn"))
+	var restart := h.settings_panel.find_child("quality_restart", true, false) as Label
+	if restart:
+		restart.visible = depth_prepass() == is_low(quality)
 	var gk := GrassCarpet.range_key(h.game.settings, str(h.game.settings.get("quality", "high")))
 	for key: String in ["near", "far", "all", "off"]:
 		var gb: Button = h.settings_panel.find_child("grass_" + key, true, false)
