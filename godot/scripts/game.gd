@@ -116,6 +116,7 @@ var _place_refresh_frame := -1
 var _placement_running := false
 var _placement_pops: Array[Array] = []
 var _terrain_task := -1
+var _synty_index_task := -1
 var _autosave_task := -1
 var _save_gen := 0                    # номер сохранения: автосохранение по кадрам не пишет поверх более нового
 var settings := {"fullscreen": false, "quality": "high", "ui_scale": 1.0, "autosave": true, "music": 0.55, "sfx": 0.7}
@@ -366,8 +367,16 @@ func _ready() -> void:
 	_loading_show()
 	var terrain: Array[Land] = []
 	_terrain_task = WorkerThreadPool.add_task(_make_land.bind(terrain), true, "Генерация земли")
+	var synty_index: Array[Array] = []
+	if Synty._paths.is_empty():
+		_synty_index_task = WorkerThreadPool.add_task(func() -> void:
+			synty_index.append(Synty._read_index()), false, "Индекс моделей и текстур")
 	await _step("Земля и холмы", 0.05)
 	var startup := Perf14.begin()
+	_puff_quad()                             # радиальный градиент пригодится туману и дыму
+	Perf14.detail("load_puff_gradient", startup)
+	await get_tree().process_frame
+	startup = Perf14.begin()
 	sound = Sound.new()
 	sound.game = self
 	add_child(sound)
@@ -384,6 +393,12 @@ func _ready() -> void:
 	WorkerThreadPool.wait_for_task_completion(_terrain_task)
 	_terrain_task = -1
 	land = terrain[0]
+	if _synty_index_task >= 0:
+		while not WorkerThreadPool.is_task_completed(_synty_index_task):
+			await get_tree().process_frame
+		WorkerThreadPool.wait_for_task_completion(_synty_index_task)
+		_synty_index_task = -1
+		Synty._install_index(synty_index[0])
 	startup = Perf14.begin()
 	MeadowNature.prepare(land)                # ложбины ручьёв считаются в фоне, пока грузится город
 	city = City.new(land)
@@ -413,7 +428,10 @@ func _ready() -> void:
 	land_mat.shader = ground_shader(perf14_land, perf14_baked_ground, perf14_ground_specular)
 	if mode in ["play", "new", "demo"] and DisplayServer.get_name() != "headless" and RenderingServer.get_current_rendering_method() == "forward_plus":
 		shadow_depth = ShadowDepth.new()
-	Synty._index()
+	Perf14.end(Perf14.START_GROUND, startup)
+	Perf14.detail("load_ground_setup", startup)
+	await get_tree().process_frame
+	startup = Perf14.begin()
 	var tiles := {"tile_road": "Floor_Tiles_04", "tile_plaza_a": "Floor_Tiles_03",
 		"tile_plaza_b": "Floor_Tiles_05", "tile_plaza_c": "Floor_Tiles_01", "tile_plaza_d": "Floor_Tiles_02"}
 	var tile_paths := {}
@@ -422,7 +440,7 @@ func _ready() -> void:
 		tiles[param] = path
 		tile_paths[path] = true
 	Perf14.end(Perf14.START_GROUND, startup)
-	Perf14.detail("load_ground_index", startup)
+	Perf14.detail("load_ground_tile_paths", startup)
 	var tile_textures := await CityWarmup.fetch(get_tree(), tile_paths)
 	startup = Perf14.begin()
 	for param: String in tiles:
@@ -437,6 +455,10 @@ func _ready() -> void:
 	await get_tree().process_frame
 	var gate_paths := {}
 	CityWarmup.models(Entrance.gate_bp(), gate_paths, true)
+	if not Gfx._tex_small:
+		var marble := Synty._tex_path("Building_Marble_01")
+		if marble != "":
+			gate_paths[marble] = true
 	var gate_resources := await CityWarmup.fetch(get_tree(), gate_paths)
 	var g := Land.GATE
 	var xf := Transform3D(Basis.IDENTITY, Vector3(g.x, land.height_at(g.x, g.y), g.y))
@@ -520,8 +542,8 @@ func _ready() -> void:
 	var br := Breathe.new()                   # «город дышит»: бабочки, светлячки, птицы («Уютный Рим», этап 5)
 	br.name = "Breathe"
 	add_child(br)
-	br.setup(self)
-	Perf14.detail("load_breathe", startup)
+	await br.setup(self, get_tree())
+	await Fauna.warm_birds(get_tree())
 	_startup_mark("ground_setup")
 	await _step("Город", 0.25)
 	var loaded := false
@@ -573,9 +595,7 @@ func _ready() -> void:
 	_ponds_life()
 	Perf14.detail("load_ponds", startup)
 	await get_tree().process_frame
-	var fauna := await CityWarmup.fetch(get_tree(), {Fauna.SWAN: true, Fauna.DUCK: true})
 	await MeadowNature.life(self)                   # у ручьёв, мосты, луга в цветах, поля с оградами, мельницы (scripts/meadow_nature.gd)
-	fauna.clear()
 	startup = Perf14.begin()
 	_cliff_rocks()
 	Perf14.end(Perf14.START_GROUND, startup)
@@ -678,8 +698,8 @@ func _ready() -> void:
 			hud.bell(String(e.get("text", "")), String(e.get("icon", "info")))
 	city.unread = 0
 	city.changed.connect(func():
-		if _hud_later or _placement_running or _place_refresh_frame == Engine.get_process_frames():
-			_hud_due = true                   # ход дня: окно — в следующем кадре (рывок кадра меньше)
+		if ready_done:
+			_hud_due = true                   # счётчики, карточки и отметки обновятся по кадрам
 		else:
 			hud.refresh())
 	city.changed.connect(func():
@@ -711,7 +731,7 @@ func _ready() -> void:
 	_set_hour(hour)
 	if mode in ["new", "play"] and city.research.has("artisans"):
 		await city._prepare_upgrade_ready(get_tree(), false)
-	for part in range(1, 4):
+	for part in range(1, Hud.REFRESH_PARTS + 1):
 		startup = Perf14.begin()
 		hud.refresh(part)
 		Perf14.end(Perf14.START_HUD, startup)
@@ -738,6 +758,8 @@ func _ready() -> void:
 		_startup_mark("portrait")
 		Perf14.memory("portrait_released")
 	CityWarmup.release_sources()
+	if mode in ["new", "play", "demo"] and DisplayServer.get_name() != "headless":
+		await _warm_construction()
 	Perf14.memory("sources_released")
 	if perf14_baked_ground and mode in ["play", "new", "demo"]:
 		var baker := prepare_ground_bake()
@@ -1799,6 +1821,9 @@ func _light(at: Vector3, k := 1.0) -> OmniLight3D:
 ## Рощи пятнами, луга с цветами и травой, кусты. Каждое дерево и камень — отдельные: их можно снести или перенести
 func _nature(sliced := false) -> void:
 	var deadline := Time.get_ticks_usec() + 5000
+	var placements: Array[Array] = []
+	var models := {}
+	var paths := {}
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5
 	var fn := FastNoiseLite.new()
@@ -1878,10 +1903,27 @@ func _nature(sliced := false) -> void:
 			s = mp[1]
 			rm = mp[2]
 		var xf := Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(x, y - (0.1 if name.contains("Rock") else 0.0), z))
-		_add_nature(name, xf, p, rm)
-		if sliced and Time.get_ticks_usec() >= deadline:
+		if sliced:
+			placements.append([name, xf, p, rm])
+			if not models.has(name):
+				models[name] = true
+				var path := CityWarmup.model_path(name)
+				if path != "":
+					paths[path] = true
+				if not name.begins_with("M:") and not Gfx._tex_small:
+					Synty.texture_paths(name, rm, paths)
+		else:
+			_add_nature(name, xf, p, rm)
+	if not sliced:
+		return
+	var sources := await CityWarmup.fetch(get_tree(), paths)
+	deadline = Time.get_ticks_usec() + 5000
+	for item: Array in placements:
+		_add_nature(item[0], item[1], item[2], item[3])
+		if Time.get_ticks_usec() >= deadline:
 			await get_tree().process_frame
 			deadline = Time.get_ticks_usec() + 5000
+	sources.clear()
 
 
 func _add_nature(name: String, xf: Transform3D, p: Vector2, rm := {}) -> void:
@@ -2204,6 +2246,42 @@ const GROW_TINT := Color(1.0, 0.95, 0.85, 0.35)
 var _grows := 0
 var _grow_parts := {}
 var _grow_live := {}                  # id стройки → [tween, призрак, леса] — снесли или отменили, пока растёт: убрать сразу
+const SCAFFOLD_MODELS := ["SM_Prop_Pole_01", "SM_Prop_Beam_01", "SM_Prop_Ladder_01"]
+var _scaffold_sources: Dictionary     # держим сцены лесов, когда общий запас предпросмотра очищается
+var _first_house_sources: Dictionary  # держим до первой анимации
+
+
+func _warm_construction() -> void:
+	var tree := get_tree()
+	var paths := {}
+	for model: String in SCAFFOLD_MODELS:
+		var path := CityWarmup.model_path(model)
+		if path != "":
+			paths[path] = true
+		Synty.texture_paths(model, {}, paths)
+	_scaffold_sources = await CityWarmup.fetch(tree, paths)
+	await tree.process_frame
+	paths = {}
+	var bp := Catalog.make("house_pleb", 1, 0, 0)
+	CityWarmup.models(bp, paths, true)
+	_first_house_sources = await CityWarmup.fetch(tree, paths)
+	var started := Perf14.begin()
+	_reveal_shader()
+	_construction_brick()
+	_puff_quad()
+	Perf14.detail("load_construction", started)
+	await tree.process_frame
+	# Первый выброс пыли готовим за заставкой в том же вьюпорте, что и стройку.
+	var camera := get_viewport().get_camera_3d()
+	if camera != null:
+		var at := camera.global_position - camera.global_transform.basis.z * 10.0
+		var dust := _make_puff(at, Color("e8dcc4"))
+		add_child(dust)
+		dust.emitting = true
+		await RenderingServer.frame_post_draw
+		dust.hide()
+		dust.queue_free()
+		await tree.process_frame
 
 func _grow_anim(b: Dictionary) -> void:
 	var started := Perf14.begin()
@@ -2255,6 +2333,7 @@ func _grow_anim_profiled(b: Dictionary) -> void:
 		tw.tween_callback(_finish_grow.bind(id, tw))
 	_grow_parts[id] = tw
 	_prepare_grow_parts.call_deferred(b, bp, xf, tw)
+	_first_house_sources.clear()
 	# пыль — всю стройку, у подножия, по всему следу
 	var bb: Array = _bounds(bp)
 	var puffs := int(dur / 0.8) if full else 3
@@ -2286,9 +2365,8 @@ func _prepare_grow_parts(b: Dictionary, bp: Bp, xf: Transform3D, tw: Tween) -> v
 	var id: int = b["id"]
 	var alive := func() -> bool: return _grow_parts.get(id) == tw and city.buildings.has(id)
 	await get_tree().process_frame
-	if String(b["type"]) in SLICED_PREVIEWS:
-		while _placement_running and alive.call():
-			await get_tree().process_frame
+	while _placement_running and alive.call():
+		await get_tree().process_frame
 	if alive.call():
 		await parts.prepare_groups(bp, xf, _show_substitutions(b, bp), alive)
 	if alive.call() and city.apron_of(b) == 2:
@@ -2454,8 +2532,7 @@ static func _reveal_shader() -> Shader:
 
 ## Кирпичи по стене дома из своего набора (f — как WallDecor: n, a, d, bound, open)
 func _bricks_face(f: Dictionary) -> MultiMeshInstance3D:
-	if _brick_mesh == null:
-		_bricks(AABB(Vector3.ZERO, Vector3(1, 1, 0.2)), "")       # общая сетка кирпича и материал
+	_construction_brick()
 	var n: Vector3 = f["n"]
 	var a: Vector3 = f["a"]
 	var d: float = f["d"]
@@ -2513,9 +2590,7 @@ static func _brick_wall(nm: String, box: AABB) -> bool:
 	return box.size.y > 0.9 and thin < 0.7 and long > 0.7
 
 
-## Кирпичи на месте стены (габарит box в осях постройки): ряды вперевязку, вдоль длинной стороны; на месте окна
-## и двери — проём. Порядок — ряд за рядом, в ряду слева направо (по нему и «кладут»)
-func _bricks(box: AABB, nm: String) -> MultiMeshInstance3D:
+static func _construction_brick() -> void:
 	if _brick_mesh == null:
 		_brick_mesh = BoxMesh.new()
 		_brick_mesh.size = Vector3.ONE
@@ -2523,6 +2598,12 @@ func _bricks(box: AABB, nm: String) -> MultiMeshInstance3D:
 		m.vertex_color_use_as_albedo = true
 		m.roughness = 0.92
 		_brick_mesh.material = m
+
+
+## Кирпичи на месте стены (габарит box в осях постройки): ряды вперевязку, вдоль длинной стороны; на месте окна
+## и двери — проём. Порядок — ряд за рядом, в ряду слева направо (по нему и «кладут»)
+func _bricks(box: AABB, nm: String) -> MultiMeshInstance3D:
+	_construction_brick()
 	var along_z := box.size.x < box.size.z
 	var L := box.size.z if along_z else box.size.x
 	var th := clampf(minf(box.size.x, box.size.z), 0.1, 0.32)
@@ -2656,11 +2737,11 @@ func _scaffold(bp: Bp, xf: Transform3D) -> Node3D:
 		for gi: GeometryInstance3D in n.find_children("*", "GeometryInstance3D", true, false):
 			gi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for c: Vector2 in [Vector2(x0, z0), Vector2(x1, z0), Vector2(x0, z1), Vector2(x1, z1)]:
-		put.call("SM_Prop_Pole_01", Vector3(c.x, 0, c.y), 0.0, top)
+		put.call(SCAFFOLD_MODELS[0], Vector3(c.x, 0, c.y), 0.0, top)
 	for zz: float in [z0, z1]:
 		for hh: float in [top * 0.45, top * 0.9]:
-			put.call("SM_Prop_Beam_01", Vector3(x0, hh, zz), 0.0, x1 - x0, 0)
-	put.call("SM_Prop_Ladder_01", Vector3(x1 - 0.6, 0, z1 + 0.15), 0.0, minf(top * 0.6, 3.2))
+			put.call(SCAFFOLD_MODELS[1], Vector3(x0, hh, zz), 0.0, x1 - x0, 0)
+	put.call(SCAFFOLD_MODELS[2], Vector3(x1 - 0.6, 0, z1 + 0.15), 0.0, minf(top * 0.6, 3.2))
 	# рабочих с молотками больше нет (отзывы игроков 27.10: появлялись и пропадали рывком) — леса и этажи как были
 	return root
 
@@ -2756,7 +2837,13 @@ func _grow_cancel(id: int) -> void:
 
 
 func _on_removed(b: Dictionary) -> void:
-	_grow_cancel(int(b["id"]))
+	var id: int = b["id"]
+	_grow_cancel(id)
+	if hud and hud.world_icons.erase(id):
+		hud.clear_badge("b%d" % id)
+	if noroad_marks.has(id):
+		(noroad_marks[id][0] as Node).queue_free()
+		noroad_marks.erase(id)
 	if grass != null:
 		var hc: PackedInt32Array = b.get("bare", PackedInt32Array())
 		if not hc.is_empty():                  # трава-ковёр на месте снесённой постройки — заново
@@ -3052,7 +3139,15 @@ static func _puff_quad() -> QuadMesh:
 
 ## Облачко пыли при стройке и сносе
 func _puff(at: Vector3, col := Color("e8dcc4")) -> void:
+	var p := _make_puff(at, col)
+	add_child(p)
+	p.emitting = true
+	get_tree().create_timer(2.0).timeout.connect(p.queue_free)
+
+
+func _make_puff(at: Vector3, col: Color) -> GPUParticles3D:
 	var p := GPUParticles3D.new()
+	p.emitting = false
 	p.amount = 24
 	p.lifetime = 1.4
 	p.one_shot = true
@@ -3076,9 +3171,7 @@ func _puff(at: Vector3, col := Color("e8dcc4")) -> void:
 	pm.color_ramp = gt
 	p.process_material = pm
 	p.draw_pass_1 = _puff_quad()
-	add_child(p)
-	p.emitting = true
-	get_tree().create_timer(2.0).timeout.connect(p.queue_free)
+	return p
 
 
 # ---------- участки ----------
@@ -3322,14 +3415,14 @@ func _process_profiled(dt: float) -> void:
 	var heavy := true
 	if _compute_due:
 		_after_stroke()                       # мазок окончен в прошлом кадре: пересчёт города (окно — кадром позже)
-	elif (_hud_due or _hour_hud_part > 0) and not hidden and _clock_commit_frame != Engine.get_process_frames():
-		if _hud_due:
+	elif _placement_running:
+		pass                                  # в этом кадре уже работает пересчёт стройки или сноса
+	elif (_hud_due or _hour_hud_part > 0) and not hidden and not hud.person_opening and _clock_commit_frame != Engine.get_process_frames():
+		if _hour_hud_part == 0:
 			_hud_due = false
 			_hour_hud_part = 1
-		var hud_started := Perf14.begin()
 		hud.refresh(_hour_hud_part)
-		Perf14.end(Perf14.UI, hud_started)
-		_hour_hud_part = (_hour_hud_part + 1) % 4
+		_hour_hud_part = (_hour_hud_part + 1) % (Hud.REFRESH_PARTS + 1)
 	elif (_actors_due or not _actor_sync_ids.is_empty()) and not hidden and _clock_commit_frame != Engine.get_process_frames():
 		_step_actor_sync()
 	else:
@@ -5760,9 +5853,11 @@ func _clear_settle_marks() -> void:
 
 ## Постройки без дороги у входа (свободная стройка): лёгкая красноватая подсветка на всём здании — не работает, пока нет мостовой
 var noroad_marks := {}                # id → [узел, pos, yaw]
+var _noroad_queue: Array[Array] = []
+var _noroad_building := false
 
 
-func _update_noroad_marks() -> void:
+func _update_noroad_marks(sliced := false) -> void:
 	var want := {}
 	if City.road_optional:
 		for id in city.buildings:
@@ -5780,10 +5875,34 @@ func _update_noroad_marks() -> void:
 		if noroad_marks.has(id):
 			continue
 		var b: Dictionary = city.buildings[id]
-		var g := Parts.ghost(city.blueprint(b), "shell", Color(1.0, 0.3, 0.22, 0.17))
+		var g := Node3D.new()
 		g.transform = city.xf(b)
 		add_child(g)
 		noroad_marks[id] = [g, b["pos"], float(b["yaw"])]
+		if sliced:
+			g.hide()
+			_noroad_queue.append([g, b])
+		else:
+			Parts.fill_ghost(g, city.blueprint(b), "shell", Color(1.0, 0.3, 0.22, 0.17))
+
+
+	if not _noroad_building and not _noroad_queue.is_empty():
+		_noroad_building = true
+		_fill_noroad_marks.call_deferred()
+
+
+func _fill_noroad_marks() -> void:
+	var tree := get_tree()
+	while not _noroad_queue.is_empty():
+		var next: Array = _noroad_queue.pop_front()
+		if not is_instance_valid(next[0]) or next[0].is_queued_for_deletion():
+			continue
+		var mark: Node3D = next[0]
+		await Parts.fill_ghost(mark, city.blueprint(next[1]), "shell", Color(1.0, 0.3, 0.22, 0.17), tree)
+		if is_instance_valid(mark) and not mark.is_queued_for_deletion():
+			mark.show()
+		await tree.process_frame
+	_noroad_building = false
 
 
 ## Все дома, куда семья может въехать, мягко светятся
@@ -6639,14 +6758,12 @@ func _build_here() -> void:
 
 
 func demolish_building(b: Dictionary, refund := true) -> void:
+	if not city.buildings.has(b.get("id")) or city.def(b).get("fixed", false):
+		return
 	var happiness := city.happy_map() if _pops_for(b["type"]) else {}
 	var at: Vector2 = b["pos"]
-	var sliced := city.buildings.size() >= 48 or _placement_running
-	city.remove(b, refund, false, sliced)
-	if sliced:
-		_finish_placement(happiness, at)
-	else:
-		_happy_pops(happiness, at)
+	city.remove(b, refund, false, true)
+	_finish_placement(happiness, at)
 
 
 func _finish_placement(before: Dictionary, at: Vector2, wait_for_grow := false) -> void:
@@ -7495,6 +7612,9 @@ static func _prepare_autosave(data: Dictionary, path: String, result: Dictionary
 
 
 func _exit_tree() -> void:
+	if _synty_index_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_synty_index_task)
+		_synty_index_task = -1
 	if _chunk_task >= 0:
 		WorkerThreadPool.wait_for_group_task_completion(_chunk_task)
 		_chunk_task = -1
@@ -7603,7 +7723,18 @@ func _load(path := "") -> bool:
 	if loaded.is_empty():
 		return false
 	var data: Dictionary = loaded[0]
+	var apron_textures := {}
+	if (data.get("buildings", []) as Array).size() >= 48 and not Gfx._tex_small:
+		# Эти материалы запрашивает построение чертежей при восстановлении каймы.
+		var paths := {}
+		for texture: String in ["Building_Marble_01", "Stone_Tex", "Window_01", "Window_02",
+				"Window_03", "Stucco_White_01", "Stucco_Orange_01", "Stucco_01_Normals"]:
+			var texture_path := Synty._tex_path(texture)
+			if texture_path != "":
+				paths[texture_path] = true
+		apron_textures = await CityWarmup.fetch(get_tree(), paths)
 	await city.load_data(data, get_tree())
+	apron_textures.clear()
 	await get_tree().process_frame
 	if clock_hours:
 		hour = float(data.get("hour", 8.0))
@@ -7631,16 +7762,34 @@ static func _read_city_save(path: String, terrain: Land, result: Array[Dictionar
 func _show_loaded(batch: Array) -> void:
 	if batch.is_empty():
 		return
+	var tree := get_tree()
 	var paths := {}
+	var deadline := Time.get_ticks_usec() + 5000
 	for b: Dictionary in batch:
 		CityWarmup.models(city.blueprint(b), paths, true)
-	var models := await CityWarmup.fetch(get_tree(), paths)
-	var deadline := Time.get_ticks_usec() + 5000
+		if Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			deadline = Time.get_ticks_usec() + 5000
+	var models := await CityWarmup.fetch(tree, paths)
+	var alive := func(): return is_inside_tree()
+	deadline = Time.get_ticks_usec() + 5000
 	for b: Dictionary in batch:
 		if Time.get_ticks_usec() >= deadline:
 			await get_tree().process_frame
 			deadline = Time.get_ticks_usec() + 5000
+		var bp := city.blueprint(b)
+		var xf := city.xf(b)
+		await parts.prepare_groups(bp, xf, _show_substitutions(b, bp), alive)
+		if city.apron_of(b) == 2:
+			await parts.prepare_groups(Kerb.blueprint(bp), xf, {}, alive)
+		if spectacle and Spectacle.is_venue(b["type"]):
+			await spectacle.prepare_saved_layout(b)
+		if Time.get_ticks_usec() >= deadline:
+			await get_tree().process_frame
+			deadline = Time.get_ticks_usec() + 5000
+		var started := Perf14.begin()
 		_show(b)
+		Perf14.detail("load_building_" + String(b["type"]), started)
 	models.clear()
 
 

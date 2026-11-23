@@ -1,5 +1,6 @@
 extends Node
 
+const CityWarmup = preload("res://scripts/city_warmup.gd")
 const Perf13 = preload("res://scripts/perf13_timers.gd")
 ## Звуки боя. События приходят из представления; время и случайность свои.
 
@@ -56,6 +57,7 @@ class Cue:
 	var featured: bool
 
 static var _horn: AudioStreamWAV
+var load_on_ready := true
 var _rng := RandomNumberGenerator.new()
 var _variants := {}
 var _last_variant := {}
@@ -76,7 +78,8 @@ var _finished := false
 
 func _ready() -> void:
 	Sound.ensure_sfx_bus()
-	_load_pack()
+	if load_on_ready:
+		_load_pack(_pack_entries())
 	var pan_strength := float(ProjectSettings.get_setting("audio/general/2d_panning_strength"))
 	for i in MAX_SHOTS:
 		var voice := Voice.new()
@@ -104,22 +107,46 @@ static func read_manifest() -> Dictionary:
 	return data if data is Dictionary else {}
 
 
-func _load_pack() -> void:
+func prepare_pack() -> void:
+	var entries := _pack_entries()
+	var paths := {}
+	for event: String in entries:
+		for entry: Array in entries[event]:
+			paths[entry[0]] = true
+	var resources := await CityWarmup.fetch(get_tree(), paths)
+	if is_inside_tree() and not is_queued_for_deletion():
+		_load_pack(entries, resources)
+
+
+static func _pack_entries() -> Dictionary:
 	var manifest := read_manifest()
+	var result := {}
 	for event: String in MIX:
 		var entries: Variant = manifest.get(event, [])
 		if entries is not Array:
 			continue
-		var streams: Array[AudioStreamOggVorbis] = []
 		for entry: Variant in entries:
 			if entry is not Dictionary:
 				continue
 			var file := String(entry.get("file", ""))
 			if file.is_empty() or file != file.get_file() or not ResourceLoader.exists(PACK + file, "AudioStreamOggVorbis"):
 				continue
-			var stream := load(PACK + file) as AudioStreamOggVorbis
+			if not result.has(event):
+				result[event] = []
+			(result[event] as Array).append([PACK + file, bool(entry.get("loop", false))])
+	return result
+
+
+func _load_pack(entries: Dictionary, resources: Dictionary = {}) -> void:
+	for event: String in entries:
+		var streams: Array[AudioStreamOggVorbis] = []
+		for entry: Array in entries[event]:
+			var path: String = entry[0]
+			var stream := resources.get(path) as AudioStreamOggVorbis
+			if stream == null:
+				stream = load(path) as AudioStreamOggVorbis
 			if stream != null:
-				stream.loop = event in LOOP_EVENTS and bool(entry.get("loop", false))
+				stream.loop = event in LOOP_EVENTS and bool(entry[1])
 				if stream.loop == (event in LOOP_EVENTS):
 					streams.append(stream)
 		if not streams.is_empty():

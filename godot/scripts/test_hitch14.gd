@@ -116,11 +116,23 @@ func _actions() -> void:
 	_mark("анимация строительства")
 	var home := Vector2(64, 74)
 	game.build_anim = true
-	var b0 := game.city.place("house_pleb", home, 0.0, 0, 0, true)
+	var sliced := args.has("focus")
+	var b0 := game.city.place("house_pleb", home, 0.0, 0, 0, true, Vector2i.ZERO, sliced)
 	game.build_anim = false
+	if sliced and not b0.is_empty():
+		if not game._grow_live.has(b0["id"]):
+			_fail("первая стройка без анимации")
+		game._finish_placement({}, home)
 	await get_tree().create_timer(4.5, false, false, true).timeout
+	if sliced:
+		_mark("снос первого дома")
 	if not b0.is_empty():
-		game.city.remove(b0, false)
+		if sliced:
+			await _demolish_focus(b0)
+		else:
+			game.city.remove(b0, false)
+	elif sliced:
+		_fail("первая стройка не запущена")
 	await frames(6)
 	await _colosseum_normal()
 	var types: Array[String] = []
@@ -172,7 +184,11 @@ func _actions() -> void:
 			game.hud._hide_info()
 			await frames(1)
 			_mark("снос тестовой постройки " + key)
-			game.city.remove(b, false)
+			if args.has("focus"):
+				await _demolish_focus(b)
+				_verify_placement("снос " + key)
+			else:
+				game.city.remove(b, false)
 			await frames(2)
 		game.city.level = level_before
 		if had_credit:
@@ -184,11 +200,15 @@ func _actions() -> void:
 	if not game.people.residents.is_empty():
 		game.hud.open_person({"r": game.people.residents[0]})
 		await frames(20)
+		if not game.hud.info_panel.visible or not game.hud.info_p.has("r"):
+			_fail("не открылась карточка горожанина")
 		game.hud._hide_info()
 	_mark("портрет кота")
 	if not game.people.cats.is_empty():
 		game.hud.open_person({"cat": game.people.cats[0]})
 		await frames(20)
+		if not game.hud.info_panel.visible or not game.hud.info_p.has("cat"):
+			_fail("не открылась карточка кошки")
 		game.hud._hide_info()
 
 	_mark("смена дня")
@@ -282,15 +302,22 @@ func _colosseum_normal() -> void:
 	if not game.visuals.has(id) or not game.spectacle.venues.has(id):
 		_fail("Колизей: после стройки нет трибун")
 	_mark("снос тестового Колизея")
-	game.demolish_building(b, false)
-	while game._placement_running:
-		await frames(1)
-	if game.city.buildings.has(id) or game.visuals.has(id) or game.spectacle.venues.has(id):
+	await _demolish_focus(b)
+	if game.spectacle.venues.has(id):
 		_fail("Колизей остался после сноса")
 	if args.has("focus"):
 		_verify_placement("снос colosseum")
 	game._clear_preview_models()
 	await frames(8)
+
+
+func _demolish_focus(b: Dictionary) -> void:
+	var id := int(b["id"])
+	game.demolish_building(b, false)
+	while game._placement_running:
+		await frames(1)
+	if game.city.buildings.has(id) or game.visuals.has(id) or game._grow_live.has(id):
+		_fail("осталась постройка после сноса " + String(b["type"]))
 
 
 ## Настоящее нажатие «поставить» с выбранной постройкой, затем сверка итогов пересчёта.
@@ -333,11 +360,13 @@ func _verify_placement(type: String) -> void:
 	active = false
 	var c := game.city
 	var snapshot := JSON.stringify(c.save_data(true))
+	var ready_upgrades = c._upg_ready
 	var stats := c.stats.duplicate(true)
 	var fields := {}
 	for b: Dictionary in c.buildings.values():
 		fields[b["id"]] = [b["road"], b["staff"], b["active"], b["needs"].duplicate(true), b.get("happy_target")]
 	c.compute(true)
+	c._upg_ready = ready_upgrades
 	var match_ok := snapshot == JSON.stringify(c.save_data(true)) and stats == c.stats
 	for b: Dictionary in c.buildings.values():
 		match_ok = match_ok and fields[b["id"]] == [b["road"], b["staff"], b["active"], b["needs"], b.get("happy_target")]
@@ -405,7 +434,7 @@ func _frame() -> void:
 	var now := Time.get_ticks_usec()
 	var ms := (now - before) / 1000.0
 	var pipes := _pipelines()
-	if ms > LIMITS[0]:
+	if ms > LIMITS[0] or (args.has("ui_trace") and Timers.usec[Timers.UI] > 8000):
 		var split := Timers.sections()
 		for id in CityTimers.LABELS.size():
 			if CityTimers.usec[id] > 0:

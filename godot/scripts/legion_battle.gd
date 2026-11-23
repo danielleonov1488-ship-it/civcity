@@ -183,7 +183,11 @@ func _ready() -> void:
 	_enter()
 	await get_tree().process_frame
 	battle_sound = BattleSound.new()
+	battle_sound.load_on_ready = false
 	add_child(battle_sound)
+	await battle_sound.prepare_pack()
+	if is_queued_for_deletion():
+		return
 	await _build_screen()
 	if not is_queued_for_deletion():
 		_start(setup)
@@ -809,7 +813,11 @@ func _start(s: Dictionary) -> void:
 
 
 ## Занавес перед боем: карта провинции и «Легион выступает: …»
+var _opening_map_request := 0
+
+
 func _loading(s: Dictionary) -> void:
+	_opening_map_request += 1
 	fade.modulate.a = 1.0
 	var st: Dictionary = s.get("stage", {})
 	if s.has("event"):
@@ -820,9 +828,20 @@ func _loading(s: Dictionary) -> void:
 		fade_lbl.text = "Легион выступает: город «%s»" % String((s.get("opponent", {}) as Dictionary).get("name", "?"))
 	else:
 		var r := clampi(int(st.get("r", 0)), 0, Legion.regions().size() - 1)
-		fade_map.texture = Legion.art_texture("map", String(Legion.regions()[r]["id"]))
+		var region := String(Legion.regions()[r]["id"])
+		_load_opening_map(region)
 		var nm := String(st.get("theme", "")) if String(st.get("theme", "")) != "" else String(st.get("name", ""))
 		fade_lbl.text = "%s — %s" % [String(st.get("title", "")), nm] if nm != "" else String(st.get("title", ""))
+
+
+func _load_opening_map(region: String) -> void:
+	var request := _opening_map_request
+	var path := String(Legion.art("map", region)["file"])
+	if not ResourceLoader.exists(path):
+		path = path.get_basename() + ".jpg"
+	var art := await CityWarmup.fetch(get_tree(), {path: true})
+	if is_inside_tree() and not is_queued_for_deletion() and request == _opening_map_request:
+		fade_map.texture = art.get(path) as Texture2D
 
 
 func _clear_world() -> void:

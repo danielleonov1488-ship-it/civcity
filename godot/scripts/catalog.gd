@@ -54,7 +54,7 @@ static func field_bp(type: String, size: Vector2i) -> Bp:
 
 ## legacy — дом из старого сохранения (стоит на прежнем, более узком следе): свой дом ужимается по нему (KitHouses)
 ## old_lot — постройка из старого сохранения, тип которой с тех пор поменял размер (SizeLadder): облик на прежнем следе
-static func make(type: String, tier := 1, variant := 0, color := 0, legacy := false, old_lot := false) -> Bp:
+static func make(type: String, tier := 1, variant := 0, color := 0, legacy := false, old_lot := false, pending = null) -> Bp:
 	var dd0: Dictionary = Defs.B.get(type, {})
 	if dd0.get("kind", "") == "decor":
 		# украшение всегда выглядит как его карточка: облик задаёт тип, а не цвет, место или фасад
@@ -138,17 +138,52 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		"barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia", "mars": CatMilitary.make(b, type, tier)
 		_: CatDecor._decor(b, type, variant, color)
 	b.base = Transform3D.IDENTITY
-	if CatDress.ON and not kit_done and not legacy and (dd0.get("kind", "") in ["house", "shop", "inn", "rp", "store"] or CatDress.TRADE_SIGN.has(type)):
-		CatDress.dress(b, type)                # цветы под окнами, плющ, горшки у дверей — как на картинках Synty
-	if not kit_done:
-		_actors(b, type, tier)
-		CatDressCivic.dress(b, type, tier)     # склады, мастерские, поля, бани, храмы — обжитые дворы и бока (без новых деталей в следе)
-	Interiors.apply(b, String(dd0.get("kind", "")))   # нутро: комнаты вместо чёрных коробок, заднники за проёмами (interiors.gd)
-	Doors.apply(b, String(dd0.get("kind", "")))       # створки в проёмах: две в двустворчатом, приоткрыты (doors.gd)
-	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)
+	var kind := String(dd0.get("kind", ""))
+	if pending != null:
+		# Чертёж ещё строится. В общий кэш он попадёт после всех деталей.
+		pending.append([key, b, type, tier, kind, kit_done, legacy, fit])
+		fit = Vector2.ZERO
+		return b
+	for step in 4:
+		_finish_step(b, type, tier, kind, kit_done, legacy, step)
+	_scale(b, scale_of(type))
 	fit = Vector2.ZERO
 	_cache[key] = b
 	return b
+
+
+static func _finish_step(b: Bp, type: String, tier: int, kind: String, kit_done: bool, legacy: bool, step: int) -> void:
+	match step:
+		0:
+			if CatDress.ON and not kit_done and not legacy and (kind in ["house", "shop", "inn", "rp", "store"] or CatDress.TRADE_SIGN.has(type)):
+				CatDress.dress(b, type)
+		1:
+			if not kit_done:
+				_actors(b, type, tier)
+				CatDressCivic.dress(b, type, tier)
+		2:
+			Interiors.apply(b, kind)
+		3:
+			Doors.apply(b, kind)
+
+
+static func finish_loading(job: Array, tree: SceneTree, deadline: int) -> void:
+	var key: String = job[0]
+	var b: Bp = job[1]
+	var type: String = job[2]
+	var shape: Vector2 = job[7]
+	for step in 4:
+		if Time.get_ticks_usec() >= deadline:
+			await tree.process_frame
+			deadline = Time.get_ticks_usec() + 4000
+			if _cache.has(key):
+				return
+		fit = shape
+		_finish_step(b, type, job[3], job[4], job[5], job[6], step)
+		shape = fit
+		fit = Vector2.ZERO
+	_scale(b, scale_of(type))
+	_cache[key] = b
 
 
 ## Уменьшить весь чертёж вокруг основания: детали, огни, дым, людей при деле, вход

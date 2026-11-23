@@ -253,7 +253,7 @@ static func _apply_streams(terrain: Land) -> void:
 ## Всё, что встаёт после рощ и лугов: жизнь у ручьёв, мосты, поля с оградами, мельницы, луга в цветах
 static func life(g) -> void:
 	var tree: SceneTree = g.get_tree()
-	_water_life(g)
+	await _water_life(g, tree)
 	await tree.process_frame
 	_bridges(g)
 	if not on():
@@ -271,7 +271,7 @@ static func life(g) -> void:
 
 ## Жизнь на воде реки (15.11): на озере — лодка с рыбаком (только в «уютных» городах, как на прудах), утки и лебедь
 ## кружат; на реке — утки в широких спокойных местах (кружат на месте, как на прудах)
-static func _water_life(g) -> void:
+static func _water_life(g, tree: SceneTree) -> void:
 	var land: Land = g.land
 	for id: int in Streams.RIVER_IDS:
 		if not land.streams.has(id):
@@ -284,7 +284,7 @@ static func _water_life(g) -> void:
 		if pl.z > 0.0:
 			var c := Vector2(pl.x, pl.y)
 			if bn != null and bn.has_method("add_lake"):
-				bn.add_lake(pl)
+				await bn.add_lake(pl, tree)
 			for k in 4:
 				var nm := "#swan" if k == 0 else ("#duck" if k % 2 == 0 else "#duck_f")
 				_swimmer(g, nm, c, pl.z * rng.randf_range(0.3, 0.55), rng)

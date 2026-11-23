@@ -74,6 +74,7 @@ const SND := {"cheer": ["arena/crowd_cheer.ogg", -6.0], "roar": ["arena/crowd_ro
 static var _streams := {}
 var _shots := 0
 var _tris_jobs := {}
+var _restore_ghost: Node3D
 static var warm_crowds := true
 var _crowd_models: Array[String] = []
 var _crowd_prepare_index := 0
@@ -195,11 +196,9 @@ func _stage_layout(key: String, type: String, bp: Bp, meshes: Array, job: Array)
 
 
 static func _prepare_seats(type: String, bp: Bp, faces: Array, result: Dictionary) -> void:
-	var tris := Tris.new()
-	tris.build_faces(faces)
 	var layout_rng := RandomNumberGenerator.new()
 	layout_rng.seed = hash([type, bp.parts])
-	result.merge(_make_layout(type, bp, tris, layout_rng))
+	_build_layout(type, bp, faces, layout_rng, result)
 
 
 func layout_pending(b: Dictionary) -> bool:
@@ -207,7 +206,42 @@ func layout_pending(b: Dictionary) -> bool:
 	return not job.is_empty() and (int(job[0]) < 0 or not WorkerThreadPool.is_task_completed(job[0]))
 
 
+## При загрузке готовим места тем же способом и с тем же RNG, что в layout().
+func prepare_saved_layout(b: Dictionary) -> void:
+	var type := String(b["type"])
+	if not is_venue(type) or (type == "taberna" and int(city.cozy_v) < 1):
+		return
+	var key := _layout_key(b)
+	if _layouts.has(key):
+		return
+	var tree := get_tree()
+	var bp := city.blueprint(b)
+	_restore_ghost = Node3D.new()
+	await Parts.fill_ghost(_restore_ghost, bp, "place", Color(0.4, 0.9, 0.4, 0.4), tree)
+	var meshes := Tris.capture_meshes(_restore_ghost)
+	_restore_ghost.free()
+	_restore_ghost = null
+	var faces := await Tris.read_faces_sliced(meshes, tree)
+	var layout_rng := RandomNumberGenerator.new()
+	layout_rng.state = rng.state
+	var result := {}
+	var task := WorkerThreadPool.add_task(_build_layout.bind(type, bp, faces, layout_rng, result))
+	_tris_jobs[key] = [task, result]
+	while not WorkerThreadPool.is_task_completed(task):
+		await tree.process_frame
+	layout(b)                                  # забирает результат и закрывает задачу
+	rng.state = layout_rng.state
+
+
+static func _build_layout(type: String, bp: Bp, faces: Array, layout_rng: RandomNumberGenerator, result: Dictionary) -> void:
+	var tris := Tris.new()
+	tris.build_faces(faces)
+	result.merge(_make_layout(type, bp, tris, layout_rng))
+
+
 func _exit_tree() -> void:
+	if is_instance_valid(_restore_ghost):
+		_restore_ghost.free()
 	for job: Array in _tris_jobs.values():
 		if int(job[0]) >= 0:
 			WorkerThreadPool.wait_for_task_completion(job[0])
@@ -1519,11 +1553,27 @@ class Tris:
 		var cached := {}
 		var faces := []
 		for entry: Array in meshes:
-			var mesh: Mesh = entry[1]
-			if not cached.has(mesh):
-				cached[mesh] = mesh.get_faces()
-			faces.append([entry[0], cached[mesh]])
+			faces.append(_read_mesh_faces(entry, cached))
 		return faces
+
+	static func read_faces_sliced(meshes: Array, tree: SceneTree) -> Array:
+		var cached := {}
+		var faces := []
+		var deadline := Time.get_ticks_usec() + 2500
+		for entry: Array in meshes:
+			faces.append(_read_mesh_faces(entry, cached))
+			if Time.get_ticks_usec() >= deadline:
+				await tree.process_frame
+				deadline = Time.get_ticks_usec() + 2500
+		return faces
+
+	static func _read_mesh_faces(entry: Array, cached: Dictionary) -> Array:
+		var mesh: Mesh = entry[1]
+		if not cached.has(mesh):
+			var started := Perf14.begin()
+			cached[mesh] = mesh.get_faces()
+			Perf14.end(Perf14.MESH_READ, started)
+		return [entry[0], cached[mesh]]
 
 	func build_faces(faces: Array) -> void:
 		var lo := Vector2(INF, INF)
