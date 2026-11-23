@@ -148,6 +148,9 @@ func set_quality(q: String) -> void:
 	var sp := float(p["sp"])
 	var rk := range_key(game.settings, q) if game != null else "near"
 	var base := float(p["r"])
+	if q == "low" and Gfx.weak_tuning:
+		base *= 0.72
+		sp *= 1.18
 	if q == "verylow" and rk == "all":
 		base = VERYLOW_ALL_R
 	radius = base * float(RANGE[rk]) if _on else 0.0

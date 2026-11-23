@@ -5,6 +5,7 @@ render_mode cull_disabled, specular_schlick_ggx, depth_draw_always;
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
 uniform vec3 shallow : source_color = vec3(0.30, 0.52, 0.46);
 uniform vec3 deep : source_color = vec3(0.07, 0.20, 0.25);
+instance uniform bool simple_water = false;
 
 varying vec3 wpos;
 
@@ -31,7 +32,12 @@ void fragment() {
 	float t = clamp(depth / 2.5, 0.0, 1.0);
 	vec3 col = mix(shallow, deep, sqrt(t));
 	// пена: полоса у берега, рваная и бегущая
-	float n = vnoise(wpos.xz * 3.0 + vec2(TIME * 0.3, TIME * 0.2)) * 0.6 + vnoise(wpos.xz * 9.0 - TIME * 0.4) * 0.4;
+	float n;
+	if (simple_water) {
+		n = 0.5 + 0.2 * sin(dot(wpos.xz, vec2(8.1, 5.3)) - TIME * 1.4);
+	} else {
+		n = vnoise(wpos.xz * 3.0 + vec2(TIME * 0.3, TIME * 0.2)) * 0.6 + vnoise(wpos.xz * 9.0 - TIME * 0.4) * 0.4;
+	}
 	// 13.11: полоса пены уже (было 0,28 м глубины): у мелких заводей и ручьёв дно не белеет пятнами
 	float foam = (1.0 - smoothstep(0.0, 0.16, depth)) * smoothstep(0.38, 0.62, n + (1.0 - smoothstep(0.0, 0.07, depth)) * 0.5);
 	// пена — только у самой кромки, где глубина быстро растёт; на широкой мели (дно почти у воды) белых пятен нет
@@ -40,12 +46,20 @@ void fragment() {
 	ALPHA = clamp(0.45 + t * 0.5 + foam, 0.0, 0.96);
 	// рябь: нормаль чуть колышется
 	// 14.11: рябь — два слоя шума под углом друг к другу (у одного слоя по сетке в отражении видны квадраты)
-	float e = 0.05;
-	mat2 ra = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
-	vec2 p = wpos.xz * 1.6 + TIME * 0.25;
-	vec2 p2 = ra * wpos.xz * 2.3 - TIME * 0.19;
-	float hx = vnoise(p + vec2(e, 0)) - vnoise(p - vec2(e, 0)) + (vnoise(p2 + ra * vec2(e, 0)) - vnoise(p2 - ra * vec2(e, 0))) * 0.7;
-	float hz = vnoise(p + vec2(0, e)) - vnoise(p - vec2(0, e)) + (vnoise(p2 + ra * vec2(0, e)) - vnoise(p2 - ra * vec2(0, e))) * 0.7;
+	float hx;
+	float hz;
+	if (simple_water) {
+		vec2 ripples = sin(wpos.xz * vec2(4.1, 3.7) + TIME * vec2(1.3, -1.6));
+		hx = ripples.x * 0.07;
+		hz = ripples.y * 0.07;
+	} else {
+		float e = 0.05;
+		mat2 ra = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
+		vec2 p = wpos.xz * 1.6 + TIME * 0.25;
+		vec2 p2 = ra * wpos.xz * 2.3 - TIME * 0.19;
+		hx = vnoise(p + vec2(e, 0)) - vnoise(p - vec2(e, 0)) + (vnoise(p2 + ra * vec2(e, 0)) - vnoise(p2 - ra * vec2(e, 0))) * 0.7;
+		hz = vnoise(p + vec2(0, e)) - vnoise(p - vec2(0, e)) + (vnoise(p2 + ra * vec2(0, e)) - vnoise(p2 - ra * vec2(0, e))) * 0.7;
+	}
 	vec3 nw = normalize(vec3(-hx * 0.5, 1.0, -hz * 0.5));
 	NORMAL = normalize((VIEW_MATRIX * vec4(nw, 0.0)).xyz);
 	ROUGHNESS = 0.14;

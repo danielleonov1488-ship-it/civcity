@@ -2,7 +2,7 @@ class_name Gfx
 extends Node
 ## Графика (этап 1 плана от 24.10): «Высокая», «Средняя», «Низкая», «Очень низкая».
 ##  - при первом запуске уровень выбирается по видеокарте (first_launch), в городе один раз проверяется, тянет ли
-##    видеокарта (медиана 4 с больше 11 мс — на ступень ниже); у тех, кто уже играет, сама ничего не меняется;
+##    видеокарта (медиана за 4 с, слабый пресет может пройти пробу ступенью выше); у тех, кто уже играет, сама ничего не меняется;
 ##    ручной выбор (quality_user) никогда не перебивается;
 ##  - сторож кадров: в городе 20 с подряд меньше 40 кадров на «Высокой» или «Средней» — советник один раз предложит
 ##    «Низкую» (кнопкой); встроенная видеокарта — один раз подскажет, как включить мощную;
@@ -11,7 +11,9 @@ extends Node
 ## владельца 26.10); остальные облегчения — только на «Низкой» и ниже.
 
 const ORDER := ["verylow", "low", "medium", "high"]
+const SmoothScale = preload("res://scripts/smooth_scale.gd")
 const NAMES := {"high": "Высокая", "medium": "Средняя", "low": "Низкая", "verylow": "Очень низкая"}
+const BASE_SCALE := {"verylow": 0.5, "low": 0.75, "medium": 1.0, "high": 1.0}
 const CHECK_MS := 11.0                 # проверка в городе: видеокарте нужно больше — на ступень ниже
 const CHECK_SKIP := 60                 # …первые кадры не в счёт (тени, шейдеры)
 const CHECK_SEC := 4.0
@@ -31,6 +33,8 @@ const MEDIUM_LIGHT := true
 static var medium_light := MEDIUM_LIGHT   # проверки (test_perf mode=offer) переключают на ходу
 static var short_low_shadows := true       # PERF13: сокращённая дальность и одна полоса теней
 static var earlier_verylow_lod := true     # PERF13: дальние модели чаще берут готовый LOD
+static var weak_tuning := false           # опытные настройки test_smooth14: в замерах дороже прежних
+static var _ssao_cheap := false
 
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
@@ -56,6 +60,15 @@ var _check_n := 0
 var _check_t := 0.0
 var _check_ms := PackedFloat32Array()
 var _check_frame := PackedFloat32Array()   # длина кадров за проверку (Mac на Metal — вместо времени видеокарты)
+var _check_upgrade := false
+var _smooth := SmoothScale.new()
+var _smooth_tick := 0
+var _smooth_q := ""
+var _smooth_hidpi := 1.0
+var _smooth_on := false
+var _smooth_budget := 0.0
+var _smooth_allowed := OS.get_environment("CIVCITY_NOMINPAUSE") != "1"
+var smooth_test := false              # test_smooth14 включает регулятор под общим замком
 var _watch_t := 0.0
 var _watch_n := 0
 var _alive_t := 0.0
@@ -258,9 +271,20 @@ static func apply(g) -> void:
 		return
 	var low := is_low(q)
 	var ml := q == "medium" and medium_light
+	var tune := low and weak_tuning
 	env.sdfgi_enabled = false
 	env.ssil_enabled = false
-	env.ssao_enabled = not low
+	env.ssao_enabled = not low or tune
+	if tune != _ssao_cheap:
+		var p := "rendering/environment/ssao/"
+		RenderingServer.environment_set_ssao_quality(
+			RenderingServer.ENV_SSAO_QUALITY_LOW if tune else int(ProjectSettings.get_setting(p + "quality")),
+			true if tune else bool(ProjectSettings.get_setting(p + "half_size")),
+			float(ProjectSettings.get_setting(p + "adaptive_target")),
+			1 if tune else int(ProjectSettings.get_setting(p + "blur_passes")),
+			32.0 if tune else float(ProjectSettings.get_setting(p + "fadeout_from")),
+			96.0 if tune else float(ProjectSettings.get_setting(p + "fadeout_to")))
+		_ssao_cheap = tune
 	env.glow_enabled = not low
 	var sun: DirectionalLight3D = g.sun
 	if sun:
@@ -269,15 +293,15 @@ static func apply(g) -> void:
 		sun.directional_shadow_max_distance = 175.0 if low else 190.0
 		if q == "low" and short_low_shadows:
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-			sun.directional_shadow_max_distance = 128.0
+			sun.directional_shadow_max_distance = 90.0 if tune else 128.0
 		sun.light_angular_distance = 0.0 if low or ml else 2.2    # без «мягких» теней PCSS — они самые дорогие
 		sun.shadow_enabled = q != "verylow"
 	# атлас теней солнца и его фильтр — общие настройки отрисовки (project.godot: 8192, мягкие высокие): «Высокая» — 4096 и
 	# средняя мягкость, «Средняя» и ниже — 4096 и низкая; прежняя «Средняя» (переключатель medium_light выключен) — как было
 	var full := q == "medium" and not ml
-	var sl := 2 if full else (0 if q == "high" else 1)
+	var sl := 3 if tune else (2 if full else (0 if q == "high" else 1))
 	if sl != _sun_low:
-		RenderingServer.directional_shadow_atlas_set_size(8192 if full else 4096, true)
+		RenderingServer.directional_shadow_atlas_set_size(2048 if tune else (8192 if full else 4096), true)
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH if full else
 			(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if q == "high" else RenderingServer.SHADOW_QUALITY_SOFT_LOW))
 		_sun_low = sl
@@ -285,12 +309,13 @@ static func apply(g) -> void:
 	if vp:
 		vp.msaa_3d = Viewport.MSAA_DISABLED if low else (Viewport.MSAA_4X if full else Viewport.MSAA_2X)
 		# «Очень низкая»: дальние модели (деревья, жители, детали построек) упрощаются раньше (по умолчанию — 1 точка экрана)
-		vp.mesh_lod_threshold = (12.0 if earlier_verylow_lod else 4.0) if q == "verylow" else 1.0
+		vp.mesh_lod_threshold = (20.0 if tune else (12.0 if earlier_verylow_lod else 4.0)) if q == "verylow" else (3.0 if tune else 1.0)
 		# слабые видеокарты: картинка считается меньше и аккуратно растягивается (FSR); снимки (--shot) — в полном размере
 		if g.shot_path == "":
-			var hk := hidpi_scale()                # Mac с Retina — 0,7 (на Windows 1 — как прежде)
-			vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR if low or hk < 1.0 else Viewport.SCALING_3D_MODE_BILINEAR
-			vp.scaling_3d_scale = (0.5 if q == "verylow" else (0.75 if q == "low" else 1.0)) * hk
+			if g.gfx:
+				g.gfx._configure_smooth(vp, q)
+			else:
+				_set_scale(vp, q, float(BASE_SCALE[q]), hidpi_scale())
 	if g.rig and g.rig.attrs:
 		g.rig.attrs.dof_blur_far_enabled = not low
 		g.rig.attrs.dof_blur_near_enabled = not low
@@ -305,7 +330,7 @@ static func apply(g) -> void:
 	for mmi: GeometryInstance3D in g.far_forest:
 		mmi.visible = q != "verylow"
 	if g.people:
-		g.people.max_vis = int(VIS[q])
+		g.people.max_vis = 26 if tune and q == "verylow" else int(VIS[q])
 		g.people.props_on = not low            # вещи в руках жителей (HandProps) — не на «Низкой»
 		if low:
 			for id in g.visuals:
@@ -314,6 +339,12 @@ static func apply(g) -> void:
 	small_textures(q == "verylow")
 	if g.has_method("meadow_quality"):
 		g.meadow_quality(low)                  # природа Meadow Forest: мелочь лугов — «Средняя» и «Высокая», деревья набора на «Низкой» — прежние
+	for water_name in ["CityWater", "RiverFar"]:
+		var water: MeshInstance3D = g.get_node_or_null(water_name)
+		if water:
+			water.set_instance_shader_parameter("simple_water", tune)
+	if g.gfx:
+		g.gfx._citizen_shadows(tune)
 	# большие постройки этапа 5 (CatGrand.LOW): на «Низкой» — лёгкие колонны и статуи; уровень поменяли — их облик заново
 	if low != _grand_low:
 		_grand_low = low
@@ -328,6 +359,14 @@ static func apply(g) -> void:
 	# предел кадров (владелец 12.11: «минимум 120»): по умолчанию — сколько показывает монитор (вертикальная синхронизация,
 	# у владельца 180 Гц); прежний жёсткий предел 60 не давал больше даже на сильной видеокарте. Снимки — без предела
 	Engine.max_fps = fps_cap(g.settings) if g.shot_path == "" else 0
+
+
+static func _set_scale(vp: Viewport, q: String, scale: float, hidpi: float) -> void:
+	# Выбираем режим при применении пресета. Регулятор меняет только масштаб.
+	var mode := Viewport.SCALING_3D_MODE_FSR if is_low(q) or hidpi < 1.0 else Viewport.SCALING_3D_MODE_BILINEAR
+	if vp.scaling_3d_mode != mode:
+		vp.scaling_3d_mode = mode
+	vp.scaling_3d_scale = scale * hidpi
 
 
 ## «Очень низкая»: картинки 4096² (палитры Synty, мрамор, статуи — по 21 МБ видеопамяти сжатыми Basis, 64 МБ — без
@@ -804,12 +843,15 @@ static func _readback(t: Texture2D) -> Texture2D:
 
 func _ready() -> void:
 	_vp = get_viewport().get_viewport_rid()
+	if game.shot_path == "":
+		_configure_smooth(get_viewport(), str(game.settings.get("quality", "high")))
 	process_priority = 100
 	for root: Node in [game.people, game.actors_root]:
 		root.child_entered_tree.connect(_anim_add)
 		root.child_exiting_tree.connect(_anim_remove)
 		for child: Node in root.get_children():
 			_anim_add(child)
+	_citizen_shadows(weak_tuning and is_low(str(game.settings.get("quality", "high"))))
 	_fps_box = CanvasLayer.new()
 	_fps_box.layer = 12
 	add_child(_fps_box)
@@ -833,6 +875,9 @@ func _ready() -> void:
 	# проверка уже прошла, а объяснить не успели (закрыли игру во время обучения) — объясним в этот раз
 	var st: Dictionary = game.settings
 	var qa := str(st.get("quality_auto", ""))
+	# Игрок мог сохранить другие настройки, пока пробовалась ступень выше.
+	if qa == "low" and _check_due():
+		_check_upgrade = tier_for(adapter(), RenderingServer.get_video_adapter_type()) == "verylow"
 	if game.mode in ["play", "new"] and game.shot_path == "" and qa != "" and qa != "kept" and bool(st.get("quality_checked", false)) \
 			and not bool(st.get("quality_user", false)) and not bool(st.get("tip_q_auto", false)):
 		_pending.push_front(_tip_auto(str(st.get("quality", qa))))
@@ -840,8 +885,8 @@ func _ready() -> void:
 			and tier_for(adapter(), RenderingServer.get_video_adapter_type()) == "verylow":
 		if OS.has_feature("macos"):
 			# Mac со встроенной Intel: второй видеокарты нет или macOS включает её сам — про Windows ни слова
-			_pending.append(["Встроенная видеокарта", ("Игра идёт на встроенной видеокарте (%s) — ей тяжело, поэтому графика " +
-				"самая простая. Подключите зарядку — без неё Mac сам замедляет видеокарту.") % adapter(), "", "tip_igpu"])
+			_pending.append(["Встроенная видеокарта", ("Игра идёт на встроенной видеокарте (%s). " +
+				"Подключите зарядку — без неё Mac сам замедляет видеокарту.") % adapter(), "", "tip_igpu"])
 		else:
 			_pending.append(["Встроенная видеокарта", ("Игра идёт на встроенной видеокарте (%s) — ей тяжело. Если в ноутбуке есть вторая, мощная: " +
 				"Параметры Windows → Система → Дисплей → Графика → CivCity → «Высокая производительность». И подключите зарядку — без неё " +
@@ -859,6 +904,51 @@ func _set_measure(on: bool) -> void:
 		RenderingServer.viewport_set_measure_render_time(_vp, on)
 
 
+static func _target_fps(settings: Dictionary, quality: String) -> float:
+	var hz := DisplayServer.screen_get_refresh_rate(DisplayServer.window_get_current_screen())
+	if hz <= 0.0:
+		hz = 60.0
+	var cap := fps_cap(settings)
+	var target := minf(hz, cap) if cap > 0 else hz
+	return maxf(60.0, target) if is_low(quality) else target
+
+
+func _configure_smooth(vp: Viewport, q: String) -> void:
+	q = q if BASE_SCALE.has(q) else "high"
+	var on := bool(game.settings.get("smooth", true))
+	var hidpi := hidpi_scale()
+	if _smooth_q != q or _smooth_on != on or not is_equal_approx(_smooth_hidpi, hidpi):
+		_smooth.reset(float(BASE_SCALE[q]))
+		_smooth_tick = 0
+		_smooth_q = q
+		_smooth_on = on
+		_smooth_hidpi = hidpi
+	_set_scale(vp, q, _smooth.scale, hidpi)
+
+
+func _smooth_step(active: bool) -> void:
+	if not active:
+		if _smooth_tick != 0:
+			_smooth.clear()
+			_smooth_tick = 0
+		return
+	var now := Time.get_ticks_usec()
+	var prev := _smooth_tick
+	_smooth_tick = now
+	if prev == 0:
+		_smooth_budget = 1000.0 / _target_fps(game.settings, _smooth_q)
+		return
+	# Цель пересчитывается на границе окна (окно могло переехать на другой экран).
+	if _smooth._elapsed == 0.0:
+		var budget := 1000.0 / _target_fps(game.settings, _smooth_q)
+		if not is_equal_approx(budget, _smooth_budget):
+			_smooth.clear()
+			_smooth_budget = budget
+	var gpu := RenderingServer.viewport_get_measured_render_time_gpu(_vp)
+	if _smooth.sample((now - prev) / 1000000.0, gpu, _smooth_budget, _smooth_q):
+		get_viewport().scaling_3d_scale = _smooth.scale * _smooth_hidpi
+
+
 func _check_due() -> bool:
 	var st: Dictionary = game.settings
 	var qa := str(st.get("quality_auto", ""))
@@ -870,7 +960,7 @@ func _check_due() -> bool:
 func _in_city() -> bool:
 	if not game.ready_done or not (game.mode in ["play", "new"]) or game.shot_path != "":
 		return false
-	if game.rig == null or game.rig.cine or LegionBattle.current != null:
+	if game.rig == null or game.rig.cine or LegionBattle.current != null or game.legion_city_hidden():
 		return false
 	if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_MINIMIZED or game.minimized_test:
 		return false
@@ -897,9 +987,15 @@ func _process(dt: float) -> void:
 	else:
 		_anims(dt)                            # время игры, как у обычных проигрывателей
 	var city := _in_city()
+	var checking := city and _check_due()
+	var smooth: bool = (city and _smooth_on and (_smooth_allowed or smooth_test) and not checking
+		and not get_viewport().disable_3d and (game.photo == null or not game.photo.on)
+		and RenderingServer.get_current_rendering_method() == "forward_plus")
+	_set_measure(checking or smooth or (_dbg != null and _dbg.visible))
+	_smooth_step(smooth)
 	if city:
 		_alive_t += real
-	if city and _check_due():
+	if checking:
 		_check_step(real)
 	if city and auto_on and _alive_t > WATCH_START:
 		_watch_step(real)
@@ -924,7 +1020,7 @@ func _adv_free() -> bool:
 	return _in_city()
 
 
-## Одна проверка в городе после выбора по видеокарте: медиана времени видеокарты за 4 с; больше 11 мс — на ступень ниже
+## Проверка первого запуска. Встроенная с запасом пробует «Низкую», затем проверяется ещё раз.
 func _check_step(dt: float) -> void:
 	_set_measure(true)
 	_check_n += 1
@@ -949,15 +1045,29 @@ func _check_step(dt: float) -> void:
 		var s := _check_frame.duplicate()      # Mac на Metal: видеокарта не говорит своё время — смотрим на кадры
 		s.sort()
 		med = s[s.size() / 2]
-	if med > (CHECK_FRAME_MS if by_frames else CHECK_MS) and q != "verylow":
+	var frame := SmoothScale.percentile(_check_frame, 0.5)
+	var budget := 1000.0 / _target_fps(st, q)
+	if (q == "verylow" and not _check_upgrade and med > 0.0 and med < budget * 0.48
+			and not by_frames and frame > 0.0 and frame < budget * 1.05):
+		_check_upgrade = true
+		_check_n = CHECK_SKIP - 30
+		_check_t = 0.0
+		_check_ms.clear()
+		_check_frame.clear()
+		st["quality"] = "low"
+		st["quality_auto"] = "low"
+		game._apply_quality()
+		return
+	if _check_upgrade and (med <= 0.0 or med > budget * 0.90 or frame > budget * 1.07):
+		q = "verylow"
+	elif not _check_upgrade and med > (CHECK_FRAME_MS if by_frames else CHECK_MS) and q != "verylow":
 		q = lower(q)
-		st["quality"] = q
-		st["quality_auto"] = q
+	st["quality"] = q
+	st["quality_auto"] = q
 	st["quality_checked"] = true
 	print("Графика: проверка в городе — %s %.1f мс, уровень «%s»" % ["кадр" if by_frames else "видеокарта", med, NAMES[q]])
 	_write(game)
 	game._apply_quality()
-	_set_measure(_dbg != null and _dbg.visible)
 	if not bool(st.get("tip_q_auto", false)):
 		_pending.push_front(_tip_auto(q))
 
@@ -1005,6 +1115,8 @@ static var lod_on := true                     # для сравнений «бы
 static var skip_hidden_city_anims := true      # PERF13: позы города под экраном Легиона
 var _anim_list: Array[Citizen] = []
 var _anim_serial := 0
+var _no_citizen_shadows := false
+const CITIZEN_CAST := &"gfx_citizen_cast"
 static var perf := false
 var anim_us := 0
 static var tier_n := [0, 0, 0, 0]             # сколько жителей в каждом разряде (последний кадр; для замеров)
@@ -1017,6 +1129,8 @@ func _anim_add(n: Node) -> void:
 		c.batch_slot = _anim_serial
 		_anim_serial += 1
 		_anim_list.append(c)
+		if _no_citizen_shadows:
+			_citizen_shadow(c, false)
 
 
 func _anim_remove(n: Node) -> void:
@@ -1024,7 +1138,27 @@ func _anim_remove(n: Node) -> void:
 		var c := n as Citizen
 		_anim_list.erase(c)
 		if not c.is_queued_for_deletion():
+			if _no_citizen_shadows:
+				_citizen_shadow(c, true)
 			c.batch_release()              # при переносе в другую сцену вернётся обычный проигрыватель
+
+
+func _citizen_shadows(disabled: bool) -> void:
+	if disabled == _no_citizen_shadows:
+		return
+	_no_citizen_shadows = disabled
+	for c in _anim_list:
+		_citizen_shadow(c, not disabled)
+
+
+func _citizen_shadow(c: Citizen, enabled: bool) -> void:
+	for mesh: MeshInstance3D in c.find_children("*", "MeshInstance3D", true, false):
+		if not enabled and not mesh.has_meta(CITIZEN_CAST):
+			mesh.set_meta(CITIZEN_CAST, mesh.cast_shadow)
+			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		elif enabled and mesh.has_meta(CITIZEN_CAST):
+			mesh.cast_shadow = int(mesh.get_meta(CITIZEN_CAST))
+			mesh.remove_meta(CITIZEN_CAST)
 
 
 func _anims(dt: float) -> void:
@@ -1144,7 +1278,6 @@ func _toggle_dbg() -> void:
 		_fps_box.add_child(_dbg)
 		_dbg.visible = false
 	_dbg.visible = not _dbg.visible
-	_set_measure(_dbg.visible or _check_due())
 
 
 ## Что видно в F3 (и что копируется)
@@ -1199,6 +1332,15 @@ static func settings_block(h, v: VBoxContainer, more: VBoxContainer = null) -> v
 			h._open_settings(true))
 		q.add_child(b)
 	v.add_child(q)
+	var smooth := CheckBox.new()
+	smooth.name = "smooth"
+	smooth.text = "Плавность"
+	smooth.add_theme_font_size_override("font_size", 18)
+	smooth.toggled.connect(func(on: bool):
+		h.game.settings["smooth"] = on
+		h.game.save_settings())
+	more.add_child(smooth)
+	more.add_child(h._wrap(h._label("Меняет чёткость города, чтобы держать FPS.", 15, false, h.C_SOFT), 470))
 	# «Трава и цветы» (15.11): как далеко видна трава и мелочь природы
 	var gr := HBoxContainer.new()
 	gr.add_theme_constant_override("separation", 6)
@@ -1266,6 +1408,9 @@ static func settings_refresh(h) -> void:
 	var fps := h.settings_panel.find_child("show_fps", true, false) as CheckBox
 	if fps:
 		fps.set_pressed_no_signal(bool(h.game.settings.get("show_fps", false)))
+	var smooth := h.settings_panel.find_child("smooth", true, false) as CheckBox
+	if smooth:
+		smooth.set_pressed_no_signal(bool(h.game.settings.get("smooth", true)))
 	for c: int in FPS_CAPS:
 		var b: Button = h.settings_panel.find_child("cap_%d" % c, true, false)
 		if b:

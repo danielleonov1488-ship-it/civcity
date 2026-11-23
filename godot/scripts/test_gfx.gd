@@ -316,6 +316,12 @@ func _run() -> void:
 	check(gl != null and gl.text.contains(RenderingServer.get_video_adapter_name()), "настройки: «Видеокарта: …»", gl.text if gl else "")
 	var cb: CheckBox = sp.find_child("show_fps", true, false)
 	check(cb != null and not cb.button_pressed and not gfx._fps.visible, "«Показывать FPS» есть и выключен по умолчанию")
+	var smooth: CheckBox = sp.find_child("smooth", true, false)
+	if check(smooth != null and smooth.button_pressed, "«Плавность» есть и включена по умолчанию"):
+		smooth.button_pressed = false
+		var smooth_saved: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(game.settings_path()))
+		check(not bool(smooth_saved.get("smooth", true)) and not gfx._smooth_on, "«Плавность» выключается и сохраняется")
+		smooth.button_pressed = true
 	await shot("gfx_settings.png")
 	# картинки «Очень низкой»: копия 2048² из файла картинки — точь-в-точь прежняя (через видеокарту)
 	var mat := _big_mat()
@@ -354,9 +360,10 @@ func _run() -> void:
 	check(busy and press_ms < 1000.0, "«Очень низкая»: картинки меняются после нажатия, по одной за кадр (нажатие — %.0f мс)" % press_ms, [busy, press_ms])
 	var vp := get_viewport()
 	check(game.settings["quality"] == "verylow" and bool(game.settings.get("quality_user", false)), "«Очень низкая» нажата: выбор игрока (quality_user)")
-	check(not game.sun.shadow_enabled and game.people.max_vis == 40 and vp.msaa_3d == Viewport.MSAA_DISABLED and is_equal_approx(vp.scaling_3d_scale, 0.5)
+	check(not game.sun.shadow_enabled and not game.env.ssao_enabled and game.people.max_vis == 40
+		and vp.msaa_3d == Viewport.MSAA_DISABLED and is_equal_approx(vp.scaling_3d_scale, 0.5)
 		and not (game.far_forest[0] as Node3D).visible and is_equal_approx(vp.mesh_lod_threshold, 12.0),
-		"«Очень низкая»: без теней солнца, 40 прохожих, без MSAA, FSR 0.5, без дальних лесов, LOD раньше",
+		"«Очень низкая»: без SSAO и MSAA, 40 прохожих, FSR 0.5, без дальних лесов, LOD раньше",
 		[game.sun.shadow_enabled, game.people.max_vis, vp.msaa_3d, vp.scaling_3d_scale])
 	var nf := await _swap_wait() + 3
 	await frames(40)
@@ -410,6 +417,7 @@ func _run() -> void:
 	await frames(10)
 	check(gfx._dbg != null and gfx._dbg.visible and gfx._dbg_text.text.contains("видеокарта") and gfx._dbg_text.text.contains(RenderingServer.get_video_adapter_name()),
 		"F3: подробности (кадры, видеокарта, вызовы, память, название)")
+	check(gfx._dbg_text != null and gfx._dbg_text.text.contains("масштаб"), "F3: текущий масштаб 3D")
 	await shot("gfx_f3.png")
 	gfx._toggle_dbg()
 	cb.button_pressed = false
