@@ -32,6 +32,7 @@ var max_place_frame_usec := 0
 var _place_frame := -1
 var _place_frame_usec := 0
 
+static var trim_freed_slots := true          # тест PERF14-e6 сравнивает прежний и короткий буфер
 static var split_on := true                # для сравнений «было/стало» (test_perf split=0)
 var _col := Color.WHITE                     # цвет экземпляра для последней группы из _group
 static var _tint_mats := {}
@@ -612,14 +613,43 @@ func _grow(g: Dictionary) -> void:
 func _alloc(g: Dictionary) -> int:
 	var free: Array = g["free"]
 	if not free.is_empty():
-		return free.pop_back()
+		var slot: int = free.pop_back()
+		if g.has("freed"):
+			var freed: Dictionary = g["freed"]
+			freed.erase(slot)
+			if slot >= int(g.get("draw", g["used"])) - 1:
+				_sync_draw_prefix(g)
+		return slot
+	if int(g["used"]) == 0:
+		g.erase("freed")
+		g.erase("hidden")
 	if int(g["used"]) >= int(g["cap"]):
 		_grow(g)
 	var i: int = g["used"]
 	g["used"] = i + 1
-	for sub in g["subs"]:
-		(sub["mm"] as MultiMesh).visible_instance_count = i + 1
+	_set_draw_prefix(g, i + 1)
 	return i
+
+
+func _set_draw_prefix(g: Dictionary, draw: int) -> void:
+	g["draw"] = draw
+	for sub: Dictionary in g["subs"]:
+		(sub["mm"] as MultiMesh).visible_instance_count = draw
+
+
+func _sync_draw_prefix(g: Dictionary) -> void:
+	var used: int = g["used"]
+	var draw := used
+	if trim_freed_slots:
+		var freed: Dictionary = g.get("freed", {})
+		var hidden: Dictionary = g.get("hidden", {})
+		while draw > 0 and (freed.has(draw - 1) or hidden.has(draw - 1)):
+			draw -= 1
+		# Один нулевой хвостовой экземпляр сохраняет прежний AABB, LOD и порядок деталей.
+		if draw > 0 and draw < used:
+			draw += 1
+	if draw != int(g.get("draw", -1)):
+		_set_draw_prefix(g, draw)
 
 
 static func _batch_tile(name: String, pos: Vector3) -> Vector2i:
@@ -696,18 +726,34 @@ func place_one(name: String, xf: Transform3D, remap := {}, tiled := false) -> Ar
 	return [_place_part(name, xf, remap, tile)]
 
 
-## Спрятать детали на время (ролик: дерево заслонило героя): возвращает [[MultiMesh, место, преобразование], …] для restore
+# Створки и двери могут менять буфер сами, минуя Parts. Их диапазон при скрытии не меняем.
+static func _track_hide(g: Dictionary) -> bool:
+	var model: String = g["key"].get_slice("|", 0)
+	return is_foliage(model) or model.begins_with("SM_Prop_Lyre")
+
+
+## Спрятать детали на время (ролик: дерево заслонило героя). Возвращает снимок поз для restore.
 func hide_handles(handles: Array) -> Array:
 	var saved := []
 	var zero := Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3(0, -100, 0))
 	for h in handles:
 		var g: Dictionary = h[0]
 		var slot: int = h[1]
-		for sub in g["subs"]:
+		var snapshot := []
+		var tracked := _track_hide(g)
+		var hidden: Dictionary = g.get_or_add("hidden", {}) if tracked else {}
+		if tracked and hidden.has(slot):
+			continue
+		for sub: Dictionary in g["subs"]:
 			var mm: MultiMesh = sub["mm"]
 			if slot < mm.instance_count:
-				saved.append([mm, slot, mm.get_instance_transform(slot)])
+				snapshot.append([mm, mm.get_instance_transform(slot)])
 				mm.set_instance_transform(slot, zero)
+		if not snapshot.is_empty():
+			saved.append([g, slot, snapshot, tracked])
+			if tracked:
+				hidden[slot] = snapshot
+				_sync_draw_prefix(g)
 	return saved
 
 
@@ -721,10 +767,21 @@ func is_hidden(h: Array) -> bool:
 ## Вернуть спрятанное hide_handles (место, которое за это время заняли другим, не трогаем)
 func restore(saved: Array) -> void:
 	for e: Array in saved:
-		var mm: MultiMesh = e[0]
+		var g: Dictionary = e[0]
 		var slot: int = e[1]
-		if slot < mm.instance_count and mm.get_instance_transform(slot).basis.get_scale().length() < 1e-6:
-			mm.set_instance_transform(slot, e[2])
+		var snapshot: Array = e[2]
+		var tracked: bool = e[3]
+		var hidden: Dictionary = g.get("hidden", {})
+		var freed: Dictionary = g.get("freed", {})
+		if freed.has(slot) or (tracked and not is_same(hidden.get(slot), snapshot)):
+			continue
+		for pose: Array in snapshot:
+			var mm: MultiMesh = pose[0]
+			if slot < mm.instance_count and mm.get_instance_transform(slot).basis.get_scale().length() < 1e-6:
+				mm.set_instance_transform(slot, pose[1])
+		if tracked:
+			hidden.erase(slot)
+			_sync_draw_prefix(g)
 
 
 func remove(handles: Array) -> void:
@@ -736,13 +793,22 @@ func remove(handles: Array) -> void:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, zero)
 		var free: Array = g["free"]
 		free.append(slot)
+		var hidden: Dictionary = g.get("hidden", {})
+		hidden.erase(slot)
 		if g.has("area") and free.size() == int(g["used"]):
 			free.clear()
+			g.erase("freed")
 			g["used"] = 0
+			_set_draw_prefix(g, 0)
 			for sub: Dictionary in g["subs"]:
-				(sub["mm"] as MultiMesh).visible_instance_count = 0
 				(sub["mmi"] as MultiMeshInstance3D).custom_aabb = AABB()
 				sub.erase("diameter")
+		else:
+			var freed: Dictionary = g.get_or_add("freed", {})
+			freed[slot] = true
+			# Пока освобождается середина, менять длину буфера не нужно.
+			if slot >= int(g.get("draw", g["used"])) - 2 or free.size() == int(g["used"]):
+				_sync_draw_prefix(g)
 
 
 ## Спрятать (нулевой масштаб) или вернуть детали ручки на место xf — деревья под призраком постройки (game.gd, 3.7)
@@ -753,6 +819,14 @@ func set_hidden(handles: Array, hidden: bool, xf := Transform3D.IDENTITY) -> voi
 		var slot: int = h[1]
 		for sub in g["subs"]:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, zero if hidden else xf * (sub["local"] as Transform3D))
+		if _track_hide(g):
+			var hidden_slots: Dictionary = g.get_or_add("hidden", {})
+			if hidden:
+				if not hidden_slots.has(slot):
+					hidden_slots[slot] = true
+			else:
+				hidden_slots.erase(slot)
+			_sync_draw_prefix(g)
 
 
 func count() -> int:
