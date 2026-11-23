@@ -101,6 +101,11 @@ func _boot(m: String) -> void:
 	Game.boot = {m: "1", "hour": str(A.get("hour", "9")), "nologin": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
+	if A.get("layout_quality", "") == "high":
+		# Эталон строит природу на «Высокой» до переключения пресетов.
+		game.settings["quality"] = "high"
+		game.apply_grass_range(false)
+		Gfx.small_textures(false)
 
 
 func frames(n: int) -> void:
@@ -1564,13 +1569,24 @@ func _shots_mode() -> void:
 
 ## Эталон города, переход через лёгкие пресеты и замеры центра.
 func _regress() -> void:
+	print("PERF depth_prepass=", Gfx.depth_prepass())
+	var presets: Array = PRESETS
+	if A.has("q"):
+		presets = Array(str(A["q"]).split(",", false))
+		for q: String in presets:
+			if q not in PRESETS:
+				fail("неизвестный пресет " + q)
+				return
+		if presets.is_empty():
+			fail("нет пресетов для проверки")
+			return
 	await _settle()
 	while game._clock_busy or game._placement_running:
 		await frames(1)
 	var owner := city_src == OWNER
 	var views := _views(VIEWS_REGRESS if owner else VIEWS_NEW if city_src.is_empty() else VIEWS_OWNER)
 	_freeze()
-	var first := await _shots(PRESETS, views, "first")
+	var first := await _shots(presets, views, "first")
 	if owner or A.has("ref"):
 		var ref: String = A.get("ref", GOLDEN)
 		for key: String in first:
@@ -1581,14 +1597,14 @@ func _regress() -> void:
 			_regress_image(key, first[key], Image.load_from_file(path), false)
 	if A.has("out"):
 		_save_set(first, str(A["out"]))
-	var again := await _shots(["high", "medium"], views, "again")
+	var again := await _shots(["high", "medium"].filter(func(q: String) -> bool: return q in presets), views, "again")
 	for key: String in again:
 		_regress_image(key, again[key], first[key], true)
 	_unfreeze()
 
 	var v0: Array = views[0]
 	_view(v0)
-	for q: String in PRESETS:
+	for q: String in presets:
 		_quality(q)
 		var sample := await _measure("%s %s" % [v0[0], q])
 		if owner and not A.has("views"):

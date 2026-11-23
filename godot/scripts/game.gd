@@ -922,7 +922,8 @@ func _load_settings() -> void:
 	if shot_path == "":
 		Gfx.first_launch(self, had)           # первый запуск — графика по видеокарте; кто уже играет — без перемен
 		if typeof(d) == TYPE_DICTIONARY and bool(settings.get("quality_user", false)) and not d.has("quality_user"):
-			Gfx._write(self)                  # качество выбрали в лаунчере до первой игры — запомнить как выбор игрока
+			write_settings()                  # запомнить уровень, выбранный в лаунчере до первой игры
+		Gfx.save_render_quality(str(settings.get("quality", "high"))) # старые настройки и повреждённый render.cfg
 		_window_mode()
 	Gfx.small_textures(str(settings.get("quality", "high")) == "verylow")   # до построек: на «Очень низкой» сразу копии
 
@@ -970,10 +971,26 @@ func fade_quality() -> void:
 	tween.tween_callback(_quality_fade.queue_free)
 
 
-func save_settings() -> void:
+func select_quality(quality: String) -> void:
+	settings["quality"] = quality
+	settings["quality_user"] = true
+	save_settings()
+
+
+func write_settings() -> void:
+	var started := Perf14.begin()
 	var f := FileAccess.open(settings_path(), FileAccess.WRITE)
+	var saved := false
 	if f:
-		f.store_string(JSON.stringify(settings))
+		saved = f.store_string(JSON.stringify(settings))
+		f.close()
+	Perf14.detail("settings_json", started)
+	if saved:
+		Gfx.save_render_quality(str(settings.get("quality", "high")))
+
+
+func save_settings() -> void:
+	write_settings()
 	apply_settings()
 
 
