@@ -52,6 +52,7 @@ var room_sprites: Dictionary = {}
 var room_stages: Dictionary = {}
 var _empty_lights: Dictionary = {}
 var _empty_shader: Shader
+static var _mobile_empty_shader: Shader
 var shell: Node2D
 var backdrop: Sprite2D
 var grid := Legion.FORT_START_GRID
@@ -397,10 +398,21 @@ func _update_room(plot: Dictionary) -> bool:
 	return true
 
 
+static func _new_empty_shader() -> Shader:
+	var shader := Shader.new()
+	shader.code = EMPTY_ROOM_LIGHT
+	return shader
+
+
+static func mobile_empty_shader() -> Shader:
+	if _mobile_empty_shader == null:
+		_mobile_empty_shader = _new_empty_shader()
+	return _mobile_empty_shader
+
+
 func _shade_empty(room: Sprite2D, rect: Rect2, id: int) -> void:
 	if _empty_shader == null:
-		_empty_shader = Shader.new()
-		_empty_shader.code = EMPTY_ROOM_LIGHT
+		_empty_shader = mobile_empty_shader() if Gfx.mobile_renderer() else _new_empty_shader()
 	var light := ShaderMaterial.new()
 	light.shader = _empty_shader
 	room.material = light

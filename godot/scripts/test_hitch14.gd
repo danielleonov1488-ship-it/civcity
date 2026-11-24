@@ -82,6 +82,8 @@ func _run() -> void:
 				await _actions()
 			await _free_play()
 			await _finish()
+			if args.has("perf22g"):
+				_check_mobile_budget()
 	events.close()
 	report.close()
 	print("HITCH14 %s fails=%d" % ["DONE" if fails == 0 else "FAIL", fails])
@@ -137,6 +139,9 @@ func _first_use() -> void:
 		while (game._grow_live.has(house["id"]) or game._placement_running) and Time.get_ticks_msec() < build_deadline:
 			await frames(1)
 	await frames(45)
+	if args.has("perf22g") and not house.is_empty():
+		_mark("снос тестового дома")
+		await _demolish_focus(house)
 
 	_mark("первый закат")
 	game._set_hour(20.0)
@@ -190,8 +195,10 @@ func _first_use() -> void:
 	_mark("первый бой · бой и итог")
 	while is_instance_valid(battle) and battle.phase != "result" and Time.get_ticks_msec() < deadline:
 		await frames(1)
-	_mark("возврат из боя")
 	if is_instance_valid(battle) and battle.phase == "result":
+		if args.has("perf22g"):
+			await frames(30) # первый видимый кадр итога входит в замер
+		_mark("возврат из боя")
 		battle._close()
 		await battle.tree_exited
 	else:
@@ -212,6 +219,9 @@ func _first_use() -> void:
 	_mark("возврат к площадке")
 	game.rig.set_view(Vector3(62, Land.BASE_Y, 80), 15, 42, 64)
 	await frames(45)
+	if args.has("perf22g"):
+		await _first_large_builds()
+		return
 	for type: String in ["medic", "academy", "colosseum"]:
 		_mark("первая модель " + type)
 		await game._request_preview(type, 0, 0)
@@ -225,6 +235,46 @@ func _first_use() -> void:
 			_mark("подготовка площадки")
 			game.city.remove(b, false)
 			await frames(12)
+
+
+func _first_large_builds() -> void:
+	var old_level := game.city.level
+	game.city.level = maxi(old_level, 6)
+	for type: String in ["medic", "academy", "colosseum"]:
+		var credit := int(game.city.wonder_credits.get(type, 0))
+		game.city.wonder_credits[type] = 1
+		_mark("первая постройка " + type)
+		var b := await _place_focus(type, Vector2(62, 80))
+		if credit > 0:
+			game.city.wonder_credits[type] = credit
+		else:
+			game.city.wonder_credits.erase(type)
+		if b.is_empty():
+			_fail("не поставлена " + type)
+			continue
+		var id := int(b["id"])
+		var deadline := Time.get_ticks_msec() + 25000
+		while game._grow_live.has(id) and Time.get_ticks_msec() < deadline:
+			await frames(1)
+		if not game.visuals.has(id) or (type == "colosseum" and not game.spectacle.venues.has(id)):
+			_fail("нет постройки после анимации " + type)
+		_mark("снос тестовой постройки " + type)
+		await _demolish_focus(b)
+		await frames(12)
+	game.city.level = old_level
+
+
+func _check_mobile_budget() -> void:
+	if not Gfx.mobile_renderer() or not scenario.ends_with("/verylow"):
+		_fail("PERF22: нужен Mobile на «Очень низкой»")
+	if counts[3] > 0:
+		_fail("PERF22: после загрузки %d кадров >100 мс" % counts[3])
+	for action: String in ["первый бой · загрузка", "первый бой · бой и итог"]:
+		var over: PackedInt64Array = phase_counts.get(action, PackedInt64Array([0, 0, 0, 0]))
+		if not phase_samples.has(action):
+			_fail("PERF22: нет замера «%s»" % action)
+		elif over[2] > 0:
+			_fail("PERF22: «%s» — %d кадров >50 мс" % [action, over[2]])
 
 
 func _actions() -> void:
@@ -581,6 +631,14 @@ func _frame() -> void:
 			"pipeline_canvas_mesh_surface_draw_specialization": []}
 		for i in pipes.size():
 			row["pipeline_canvas_mesh_surface_draw_specialization"].append(pipes[i] - pipeline_counts[i])
+		if args.has("perf22g") and pipes[3] > pipeline_counts[3]:
+			var battle := LegionBattle.current
+			if is_instance_valid(battle) and is_instance_valid(battle.battle_view):
+				var fading := PackedStringArray()
+				for fighter: LegionBattleView.Fighter in battle.battle_view.views.values():
+					if is_instance_valid(fighter.actor) and fighter.actor._opacity < 1.0:
+						fading.append(fighter.unit.key)
+				row["fading_actors"] = fading
 		traces.append(JSON.stringify(row))
 		if top.size() < 10 or float(top[-1]["ms"]) < ms:
 			top.append(row)

@@ -773,8 +773,12 @@ func _ready() -> void:
 		var baker := prepare_ground_bake()
 		if baker != null:
 			await baker.prime()
-	if stage_draw and (shadow_depth != null or Gfx.mobile_renderer()) and mode in ["play", "new"]:
-		await _warm_city_view(br.ffly)
+	if stage_draw and mode in ["play", "new"]:
+		var mobile := Gfx.mobile_renderer()
+		if shadow_depth != null or mobile:
+			await _warm_city_view(br.ffly)
+		if mobile:
+			await LegionBattle.warm_mobile(self, _startup_mark)
 	_startup_mark("first_view")
 	ready_done = true
 	_startup_mark("ready_done")
@@ -5398,11 +5402,24 @@ func _request_preview(type: String, tier: int, variant: int, color := 0) -> void
 	CityWarmup.models(bp, paths, true)
 	Perf14.detail("preview_paths", started)
 	var staged := type in SLICED_PREVIEWS
+	var small_textures: Array[String] = []
+	if staged and gfx != null and Gfx.mobile_renderer() and Gfx._tex_small:
+		small_textures = _queue_mobile_preview_textures(bp, paths)
 	if paths.is_empty() and not staged:
 		return
 	_preview_pending = true
 	var tree := get_tree()
 	var models := await CityWarmup.fetch(tree, paths)
+	if not small_textures.is_empty():
+		while Gfx._tex_small and small_textures.any(func(path: String) -> bool: return Gfx._queue.has(path)):
+			if serial != _preview_serial:
+				return
+			await tree.process_frame
+		var originals := {}
+		for path: String in small_textures:
+			if not Gfx._tex_small or not Gfx._small.has(path):
+				originals[path] = true
+		models.merge(await CityWarmup.fetch(tree, originals))
 	var seen := {}
 	var deadline := Time.get_ticks_usec() + 3000
 	for part: Array in bp.parts:
@@ -5438,6 +5455,26 @@ func _request_preview(type: String, tier: int, variant: int, color := 0) -> void
 		_preview_pending = false
 		if hud:
 			hud.thumb_update.call_deferred()
+
+
+func _queue_mobile_preview_textures(bp: Bp, paths: Dictionary) -> Array[String]:
+	# Копии готовятся в очереди Gfx, оригиналы читает загрузчик ресурсов.
+	var textures := {}
+	for part: Array in bp.parts:
+		var model: String = part[0]
+		if not model.begins_with("#") and not model.begins_with("M:") and not model.begins_with("K:"):
+			Synty.texture_paths(model, part[2], textures)
+	var copies: Array[String] = []
+	for path: String in textures:
+		if Gfx._small.has(path):
+			continue
+		var ctex := "" if Gfx._not_big.has(path) else Gfx._ctex(path)
+		if ctex != "" and Gfx._ctex_width(ctex) >= Gfx.SMALL_FROM and Gfx._ctex_small_ok(ctex):
+			Gfx._queue.get_or_add(path, [])
+			copies.append(path)
+		else:
+			paths[path] = true
+	return copies
 
 
 func _take_preview_ghost(bp: Bp, key: String) -> Node3D:
