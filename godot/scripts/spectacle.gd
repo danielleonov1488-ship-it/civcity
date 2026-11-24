@@ -99,12 +99,27 @@ static func is_venue(type: String) -> bool:
 # ---------- площадки ----------
 
 ## Постройка показана (Game._show): трибуны, толпа, бойцы
+var _pending_venues := {}
+
+
 func venue_show(b: Dictionary) -> void:
 	if not VENUES.has(b["type"]):
 		return
 	if String(VENUES[b["type"]]["kind"]) == "tavern" and int(city.cozy_v) < 1:
 		return                                   # вечер в таверне — в новой игре
 	venue_hide(b)
+	var key := _layout_key(b)
+	if not _layouts.has(key) and game.ready_done and game.mode in ["new", "play"] and not city.bulk:
+		var id := int(b["id"])
+		var ticket := RefCounted.new()
+		_pending_venues[id] = ticket
+		if not _tris_jobs.has(key):
+			_queue_layout(b)
+		while layout_pending(b):
+			await get_tree().process_frame
+			if _pending_venues.get(id) != ticket:
+				return
+		_pending_venues.erase(id)
 	_prepare_crowd()
 	var lay := layout(b)
 	var root := Node3D.new()
@@ -145,6 +160,7 @@ func venue_show(b: Dictionary) -> void:
 
 
 func venue_hide(b: Dictionary) -> void:
+	_pending_venues.erase(int(b["id"]))
 	var V: Dictionary = venues.get(int(b["id"]), {})
 	if V.is_empty():
 		return
@@ -163,36 +179,30 @@ func prepare_layout(b: Dictionary, ghost: Node3D) -> void:
 	var key := _layout_key(b)
 	if _layouts.has(key) or _tris_jobs.has(key):
 		return
-	var started := Perf14.begin()
-	var meshes := Tris.capture_meshes(ghost)
-	Perf14.end(Perf14.MESH_READ, started)
+	_queue_layout(b, ghost)
+
+
+func _queue_layout(b: Dictionary, ghost: Node3D = null) -> void:
+	var key := _layout_key(b)
+	var bp := city.blueprint(b)
+	var type := String(b["type"])
 	var job := [-1, {}]
 	_tris_jobs[key] = job
-	_stage_layout(key, String(b["type"]), city.blueprint(b), meshes, job)
-
-
-func _stage_layout(key: String, type: String, bp: Bp, meshes: Array, job: Array) -> void:
-	await get_tree().process_frame
+	var meshes := Tris.capture_meshes(ghost) if ghost != null else []
+	var tree := get_tree()
+	await tree.process_frame
 	while game._placement_running:
-		await get_tree().process_frame
-	if not _tris_jobs.has(key):
-		return
-	var cache := {}
-	var faces := []
-	var deadline := Time.get_ticks_usec() + 2400
-	for item: Array in meshes:
-		var mesh: Mesh = item[1]
-		if not cache.has(mesh):
-			if Time.get_ticks_usec() >= deadline:
-				await get_tree().process_frame
-				if not _tris_jobs.has(key):
-					return
-				deadline = Time.get_ticks_usec() + 2400
-			var started := Perf14.begin()
-			cache[mesh] = mesh.get_faces()
-			Perf14.end(Perf14.MESH_READ, started)
-		faces.append([item[0], cache[mesh]])
-	job[0] = WorkerThreadPool.add_task(_prepare_seats.bind(type, bp, faces, job[1]))
+		await tree.process_frame
+	if meshes.is_empty():
+		var model := Node3D.new()
+		model.hide()
+		add_child(model)
+		await Parts.fill_ghost(model, bp, "place", Color.TRANSPARENT, tree)
+		meshes = Tris.capture_meshes(model)
+		model.queue_free()
+	var faces := await Tris.read_faces_sliced(meshes, tree)
+	if _tris_jobs.has(key):
+		job[0] = WorkerThreadPool.add_task(_prepare_seats.bind(type, bp, faces, job[1]))
 
 
 static func _prepare_seats(type: String, bp: Bp, faces: Array, result: Dictionary) -> void:

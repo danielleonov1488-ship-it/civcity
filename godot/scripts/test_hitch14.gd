@@ -216,13 +216,24 @@ func _first_use() -> void:
 		await game._request_preview(type, 0, 0)
 		await frames(45)
 		_mark("первая постройка " + type)
-		var b := game.city.place(type, Vector2(62, 84), 0.0, 0, 0, true)
+		var sliced := args.has("perf21b")
+		var at := Vector2(62, 84)
+		var b := game.city.place(type, at, 0.0, 0, 0, true, Vector2i.ZERO, sliced)
+		if sliced and not b.is_empty():
+			game._finish_placement({}, at, true)
 		await frames(90)
 		if b.is_empty() or not game.visuals.has(b["id"]):
 			_fail("нет модели " + type)
-		else:
+		elif Spectacle.is_venue(type) and not game.spectacle.venues.has(b["id"]):
+			_fail("нет трибун " + type)
+		if not b.is_empty():
 			_mark("подготовка площадки")
-			game.city.remove(b, false)
+			if sliced:
+				game.demolish_building(b, false)
+				while game._placement_running:
+					await frames(1)
+			else:
+				game.city.remove(b, false)
 			await frames(12)
 
 

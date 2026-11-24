@@ -4780,7 +4780,7 @@ func thumb_update() -> void:
 	g.hide()
 	_thumb_holder.add_child(g)
 	_thumb_build = g
-	await Parts.fill_ghost(g, bp, "thumbnail", Color.TRANSPARENT, get_tree() if t in Game.SLICED_PREVIEWS else null)
+	await Parts.fill_ghost(g, bp, "thumbnail", Color.TRANSPARENT, get_tree() if Game._large_blueprint(bp) else null)
 	if not is_instance_valid(g) or g != _thumb_build:
 		if is_instance_valid(g):
 			g.queue_free()

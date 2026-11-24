@@ -181,29 +181,47 @@ func select_for_placement(type: String) -> bool:
 
 
 func place_by_click(type: String, near: Vector2) -> bool:
+	# Наводим камеру на площадку и посылаем обычный ввод через Viewport.
+	game.rig.set_view(Vector3(near.x, Land.BASE_Y, near.y), 15, 48, 43)
+	await frames(2)
+	var blocked := 0
+	var tried := 0
 	for z in range(-4, 7, 2):
 		for x in range(-4, 7, 2):
 			var at := near + Vector2(x, z)
-			var placement: Dictionary = game.placement(type, at)
-			if placement["err"] != "" or (not placement["noroad"] if type == "house_pleb" else placement.get("sub") != "road"):
-				continue
 			var world := Vector3(at.x, game.land.height_at(at.x, at.y), at.y)
-			var click := InputEventMouseButton.new()
-			click.position = game.rig.cam.unproject_position(world)
-			click.button_index = MOUSE_BUTTON_LEFT
-			click.pressed = true
-			game._input(click)
-			if not get_viewport().get_visible_rect().has_point(click.position) or hud.mouse_over_ui():
+			var screen := game.rig.cam.unproject_position(world)
+			if not get_viewport().get_visible_rect().has_point(screen):
 				continue
+			var motion := InputEventMouseMotion.new()
+			motion.position = screen
+			motion.global_position = screen
+			get_viewport().push_input(motion, true)
+			if hud.mouse_over_ui():
+				blocked += 1
+				continue
+			var ground := game.ground_at_mouse()
+			if ground == Vector2.INF:
+				continue
+			var pl := game.placement(type, ground)
+			if pl["err"] != "" or (not pl["noroad"] if type == "house_pleb" else pl.get("sub") != "road"):
+				continue
+			var deadline := Time.get_ticks_msec() + 5000
+			while (game._preview_pending or not is_instance_valid(game.ghost) or not game.ghost.visible) and Time.get_ticks_msec() < deadline:
+				await get_tree().process_frame
 			var before := city.next_id
-			game.hover = at
-			game._unhandled_input(click)
-			click.pressed = false
-			game._unhandled_input(click)
-			game._mouse_pos = Vector2(-1, -1)
+			for down: bool in [true, false]:
+				var click := InputEventMouseButton.new()
+				click.position = screen
+				click.global_position = screen
+				click.button_index = MOUSE_BUTTON_LEFT
+				click.pressed = down
+				get_viewport().push_input(click, true)
+			tried += 1
 			if city.next_id > before:
+				game._mouse_pos = Vector2(-1, -1)
 				return true
-	return check(false, "click valid location for " + type)
+	return check(false, "click valid location for %s (blocked=%d, tried=%d)" % [type, blocked, tried])
 
 
 func until_ms(duration: int) -> void:
@@ -295,7 +313,7 @@ func city_route() -> bool:
 	await until_ms(1050)
 	for k in 3:
 		var count := city.next_id
-		if not place_by_click("house_pleb", square + Vector2(-13, 12 + k * 8)):
+		if not await place_by_click("house_pleb", square + Vector2(-13, 12 + k * 8)):
 			return false
 		homes.append(city.buildings[count])
 		if k < 2:
@@ -356,7 +374,7 @@ func city_route() -> bool:
 	await until_ms(500)
 	if not await select_for_placement("stall_fruit"):
 		return false
-	if not place_by_click("stall_fruit", square + Vector2(-5, 14)):
+	if not await place_by_click("stall_fruit", square + Vector2(-5, 14)):
 		return false
 	if not await next_frame_step("workers", "food"):
 		return false
@@ -373,7 +391,7 @@ func city_route() -> bool:
 	if not await select_for_placement("scriptorium"):
 		return false
 	var count := city.next_id
-	if not place_by_click("scriptorium", square + Vector2(-5, 26)):
+	if not await place_by_click("scriptorium", square + Vector2(-5, 26)):
 		return false
 	var school: Dictionary = city.buildings[count]
 	await until_ms(600)
