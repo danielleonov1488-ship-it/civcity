@@ -147,8 +147,9 @@ func _first_use() -> void:
 	_mark("первый дождь")
 	game.weather.force = 1.0
 	await frames(180)
-	if not game.weather.rain.emitting:
-		_fail("дождь не начался")
+	var rain_particles: bool = game.settings["quality"] != "verylow"
+	if game.weather.level <= 0.0 or game.weather.rain.emitting != rain_particles:
+		_fail("дождь или его частицы не соответствуют пресету")
 	game.weather.force = 0.0
 	game._set_hour(9.0)
 	_mark("пауза перед фортом")

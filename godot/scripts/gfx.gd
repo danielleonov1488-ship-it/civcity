@@ -24,6 +24,8 @@ const BASE_SCALE := {
 	"medium": 1.0,
 	"high": 1.0,
 }
+# В Mobile Godot 4.7 FSR заменяется билинейным фильтром. Чёткость даёт больший масштаб с SMAA.
+const MOBILE_BASE_SCALE := {"verylow": 0.75, "low": 1.0}
 const LOW_FSR_SHARPNESS := 0.2
 const PRESET_AA_BEFORE_LOW := &"preset_aa_before_low"
 const CHECK_MS := 11.0                 # проверка в городе: видеокарте нужно больше — на ступень ниже
@@ -201,7 +203,7 @@ static func _apple_tier(n: String) -> String:
 
 
 ## Mac с экраном Retina (у окна вдвое больше точек, чем у экрана ПК того же размера): 3D считается в 0,7 от размера
-## окна и растягивается FSR — точек столько же, сколько у ПК с экраном 1920×1080 при той же графике (2880×1800 × 0,7 ≈
+## окна — точек столько же, сколько у ПК с экраном 1920×1080 при той же графике (2880×1800 × 0,7 ≈
 ## 2016×1260), а интерфейс остаётся чётким. Иначе Retina вдвое-втрое тяжелее для видеокарты, и подобранный по видеокарте
 ## уровень не тянул бы. На Windows (и на Mac без Retina) — 1: всё как прежде
 static func hidpi_scale() -> float:
@@ -268,12 +270,29 @@ static func depth_prepass() -> bool:
 	return bool(ProjectSettings.get_setting_with_override(DEPTH_PREPASS))
 
 
+static func renderer_for_quality(quality: String) -> String:
+	return "mobile" if is_low(quality) else "forward_plus"
+
+
+static func mobile_renderer() -> bool:
+	return RenderingServer.get_current_rendering_method() == "mobile"
+
+
+static func renderer_restart_pending(quality: String) -> bool:
+	var active := RenderingServer.get_current_rendering_method()
+	return active in ["forward_plus", "mobile"] and active != renderer_for_quality(quality)
+
+
 static func save_render_quality(quality: String) -> void:
 	# Godot прочитает это при следующем запуске, до сборки конвейеров.
-	var config := "[rendering]\n\ndriver/depth_prepass/enable=%s\n" % str(not is_low(quality)).to_lower()
-	if FileAccess.get_file_as_string(RENDER_OVERRIDE) == config:
+	var path := OS.get_environment("CIVCITY_RENDER_CONFIG") if OS.get_environment("CIVCITY_NOMINPAUSE") == "1" else ""
+	if path.is_empty():
+		path = RENDER_OVERRIDE
+	var config := "[rendering]\n\ndriver/depth_prepass/enable=%s\nrenderer/rendering_method=\"%s\"\n" % [
+		str(not is_low(quality)).to_lower(), renderer_for_quality(quality)]
+	if FileAccess.get_file_as_string(path) == config:
 		return
-	var file := FileAccess.open(RENDER_OVERRIDE, FileAccess.WRITE)
+	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file:
 		file.store_string(config)
 		file.close()
@@ -308,7 +327,8 @@ static func apply(g) -> void:
 	# Если выключить проход на ходу, ранее собранные конвейеры теряют геометрию.
 	env.sdfgi_enabled = false
 	env.ssil_enabled = false
-	env.ssao_enabled = depth_prepass() and (not low or tune)
+	var mobile := mobile_renderer()
+	env.ssao_enabled = not mobile and depth_prepass() and (not low or tune)
 	var reduce_ssao := perf14_ssao and not low and not tune
 	if tune != _ssao_cheap or reduce_ssao != _ssao_reduced:
 		var p := "rendering/environment/ssao/"
@@ -358,7 +378,7 @@ static func apply(g) -> void:
 	started = Perf14.begin()
 	if vp:
 		vp.msaa_3d = Viewport.MSAA_DISABLED if low else (Viewport.MSAA_4X if full else Viewport.MSAA_2X)
-		if SHARP_LOW_PRESETS:
+		if mobile or SHARP_LOW_PRESETS:
 			_apply_low_aa(vp, low)
 		# «Очень низкая»: дальние модели (деревья, жители, детали построек) упрощаются раньше (по умолчанию — 1 точка экрана)
 		vp.mesh_lod_threshold = (20.0 if tune else (12.0 if earlier_verylow_lod else 4.0)) if q == "verylow" else (3.0 if tune else 1.0)
@@ -367,7 +387,7 @@ static func apply(g) -> void:
 			if g.gfx:
 				g.gfx._configure_smooth(vp, q)
 			else:
-				_set_scale(vp, q, float(BASE_SCALE[q]), hidpi_scale())
+				_set_scale(vp, q, base_scale(q), hidpi_scale())
 	Perf14.detail("quality_viewport", started)
 	started = Perf14.begin()
 	if g.rig and g.rig.attrs:
@@ -425,7 +445,8 @@ static func _apply_low_aa(vp: Viewport, low: bool) -> void:
 		if not vp.has_meta(PRESET_AA_BEFORE_LOW):
 			vp.set_meta(PRESET_AA_BEFORE_LOW, [vp.screen_space_aa, vp.fsr_sharpness])
 		vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_SMAA
-		vp.fsr_sharpness = LOW_FSR_SHARPNESS
+		if not mobile_renderer():
+			vp.fsr_sharpness = LOW_FSR_SHARPNESS
 	elif vp.has_meta(PRESET_AA_BEFORE_LOW):
 		var before: Array = vp.get_meta(PRESET_AA_BEFORE_LOW)
 		vp.screen_space_aa = before[0]
@@ -433,9 +454,17 @@ static func _apply_low_aa(vp: Viewport, low: bool) -> void:
 		vp.remove_meta(PRESET_AA_BEFORE_LOW)
 
 
+static func base_scale(q: String) -> float:
+	if mobile_renderer() and MOBILE_BASE_SCALE.has(q):
+		return float(MOBILE_BASE_SCALE[q])
+	return float(BASE_SCALE[q])
+
+
 static func _set_scale(vp: Viewport, q: String, scale: float, hidpi: float) -> void:
 	# Выбираем режим при применении пресета. Регулятор меняет только масштаб.
-	var mode := Viewport.SCALING_3D_MODE_FSR if is_low(q) or hidpi < 1.0 else Viewport.SCALING_3D_MODE_BILINEAR
+	var mode := Viewport.SCALING_3D_MODE_BILINEAR
+	if RenderingServer.get_current_rendering_method() == "forward_plus" and (is_low(q) or hidpi < 1.0):
+		mode = Viewport.SCALING_3D_MODE_FSR
 	if vp.scaling_3d_mode != mode:
 		vp.scaling_3d_mode = mode
 	vp.scaling_3d_scale = scale * hidpi
@@ -1093,7 +1122,7 @@ func _configure_smooth(vp: Viewport, q: String) -> void:
 	var on := bool(game.settings.get("smooth", true))
 	var hidpi := hidpi_scale()
 	if _smooth_q != q or _smooth_on != on or not is_equal_approx(_smooth_hidpi, hidpi):
-		_smooth.reset(float(BASE_SCALE[q]), q if SHARP_LOW_PRESETS and is_low(q) else "")
+		_smooth.reset(base_scale(q), q if (mobile_renderer() or SHARP_LOW_PRESETS) and is_low(q) else "")
 		_smooth_tick = 0
 		_smooth_q = q
 		_smooth_on = on
@@ -1128,7 +1157,8 @@ func _check_due() -> bool:
 	var st: Dictionary = game.settings
 	var qa := str(st.get("quality_auto", ""))
 	return game.mode in ["play", "new"] and game.shot_path == "" and qa != "" and qa != "kept" and not bool(st.get("quality_checked", true)) \
-		and not bool(st.get("quality_user", false))
+		and not bool(st.get("quality_user", false)) \
+		and (not renderer_restart_pending(qa) or OS.get_environment("CIVCITY_NOMINPAUSE") == "1")
 
 
 ## Сейчас обычная игра в городе (не меню, не ролик, не бой, окно не свёрнуто и в фокусе)
@@ -1165,7 +1195,7 @@ func _process(dt: float) -> void:
 	var checking := city and _check_due()
 	var smooth: bool = (city and _smooth_on and (_smooth_allowed or smooth_test) and not checking
 		and not get_viewport().disable_3d and (game.photo == null or not game.photo.on)
-		and RenderingServer.get_current_rendering_method() == "forward_plus")
+		and RenderingServer.get_current_rendering_method() in ["forward_plus", "mobile"])
 	_set_measure(checking or smooth or (_dbg != null and _dbg.visible))
 	_smooth_step(smooth)
 	if city:
@@ -1590,9 +1620,9 @@ static func settings_refresh(h) -> void:
 	var restart := h.settings_panel.find_child("quality_restart", true, false) as Label
 	if restart:
 		var depth := depth_prepass()
-		restart.visible = depth == is_low(quality)
+		restart.visible = depth == is_low(quality) or renderer_restart_pending(quality)
 		if restart.visible:
-			restart.text = "Ещё быстрее — после перезапуска игры" if depth else "Полное качество — после перезапуска игры"
+			restart.text = "Ещё быстрее — после перезапуска игры" if is_low(quality) else "Полное качество — после перезапуска игры"
 	var gk := GrassCarpet.range_key(h.game.settings, str(h.game.settings.get("quality", "high")))
 	for key: String in ["near", "far", "all", "off"]:
 		var gb: Button = h.settings_panel.find_child("grass_" + key, true, false)

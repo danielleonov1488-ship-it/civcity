@@ -38,6 +38,7 @@ var counts := {"build": 0, "settle": 0, "hire": 0, "research": 0, "roads": 0, "c
 var status := {}
 var output := TASK
 var profile := ""
+var quality := "high"
 var taking_measurements := false
 var allow_pause_on_load := false
 
@@ -54,6 +55,8 @@ func _run() -> void:
 			output = arg.trim_prefix("out=")
 		if arg.begins_with("--savedir="):
 			profile = arg.trim_prefix("--savedir=")
+		if arg.begins_with("q=") and Gfx.NAMES.has(arg.trim_prefix("q=")):
+			quality = arg.trim_prefix("q=")
 	if profile.is_empty():
 		profile = output.path_join("profiles/%d_%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_usec()])
 	if not log.setup(output):
@@ -83,6 +86,7 @@ func _run() -> void:
 	_bind(main)
 	log.metric("run.profile", profile)
 	log.metric("run.quality", game.settings.get("quality"))
+	log.metric("run.renderer", RenderingServer.get_current_rendering_method())
 	log.metric("run.viewport", str(get_viewport().get_visible_rect().size))
 	log.metric("run.sandbox", Game.sandbox)
 	await _begin(1)
@@ -111,7 +115,7 @@ func _profile() -> bool:
 	var settings := FileAccess.open(profile.path_join("settings.json"), FileAccess.WRITE)
 	if settings == null:
 		return false
-	settings.store_string(JSON.stringify({"quality": "high", "quality_user": true}))
+	settings.store_string(JSON.stringify({"quality": quality, "quality_user": true}))
 	settings.close()
 	return true
 

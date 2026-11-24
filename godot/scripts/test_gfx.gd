@@ -63,6 +63,7 @@ func _start() -> void:
 	f.store_string(JSON.stringify({"quality": "high", "autosave": false, "fullscreen": false, "lang": "ru", "ui_scale": 1.0}))
 	f.close()
 	GamePaths._dir = profile
+	OS.set_environment("CIVCITY_RENDER_CONFIG", profile.path_join("render.cfg"))
 	Gfx._tdir = profile.path_join("tex2k")
 	DirAccess.make_dir_recursive_absolute(Gfx._tdir)
 	OS.set_environment("CIVCITY_HEROSCREEN", "0")
@@ -299,9 +300,16 @@ func _timed_press(b: BaseButton) -> float:
 
 func _press_quality(panel: Control, quality: String) -> void:
 	var b := panel.find_child("q_" + quality, true, false) as Button
+	var renderer := RenderingServer.get_current_rendering_method()
 	var ms := _timed_press(b)
 	check(game.settings["quality"] == quality and Gfx.depth_prepass()
 		and game.env.ssao_enabled == not Gfx.is_low(quality), "%s: нажатие за %.1f мс, проход глубины сохранён, SSAO по пресету" % [b.text, ms])
+	var config := ConfigFile.new()
+	var low := Gfx.is_low(quality)
+	check(config.load(OS.get_environment("CIVCITY_RENDER_CONFIG")) == OK
+		and config.get_value("rendering", "renderer/rendering_method", "") == ("mobile" if low else "forward_plus")
+		and config.get_value("rendering", "driver/depth_prepass/enable", low) == not low
+		and RenderingServer.get_current_rendering_method() == renderer, "%s: выбор рендера для следующего запуска" % b.text)
 	await frames(3)
 
 

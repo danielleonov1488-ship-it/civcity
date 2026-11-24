@@ -1,6 +1,8 @@
 extends "res://scripts/test_pixels14.gd"
 
 const PERF20_ROOT := "D:/CivCity/.work/stage7/perf20b"
+const PERF21_ROOT := "D:/CivCity/.work/stage7/perf21a"
+const Perf14Base = preload("res://scripts/test_perf14_base.gd")
 const SCALES := [0.75, 0.85, 0.90, 1.00]
 const AA := {
 	"fxaa": Viewport.SCREEN_SPACE_AA_FXAA,
@@ -14,14 +16,15 @@ var _surface: Viewport
 var _phase_shader: Array[ShaderMaterial] = []
 
 
-func _run(_mode: String) -> void:
+func _run(mode: String) -> void:
+	var perf21 := mode == "perf21a"
 	while not game.ready_done:
 		await frames(5)
 	if city_src.is_empty() or get_window().size != Vector2i(1920, 1080):
 		fail("нужны город владельца и окно 1920×1080")
 		_finish20()
 		return
-	shot_dir = str(A.get("out", PERF20_ROOT.path_join("raw")))
+	shot_dir = str(A.get("out", (PERF21_ROOT if perf21 else PERF20_ROOT).path_join("raw")))
 	if DirAccess.make_dir_recursive_absolute(shot_dir) != OK:
 		fail("нет папки стенда")
 		_finish20()
@@ -57,17 +60,174 @@ func _run(_mode: String) -> void:
 		RenderingServer.get_current_rendering_driver_name(), " ", get_window().size,
 		" buildings=", game.city.buildings.size(), " depth_prepass=", Gfx.depth_prepass())
 	var views := _views(VIEWS_REGRESS)
-	var qualities: Array = ["low", "verylow"] if renderer == "forward_plus" else ["verylow"]
+	var qualities: Array = ["low", "verylow"] if perf21 or renderer == "forward_plus" else ["verylow"]
 	for q: String in qualities:
+		if perf21 and A.has("screens_only"):
+			break
 		_quality(q)
 		game._set_hour(9.0)
 		for v: Array in [views[0], views[2]]:
 			_pose(v)
-			await _matrix20(q, v[0], renderer)
-	if renderer == "forward_plus":
+			if perf21:
+				await _matrix21(q, v[0], renderer)
+			else:
+				await _matrix20(q, v[0], renderer)
+	if perf21:
+		await _screens21(views)
+		for name_: String in ["field", "outline", "decal", "construction", "fort", "campaign", "battle", "speed_result", "menu"]:
+			if not FileAccess.file_exists(shot_dir.path_join(name_ + ".png")):
+				fail("не снят экран " + name_)
+	elif renderer == "forward_plus":
 		_quality("low")
 		await _motion20(views)
 	_finish20()
+
+
+func _matrix21(q: String, view: String, renderer: String) -> void:
+	_quality(q)
+	var scale := _surface.scaling_3d_scale
+	await _record20(q, view, "base", scale)
+	await _shot20("%s_%s_base" % [q, view])
+	if renderer == "mobile":
+		for factor: float in [0.75, 0.85, 1.0]:
+			for key: String in ["fxaa", "smaa", "off"]:
+				_setup20(factor, key, renderer)
+				await _record20(q, view, key, factor)
+				await _shot20(_name20(q, view, key, factor))
+	_quality(q)
+	await _record20(q, view, "base_repeat", scale)
+
+
+func _screens21(views: Array) -> void:
+	_quality("low")
+	game.seasons.force_m = 6.0
+	_pose(views[0])
+	for look: Array in [["day", 9.0], ["sunset", 20.0], ["night", 23.0]]:
+		game._set_hour(look[1])
+		await frames(55)
+		await _shot20(look[0])
+	game._set_hour(9.0)
+	game.weather.force = 1.0
+	game.weather.level = 1.0
+	game.weather.wet = 0.99
+	await frames(75)
+	if not game.weather.rain.emitting:
+		fail("дождь не начался")
+	await _shot20("rain")
+	game.weather.force = 0.0
+	game.weather.level = 0.0
+	game.weather.wet = 0.0
+	game.weather._wet_mat = null
+	game.weather._rain_mat = null
+	game.seasons.force_m = 10.0
+	await frames(65)
+	await _shot20("autumn")
+	game.seasons.force_m = 6.0
+	var field: Dictionary = {}
+	for b: Dictionary in game.city.buildings.values():
+		if b["type"] == "farm":
+			field = b
+			break
+	if field.is_empty():
+		fail("в сохранении нет поля")
+	else:
+		var at: Vector3 = game.city.xf(field).origin
+		game.rig.set_view(at, 15.0, 42.0, 16.0)
+		game.grass.fill_now()
+		await frames(55)
+		await _shot20("field")
+		game.select_building(field)
+		await frames(15)
+		await _shot20("outline")
+		game.select_building({})
+		var decal: Node3D = game.stories._route_dot(Vector2(at.x + 2.5, at.z))
+		await frames(12)
+		await _shot20("decal")
+		decal.queue_free()
+	var site := Vector2(64.0, 74.0)
+	game.rig.set_view(Vector3(site.x, game.land.height_at(site.x, site.y), site.y), 15.0, 42.0, 20.0)
+	game.grass.fill_now()
+	game.build_anim = true
+	var house: Dictionary = game.city.place("house_pleb", site, 0.0, 0, 0, true, Vector2i.ZERO, true)
+	game.build_anim = false
+	if house.is_empty() or not game._grow_live.has(house["id"]):
+		fail("стройка не началась")
+	else:
+		game._finish_placement({}, site)
+		await frames(16)
+		await _shot20("construction")
+		await frames(40)
+	await _screens21_legion()
+	game.rig.cine = false
+	game.gfx.start_speed_test()
+	var deadline := Time.get_ticks_msec() + 70000
+	if not game.gfx.speed_test_active():
+		fail("проверка скорости не началась")
+	else:
+		await frames(60)
+		await _shot20("speed_running")
+		while game.gfx.speed_test_active() and Time.get_ticks_msec() < deadline:
+			await frames(1)
+		if game.gfx.speed_test_active() or game.gfx.speed_test.report_text.is_empty():
+			fail("проверка скорости не закончилась")
+		else:
+			await _shot20("speed_result")
+	await game.gfx.prepare_speed_test_exit()
+	RenderingServer.viewport_set_measure_render_time(vp, false)
+	game.queue_free()
+	await game.tree_exited
+	await frames(2)
+	_boot("menu")
+	while not game.ready_done:
+		await frames(1)
+	await frames(75)
+	await _shot20("menu")
+
+
+func _screens21_legion() -> void:
+	game.hud.show()
+	game.city.cozy_v = maxi(1, game.city.cozy_v)
+	game.city.legion_v = 3
+	var legion: Legion = game.city.legion
+	legion.free_mode = true
+	legion.sync_v2()
+	legion.flags["fort_guide_v"] = 2
+	legion.flags["fort_guide"] = Legion.FortGuide.DONE
+	for i in range(legion.soldiers.size(), 6):
+		legion._add_soldier({"name": "PERF %d" % i, "cls": "legionary", "look_seed": 5130 + i})
+	var camp := CampUI.attach(game.hud)
+	camp.open()
+	var deadline := Time.get_ticks_msec() + 15000
+	while camp.opening and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	await frames(45)
+	var fort := camp.diorama as FortCutaway
+	if not camp.visible or fort == null or fort.figures.is_empty():
+		fail("форт или фигуры не появились")
+	else:
+		await _shot20("fort")
+		camp._campaign()
+		await frames(65)
+		if camp.lu.visible and is_instance_valid(camp.lu.fort_map):
+			await _shot20("campaign")
+		else:
+			fail("карта похода не появилась")
+		camp.lu.close(false)
+	camp.close()
+	await frames(35)
+	var fixture := Perf14Base.new()
+	fixture.game = game
+	var battle := fixture.open_battle(true)
+	fixture.free()
+	deadline = Time.get_ticks_msec() + 80000
+	while battle.phase in ["loading", "intro"] and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	if battle.phase != "fight" or battle.views.is_empty():
+		fail("бойцы не появились")
+	else:
+		await _shot20("battle")
+	battle.abort()
+	await frames(35)
 
 
 func _pose(view: Array) -> void:
@@ -155,7 +315,7 @@ func _shot20(name_: String) -> void:
 	if image == null or image.get_size() != Vector2i(1920, 1080) or image.save_png(file) != OK:
 		fail("не записан кадр " + file)
 	else:
-		print("PERF20B SHOT ", file)
+		print(_test_name() + " SHOT ", file)
 
 
 func _motion20(views: Array) -> void:
@@ -239,11 +399,15 @@ func _motion20(views: Array) -> void:
 
 func fail(message: String) -> void:
 	fails += 1
-	print("PERF20B FAIL ", message)
+	print(_test_name() + " FAIL ", message)
+
+
+func _test_name() -> String:
+	return "PERF21A" if A.get("mode", "") == "perf21a" else "PERF20B"
 
 
 func _finish20() -> void:
 	if sweep != null:
 		sweep.close()
-	print("PERF20B DONE fails=", fails)
+	print(_test_name() + " DONE fails=", fails)
 	TestSuite.finish(self, 1 if fails else 0)

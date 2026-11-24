@@ -773,7 +773,7 @@ func _ready() -> void:
 		var baker := prepare_ground_bake()
 		if baker != null:
 			await baker.prime()
-	if stage_draw and shadow_depth != null and mode in ["play", "new"]:
+	if stage_draw and (shadow_depth != null or Gfx.mobile_renderer()) and mode in ["play", "new"]:
 		await _warm_city_view(br.ffly)
 	_startup_mark("first_view")
 	ready_done = true
@@ -1145,7 +1145,7 @@ func _warm_verylow_view() -> void:
 	rig.attrs.dof_blur_near_enabled = false
 	rig.attrs.dof_blur_far_enabled = false
 	vp.msaa_3d = Viewport.MSAA_DISABLED
-	Gfx._set_scale(vp, "verylow", Gfx.BASE_SCALE["verylow"], Gfx.hidpi_scale())
+	Gfx._set_scale(vp, "verylow", Gfx.base_scale("verylow"), Gfx.hidpi_scale())
 	MeadowNature.quality(self, true)
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -1182,16 +1182,17 @@ func _environment() -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	env.tonemap_white = 6.0
 	env.tonemap_exposure = 1.15
-	env.ssao_enabled = true
+	var mobile := Gfx.mobile_renderer()
+	env.ssao_enabled = not mobile
 	env.ssao_radius = 0.8
 	env.ssao_intensity = 2.0
 	env.ssao_power = 1.5
 	env.ssao_detail = 0.8
 	env.ssao_light_affect = 0.3
-	env.ssil_enabled = true
+	env.ssil_enabled = not mobile
 	env.ssil_radius = 3.0
 	env.ssil_intensity = 0.6
-	env.sdfgi_enabled = true
+	env.sdfgi_enabled = not mobile
 	env.sdfgi_use_occlusion = true
 	env.sdfgi_bounce_feedback = 0.5
 	env.sdfgi_min_cell_size = 0.25
