@@ -149,6 +149,16 @@ func _finish() -> void:
 		await get_tree().process_frame
 	taking_measurements = false
 	log.evidence["routes"] = status
+	if OS.get_environment("CIVCITY_PLAYTEST_VENUES") == "1" and is_instance_valid(game) and game.ready_done:
+		var scene := load("res://test_perf21b.tscn") as PackedScene
+		var test := scene.instantiate()
+		test.set_meta("perf21b_venues_only", true)
+		add_child(test)
+		var failures: int = await test.call("capture_venues", game, output.path_join("venues"))
+		test.queue_free()
+		log.metric("venues.fails", failures)
+		if failures > 0:
+			log.issue("Проверка площадок зрелищ: ошибок %d" % failures)
 	log.finish()
 	if not OS.get_cmdline_user_args().has("--playtest-postprocess"):
 		print("PLAYTEST DONE issues=", log.issues.size())
@@ -471,13 +481,16 @@ func _build_tool(kind: String, guided: bool) -> bool:
 	return game.tool == kind
 
 
-func _place(kind: String, near: Vector2, road := false) -> Dictionary:
+func _place(kind: String, near: Vector2, road := false, radius := 6) -> Dictionary:
 	var offsets: Array[Vector2] = []
-	for z in range(-6, 7, 2):
-		for x in range(-6, 7, 2):
+	for z in range(-radius, radius + 1, 2):
+		for x in range(-radius, radius + 1, 2):
 			offsets.append(Vector2(x, z))
 	offsets.sort_custom(func(a: Vector2, b: Vector2): return a.length_squared() < b.length_squared())
 	var tried := 0
+	var blocked := 0
+	var timed_out := 0
+	var clicked := 0
 	for offset: Vector2 in offsets:
 		if game.tool != kind:
 			break
@@ -492,18 +505,34 @@ func _place(kind: String, near: Vector2, road := false) -> Dictionary:
 		tried += 1
 		_move(point)
 		await _frames()
+		# После смены фасада призрак может готовиться дольше двух кадров.
+		var wait_started := Time.get_ticks_msec() if game._preview_pending else 0
+		var ready := await _wait("призрак " + kind, func() -> bool:
+			return (game.tool != kind or hud.mouse_over_ui()
+				or (not game._preview_pending and game._ghost_mouse == point
+					and game.place_info.get("_t") == kind)), 4.0, false, false)
+		if hud.mouse_over_ui():
+			blocked += 1
+			continue
+		if not ready:
+			timed_out += 1
+			continue
+		if wait_started > 0:
+			print("PLAYTEST OBS призрак ", kind, " готов через ", Time.get_ticks_msec() - wait_started, " мс ожидания")
 		var placement := game.place_info
-		if hud.mouse_over_ui() or not is_instance_valid(game.ghost) or not game.ghost.visible \
+		if game.tool != kind or not is_instance_valid(game.ghost) or not game.ghost.visible \
 				or placement.get("err") != "" or (road and placement.get("noroad", false)):
 			continue
 		var id := city.next_id
 		_click(point)
+		clicked += 1
 		await _frames(3)
 		if city.buildings.has(id):
 			counts["build"] += 1
 			log.progress("построено " + kind)
 			return city.buildings[id]
-	print("PLAYTEST OBS нет места ", kind, " рядом с ", near, " проверено призраков=", tried)
+	print("PLAYTEST OBS нет места ", kind, " рядом с ", near,
+		" кандидатов=", tried, " UI=", blocked, " тайм-аутов=", timed_out, " щелчков=", clicked, " инструмент=", game.tool)
 	return {}
 
 
@@ -566,14 +595,25 @@ func _city_tutorial() -> bool:
 	if not await _city_step("houses", "камера"):
 		return false
 	road_origin = city.door_point(city.center())
-	await _pan_to(road_origin + Vector2(-8, 17))
+	var street_view := road_origin + Vector2(-8, 17)
+	await _pan_to(street_view)
 	if not _check(await _build_tool("house_pleb", true), "Стрелка не привела к карточке дома"):
 		return false
+	var reframed := false
 	for i in 3:
-		var home := await _place("house_pleb", road_origin + Vector2(-13, 12 + i * 8))
+		var near := road_origin + Vector2(-13, 12 + i * 8)
+		var home := await _place("house_pleb", near)
+		if home.is_empty() and tut.cur_id() == "houses":
+			# Случайный фасад может не встать вдоль первых двух домов. Смотрим соседние места.
+			await _pan_to(near)
+			reframed = true
+			if await _build_tool("house_pleb", true):
+				home = await _place("house_pleb", near, false, 14)
 		if not _check(not home.is_empty(), "Не построен дом %d" % (i + 1)):
 			return false
 		homes.append(home)
+	if reframed:
+		await _pan_to(street_view)
 	if not await _city_step("road", "три дома") or not _check(await _road_tool(true), "Не выбрана кисть дороги"):
 		return false
 	var bottom := road_origin.y

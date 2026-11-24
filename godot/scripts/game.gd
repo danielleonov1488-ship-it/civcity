@@ -143,6 +143,8 @@ var flower_color := 6                 # цвет цветов из «Приро�
 var snap := true                      # привязать к пути
 var ghost: Node3D
 var ghost_key := ""
+var _ghost_mouse := Vector2.INF
+var _ghost_ground := Vector2.INF
 var highlight: Node3D                 # подсветка постройки под курсором (снос, выбор)
 var highlight_key := ""
 var selected := {}
@@ -3644,8 +3646,13 @@ func _input(e: InputEvent) -> void:
 		if _rmb_armed and e is InputEventMouseMotion:
 			_rmb_moved = maxf(_rmb_moved, _mouse_pos.distance_to(_rmb_down))
 		if ready_done and mode != "menu" and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-			# Кадр мог ещё не обработать новую позицию курсора.
-			hover = ground_at_mouse()
+			# Щелчок на том же пикселе ставит видимый призрак, даже если камера уже сдвинулась.
+			# Новый пиксель и конец мазка берут землю из события.
+			if _mouse_pos == _ghost_mouse and is_instance_valid(ghost) and ghost.visible \
+					and place_info.get("_t") == tool and not rot_drag and field_from == Vector2.INF:
+				hover = _ghost_ground
+			else:
+				hover = ground_at_mouse()
 		# Отпускание ловим до GUI, в том числе над окном. Последний отрезок не теряется.
 		if floor_drag and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
 			if hud != null and not hud.mouse_over_ui():
@@ -5364,6 +5371,8 @@ func _update_tool_profiled() -> void:
 		if hud:
 			hud.thumb_update()             # живая картинка в панели — тот же облик и цвет (3.4)
 	ghost.visible = true
+	_ghost_mouse = _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
+	_ghost_ground = hover
 	var ok: bool = pl["err"] == ""
 	_ghost_look(ok)
 	var y := float(pl["y"]) if (ok or pl.has("host")) else land.height_at(pl["pos"].x, pl["pos"].y)
