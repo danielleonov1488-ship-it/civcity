@@ -16,7 +16,16 @@ const Perf14 = preload("res://scripts/perf14_timers.gd")
 const RENDER_OVERRIDE := "user://render.cfg"
 const DEPTH_PREPASS := "rendering/driver/depth_prepass/enable"
 const NAMES := {"high": "Высокая", "medium": "Средняя", "low": "Низкая", "verylow": "Очень низкая"}
-const BASE_SCALE := {"verylow": 0.5, "low": 0.75, "medium": 1.0, "high": 1.0}
+# PERF20-b: включать после повторного замера вместе с PERF20-a.
+const SHARP_LOW_PRESETS := false
+const BASE_SCALE := {
+	"verylow": 0.75 if SHARP_LOW_PRESETS else 0.5,
+	"low": 0.85 if SHARP_LOW_PRESETS else 0.75,
+	"medium": 1.0,
+	"high": 1.0,
+}
+const LOW_FSR_SHARPNESS := 0.2
+const PRESET_AA_BEFORE_LOW := &"preset_aa_before_low"
 const CHECK_MS := 11.0                 # проверка в городе: видеокарте нужно больше — на ступень ниже
 const CHECK_SKIP := 60                 # …первые кадры не в счёт (тени, шейдеры)
 const CHECK_SEC := 4.0
@@ -349,6 +358,8 @@ static func apply(g) -> void:
 	started = Perf14.begin()
 	if vp:
 		vp.msaa_3d = Viewport.MSAA_DISABLED if low else (Viewport.MSAA_4X if full else Viewport.MSAA_2X)
+		if SHARP_LOW_PRESETS:
+			_apply_low_aa(vp, low)
 		# «Очень низкая»: дальние модели (деревья, жители, детали построек) упрощаются раньше (по умолчанию — 1 точка экрана)
 		vp.mesh_lod_threshold = (20.0 if tune else (12.0 if earlier_verylow_lod else 4.0)) if q == "verylow" else (3.0 if tune else 1.0)
 		# слабые видеокарты: картинка считается меньше и аккуратно растягивается (FSR); снимки (--shot) — в полном размере
@@ -407,6 +418,19 @@ static func apply(g) -> void:
 	# у владельца 180 Гц); прежний жёсткий предел 60 не давал больше даже на сильной видеокарте. Снимки — без предела
 	Engine.max_fps = fps_cap(g.settings) if g.shot_path == "" else 0
 	Perf14.detail("quality_landmarks", started)
+
+
+static func _apply_low_aa(vp: Viewport, low: bool) -> void:
+	if low:
+		if not vp.has_meta(PRESET_AA_BEFORE_LOW):
+			vp.set_meta(PRESET_AA_BEFORE_LOW, [vp.screen_space_aa, vp.fsr_sharpness])
+		vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_SMAA
+		vp.fsr_sharpness = LOW_FSR_SHARPNESS
+	elif vp.has_meta(PRESET_AA_BEFORE_LOW):
+		var before: Array = vp.get_meta(PRESET_AA_BEFORE_LOW)
+		vp.screen_space_aa = before[0]
+		vp.fsr_sharpness = before[1]
+		vp.remove_meta(PRESET_AA_BEFORE_LOW)
 
 
 static func _set_scale(vp: Viewport, q: String, scale: float, hidpi: float) -> void:
@@ -1069,7 +1093,7 @@ func _configure_smooth(vp: Viewport, q: String) -> void:
 	var on := bool(game.settings.get("smooth", true))
 	var hidpi := hidpi_scale()
 	if _smooth_q != q or _smooth_on != on or not is_equal_approx(_smooth_hidpi, hidpi):
-		_smooth.reset(float(BASE_SCALE[q]))
+		_smooth.reset(float(BASE_SCALE[q]), q if SHARP_LOW_PRESETS and is_low(q) else "")
 		_smooth_tick = 0
 		_smooth_q = q
 		_smooth_on = on
