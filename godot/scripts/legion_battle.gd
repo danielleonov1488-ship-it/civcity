@@ -40,6 +40,7 @@ const PERK_SAY := {"oil": "Кипящее масло!", "testudo": "Черепа
 const PVP_BIOMES := ["hills", "forest", "labyrinth", "desert"]
 
 static var current: LegionBattle
+static var _mobile_fade_materials: Array[Material] = []
 
 var host: Node
 var game                                   # Game, если бой открыт из города
@@ -131,6 +132,72 @@ var font_title: Font
 # =====================================================================
 
 ## Подключить к городу: бой открывается, когда окно «Легион» просит бой (сигнал battle_requested)
+## Прозрачность павших бойцов прогреваем за заставкой.
+static func warm_mobile(host_node: Node, mark: Callable) -> void:
+	if not _mobile_fade_materials.is_empty():
+		return
+	var stage_root := Control.new()
+	stage_root.name = "MobileLegionWarmup"
+	stage_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	host_node.add_child(stage_root)
+	var layer := BattleView.PersonLayer.new()
+	stage_root.add_child(layer)
+	layer.setup("WarmLegionPeople", BattleView.PEOPLE_TILT, false, false)
+	layer.fit(Vector2(256, 128))
+	var roman := FortPerson.make({"id": 1, "hero": true}, layer.viewport, [], "hero")
+	var enemy := BattleView.Enemy.new()
+	layer.viewport.add_child(enemy)
+	enemy.build_enemy("gaul", 2)
+	layer.place(roman, Vector2(68, 99), 70.0, 65.0)
+	layer.place(enemy, Vector2(171, 99), 70.0, -85.0)
+	layer.render_first_frame()
+
+	# Разрез форта, значок похода и портрет с итоговыми звёздами.
+	var room := TextureRect.new()
+	room.texture = preload("res://assets/ui/icons/head_adult.svg")
+	room.size = Vector2(56, 56)
+	var empty_light := ShaderMaterial.new()
+	empty_light.shader = FortCutaway.mobile_empty_shader()
+	room.material = empty_light
+	stage_root.add_child(room)
+	var shade := ColorRect.new()
+	shade.size = Vector2(96, 96)
+	var guide := ShaderMaterial.new()
+	guide.shader = preload("res://shaders/fort_guide_shade.gdshader")
+	shade.material = guide
+	stage_root.add_child(shade)
+	stage_root.add_child(Look.button("⚑", null, Look.WINE, Vector2(46, 46), true))
+	stage_root.add_child(LegionUi.Stars.new(2, 20.0))
+	var result_stars := Stars.new()
+	result_stars.n = 2
+	result_stars.size = Vector2(200, 56)
+	stage_root.add_child(result_stars)
+	stage_root.add_child(FortPerson.portrait({"id": 1, "hero": true}, 54))
+
+	# Сначала проход форта без MSAA, затем слой боя с MSAA 2×.
+	await RenderingServer.frame_post_draw
+	mark.call("mobile_fort_map_result")
+	layer.viewport.msaa_3d = Viewport.MSAA_2X
+	layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	await RenderingServer.frame_post_draw
+	mark.call("mobile_battle_opaque")
+	var fighters: Array[BattleView.Actor] = [roman, enemy]
+	for actor: BattleView.Actor in fighters:
+		actor.pose_at("Death01", actor.clip_length("Death01"))
+	layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	await RenderingServer.frame_post_draw
+	mark.call("mobile_battle_fall")
+	for actor: BattleView.Actor in fighters:
+		actor.set_opacity(0.5)
+		for entry: Dictionary in actor._fade_materials:
+			# Держим шейдеры после освобождения пробных бойцов.
+			_mobile_fade_materials.append(entry["fade"])
+	layer.render_first_frame()
+	await RenderingServer.frame_post_draw
+	mark.call("mobile_battle_fade")
+	stage_root.queue_free()
+
+
 static func attach(g: Node) -> void:
 	if g == null or g.get("city") == null:
 		return

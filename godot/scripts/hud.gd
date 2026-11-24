@@ -8458,7 +8458,7 @@ var _fold_glow_until := 0                    # до какого мига (мс)
 func tasks_folded() -> bool:
 	if game == null or tutorial_busy():
 		return false
-	return bool(game.settings.get("tasks_folded", true))        # по умолчанию — маленький значок-свиток со счётчиком (отзыв 14.11)
+	return bool(game.settings.get("tasks_folded", false))
 
 
 ## Свернуть / развернуть свиток просьб (запоминается в настройках) — за 0,2 с

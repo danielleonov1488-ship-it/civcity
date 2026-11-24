@@ -19,10 +19,16 @@ var _gpu := PackedFloat32Array()
 var _over := 0
 var _under := 0
 var _recovery := false
+var _custom_steps: Array = []
 
 
-func reset(start: float) -> void:
+func reset(start: float, quality: String = "") -> void:
 	scale = start
+	_custom_steps.clear()
+	var steps: Array = STEPS.get(quality, [])
+	if not steps.is_empty() and start not in steps:
+		_custom_steps = steps.duplicate()
+		_custom_steps.insert(_custom_steps.bsearch(start), start)
 	_since_change = 0.0
 	clear()
 
@@ -52,7 +58,7 @@ func sample(seconds: float, gpu_ms: float, target_ms: float, quality: String) ->
 
 	var low := quality in ["low", "verylow"]
 	var budget := target_ms if low else maxf(target_ms, 1000.0 / 60.0)
-	var steps: Array = STEPS[quality]
+	var steps: Array = STEPS[quality] if _custom_steps.is_empty() else _custom_steps
 	var step := steps.find(scale)
 	var next: float = steps[mini(step + 1, steps.size() - 1)]
 	var over := frame > budget * 1.035 and (gpu <= 0.0 or gpu > budget * 0.92)
