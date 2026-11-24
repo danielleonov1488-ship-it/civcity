@@ -38,6 +38,8 @@ func _run() -> void:
 			await _old_points(Vector2(160 + index * 17, 126), ZOOMS[index])
 			await _tools(sites[index], ZOOMS[index])
 		await _click_visible_house(Vector2(168, 152))
+		if not args.has("baseline"):
+			await _adjacent_house_during_compute(Vector2(160, 172))
 		if not args.has("baseline") and not args.has("matrix_only"):
 			await _arenas(Vector2(177, 192))
 	else:
@@ -176,6 +178,34 @@ func _click_visible_house(at: Vector2) -> void:
 	var b: Dictionary = game.city.buildings.get(id, {})
 	var actual: Vector2 = b.get("pos", Vector2.INF)
 	_check(shown.distance_to(actual) < 0.05, "дом на месте призрака: %s → %s" % [shown, actual])
+
+
+func _adjacent_house_during_compute(at: Vector2) -> void:
+	var kind := "house_pleb"
+	var city: City = game.city
+	var second_at := at + Vector2(10, 0)
+	_flat(at.lerp(second_at, 0.5), Vector2(28, 18))
+	city.money = 200000.0
+	game.set_tool(kind)
+	game.next_variant = 0
+	var first := game.placement_hint(kind, at)
+	if not _check(first["err"] == "" and first.get("noroad", false), "место первого дома без дороги (%s, noroad=%s)" %
+			[first["err"], first.get("noroad")]):
+		game.set_tool("")
+		return
+	var home := city.place(kind, first["pos"], first["yaw"], 0, 0, false, Vector2i.ZERO, true, first)
+	if not _check(not home.is_empty() and city.place_compute_pending, "первый дом ждёт пересчёта"):
+		game.set_tool("")
+		return
+	var during := game.placement_hint(kind, second_at)
+	_check(home["road"] and not city.house_connected(home), "до пересчёта у первого дома ещё записана дорога")
+	game._finish_placement({}, at, true)
+	var done := await _until(func(): return not game._placement_running)
+	var after := game.placement_hint(kind, second_at)
+	_check(done and during["err"] == "" and after["err"] == "", "соседний дом сразу можно поставить (%s → %s)" %
+		[during["err"], after["err"]])
+	game.set_tool("")
+	city.remove(home, true)
 
 
 func _arenas(at: Vector2) -> void:

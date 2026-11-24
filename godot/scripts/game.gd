@@ -4760,9 +4760,11 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 		for r: Rect2 in rects:
 			if r.grow(0.4).has_point(lp):
 				return "Так загородится вход соседней постройки"
-		# сосед сейчас у дороги, а новая постройка закроет ему всю мостовую у входа
-		if od["kind"] != "center" and not od.get("noroad", false) and bool(o.get("road", false)) and not _road_free_near(odp, 1.7, own):
-			return "Так загородится вход соседней постройки"
+		# Дорогу проверяем по земле: после стройки b["road"] ждёт пересчёта.
+		if paved > 0 and od["kind"] != "center" and not _road_free_near(odp, 1.7, own):
+			var has_road := city.house_connected(o) if city.is_house(o) else _road_free_near(odp, 1.7, {})
+			if has_road:
+				return "Так загородится вход соседней постройки"
 	return ""
 
 

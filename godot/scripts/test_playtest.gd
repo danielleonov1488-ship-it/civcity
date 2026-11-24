@@ -481,26 +481,32 @@ func _build_tool(kind: String, guided: bool) -> bool:
 	return game.tool == kind
 
 
-func _place(kind: String, near: Vector2, road := false, radius := 6) -> Dictionary:
+func _place(kind: String, near: Vector2, road := false) -> Dictionary:
 	var offsets: Array[Vector2] = []
-	for z in range(-radius, radius + 1, 2):
-		for x in range(-radius, radius + 1, 2):
+	for z in range(-6, 7, 2):
+		for x in range(-6, 7, 2):
 			offsets.append(Vector2(x, z))
 	offsets.sort_custom(func(a: Vector2, b: Vector2): return a.length_squared() < b.length_squared())
 	var tried := 0
 	var blocked := 0
 	var timed_out := 0
 	var clicked := 0
+	var rejected := {}
 	for offset: Vector2 in offsets:
 		if game.tool != kind:
 			break
 		var spot := near + offset
 		var point := _world(spot)
 		if not _on_map(point):
+			rejected["за экраном"] = int(rejected.get("за экраном", 0)) + 1
 			continue
 		# Сначала оценка места, затем настоящий призрак в этой точке и щелчок.
 		var approximate := game.placement_hint(kind, spot)
 		if approximate.get("err") != "" or (road and approximate.get("noroad", false)):
+			var reason := str(approximate.get("err"))
+			if reason == "":
+				reason = "нет дороги"
+			rejected[reason] = int(rejected.get(reason, 0)) + 1
 			continue
 		tried += 1
 		_move(point)
@@ -532,7 +538,8 @@ func _place(kind: String, near: Vector2, road := false, radius := 6) -> Dictiona
 			log.progress("построено " + kind)
 			return city.buildings[id]
 	print("PLAYTEST OBS нет места ", kind, " рядом с ", near,
-		" кандидатов=", tried, " UI=", blocked, " тайм-аутов=", timed_out, " щелчков=", clicked, " инструмент=", game.tool)
+		" кандидатов=", tried, " UI=", blocked, " тайм-аутов=", timed_out, " щелчков=", clicked,
+		" инструмент=", game.tool, " фасад=", game.next_variant, " причины=", rejected)
 	return {}
 
 
@@ -599,21 +606,13 @@ func _city_tutorial() -> bool:
 	await _pan_to(street_view)
 	if not _check(await _build_tool("house_pleb", true), "Стрелка не привела к карточке дома"):
 		return false
-	var reframed := false
 	for i in 3:
 		var near := road_origin + Vector2(-13, 12 + i * 8)
 		var home := await _place("house_pleb", near)
-		if home.is_empty() and tut.cur_id() == "houses":
-			# Случайный фасад может не встать вдоль первых двух домов. Смотрим соседние места.
-			await _pan_to(near)
-			reframed = true
-			if await _build_tool("house_pleb", true):
-				home = await _place("house_pleb", near, false, 14)
 		if not _check(not home.is_empty(), "Не построен дом %d" % (i + 1)):
 			return false
 		homes.append(home)
-	if reframed:
-		await _pan_to(street_view)
+		print("PLAYTEST OBS дом обучения ", i + 1, " место=", home["pos"], " фасад=", home["variant"])
 	if not await _city_step("road", "три дома") or not _check(await _road_tool(true), "Не выбрана кисть дороги"):
 		return false
 	var bottom := road_origin.y

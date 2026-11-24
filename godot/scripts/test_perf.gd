@@ -1462,6 +1462,8 @@ func _shots(qs: Array, views: Array, tag: String) -> Dictionary:
 			game._set_hour(float(A.get("hour", "9")))       # hour= — снимки в другой час (природа, вода: 13.11)
 			await frames(SHOT_WAIT)
 			var img: Image = await _snap()
+			if A.has("grass_trace") and q == "high" and v[0] == "center":
+				await _grass_trace(tag)
 			if A.has("stab"):                          # проверка: кадр через 120 кадров — тот же?
 				for k in int(A["stab"]):
 					await frames(120)
@@ -1475,6 +1477,26 @@ func _shots(qs: Array, views: Array, tag: String) -> Dictionary:
 			out["%s/%s" % [q, v[0]]] = img
 			print("PERF shot %s %s/%s" % [tag, q, v[0]])
 	return out
+
+
+func _grass_trace(tag: String) -> void:
+	var grass: GrassCarpet = game.grass
+	var cam: Camera3D = game.rig.cam
+	var counts := {}
+	for pixel: Vector2 in [Vector2(1600, 172), Vector2(1740, 190), Vector2(1850, 220)]:
+		var p: Vector2 = game._ground_from_ray(cam.project_ray_origin(pixel), cam.project_ray_normal(pixel))
+		var key := Vector2i(p / GrassCarpet.TILE)
+		var tile: Dictionary = grass.tiles.get(key, {})
+		var node := tile.get("g") as MultiMeshInstance3D
+		counts[key] = [p, node.multimesh.instance_count, node.multimesh.visible_instance_count] if node else [p]
+	print("PERF grass ", tag, " radius=", grass.radius, " spacing=", grass.spacing,
+		" tiles=", grass.tiles.size(), " dirty=", grass.dirty.size(), " active=", grass._job.get("key"), " sample=", counts)
+	grass.hide()
+	var bare := await _snap()
+	var dir := str(A["grass_trace"])
+	DirAccess.make_dir_recursive_absolute(dir)
+	bare.save_png(dir.path_join("high_center_no_carpet_" + tag + ".png"))
+	grass.show()
 
 
 ## Два кадра «те же», если разница не больше шума отрисовки. Шум откалиброван: два прогона одной сборки (25.10,
@@ -1598,6 +1620,8 @@ func _regress() -> void:
 	if A.has("out"):
 		_save_set(first, str(A["out"]))
 	var again := await _shots(["high", "medium"].filter(func(q: String) -> bool: return q in presets), views, "again")
+	if A.has("out"):
+		_save_set(again, str(A["out"]).path_join("roundtrip"))
 	for key: String in again:
 		_regress_image(key, again[key], first[key], true)
 	_unfreeze()
