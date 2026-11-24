@@ -62,6 +62,8 @@ var top_row: HBoxContainer            # верхняя полоса целико
 var _renown_on := false               # титул города нужен (показывается, если хватает места, см. _fit_top)
 const CITY_FONT := 21                 # размер названия в верхней полосе (длинное — мельче, show_city_name)
 const TOP_BTN := 42                   # медальоны сверху справа
+const RESEARCH_BUTTON_TIP := "Исследования"
+const RESEARCH_FULL_TIP := "Полки полны — новые очки пропадают. Изучите что-нибудь."
 const NAME_W := 190.0                 # самое длинное название города по ширине в верхней полосе
 var lbl_level: Label
 var lbl_pop: Label
@@ -190,6 +192,7 @@ var paused_speed := 1.0
 var hidden_ui := false
 var bell_count := 0
 var bell_badge: Label
+var research_full_badge: Label
 var floor_badge: Label                    # на кнопке «Этаж»: сколько домов готовы к этажу
 var upg_badge: Label                      # на кнопке «Перестроить»: сколько домов готовы к перестройке
 const FLOOR_TIP := "Этаж (U): щёлкните по дому со стрелкой или ведите с зажатой кнопкой вдоль улицы — этаж получат все готовые дома под курсором"
@@ -1781,7 +1784,7 @@ func _top_right() -> void:
 	cloud_off.holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	cloud_off.holder.visible = false
 	h.add_child(cloud_off.holder)
-	for t: Array in [["research", "research", "Исследования"], ["overview", "stats", "Обзор города"],
+	for t: Array in [["research", "research", RESEARCH_BUTTON_TIP], ["overview", "stats", "Обзор города"],
 			["photo", "photo", "Режим фото (P): интерфейс прячется, камера — к самой земле, время суток, размытие, снимок"], ["menu", "menu", "Меню игры"]]:
 		var id: String = t[0]
 		var b := _round(t[1], t[2], TOP_BTN, func(): _top_action(id))
@@ -1790,12 +1793,19 @@ func _top_right() -> void:
 	# Старые имена нужны указателям и проверкам.
 	for id: String in ["finance", "stats", "bell", "view"]:
 		top_btns[id] = top_btns["overview"]
-	bell_badge = _label("", 15, true, C_CREAM)
-	bell_badge.add_theme_color_override("font_outline_color", C_BAD)
-	bell_badge.add_theme_constant_override("outline_size", 9)
-	bell_badge.position = Vector2(TOP_BTN - 13, -4)
-	top_btns["overview"].add_child(bell_badge)
+	bell_badge = _top_badge(top_btns["overview"], "")
+	research_full_badge = _top_badge(top_btns["research"], "!")
+	research_full_badge.hide()
 	_new_pill(top_btns["research"], "bottom")         # «НОВОЕ» — открылись исследования, которых игрок ещё не видел
+
+
+func _top_badge(button: Button, text: String) -> Label:
+	var badge := _label(text, 15, true, C_CREAM)
+	badge.add_theme_color_override("font_outline_color", C_BAD)
+	badge.add_theme_constant_override("outline_size", 9)
+	badge.position = Vector2(TOP_BTN - 13, -4)
+	button.add_child(badge)
+	return badge
 
 
 var _shadow_tex: Texture2D
@@ -8031,6 +8041,10 @@ func _update_full_marks() -> void:
 	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0)) - float(c.stats.get("legion_denarii", 0.0))
 	var m_on := play and c.money >= c.money_cap() - 0.5 and net > 0.0
 	var r_on := play and c.rp >= c.rp_cap() - 0.05 and float(c.stats.get("rp_day", 0.0)) > 0.0
+	if research_full_badge.visible != r_on:
+		research_full_badge.visible = r_on
+		var button: Button = top_btns["research"]
+		button.tooltip_text = RESEARCH_FULL_TIP if r_on else RESEARCH_BUTTON_TIP
 	# прошлый час не плачен и денариев так и нет (обида, что ещё держится после, — только в карточках домов)
 	var e_on := play and c.unpaid_h == Defs.UNPAID_H and c.money < 0.5
 	if empty_money.visible != e_on:
