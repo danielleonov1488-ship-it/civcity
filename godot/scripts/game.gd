@@ -288,6 +288,8 @@ var _pick_transform := Transform3D.IDENTITY
 var _pick_count := -1
 var _pick_next_id := -1
 var _pick_t := 0
+var _pick_ground_rev := -1
+var _pick_faces := {}
 var _pick_hit := {}                   # {id, t, p} — во что попал луч
 static var _bp_boxes := {}            # чертёж → коробки его деталей (в осях постройки)
 
@@ -744,6 +746,8 @@ func _ready() -> void:
 	var actor_deadline := Time.get_ticks_usec() + 4500
 	for b: Dictionary in city.buildings.values():
 		_sync_actors(b)
+		if mode in ["new", "play"]:
+			_pick_cache[b["id"]] = _pick_entry(b) # убираем первый обход всех габаритов из кадра с курсором
 		if Time.get_ticks_usec() >= actor_deadline:
 			await get_tree().process_frame
 			actor_deadline = Time.get_ticks_usec() + 4500
@@ -2352,9 +2356,20 @@ func _warm_construction() -> void:
 		var dust := _make_puff(at, Color("e8dcc4"))
 		add_child(dust)
 		dust.emitting = true
+		var build_view: Node3D
+		var scaffold: Node3D
+		if mode in ["new", "play"]:
+			# Кирпичи, проявление стен и леса первого дома — с настоящими сетками в городском проходе.
+			build_view = Parts.ghost(bp, "place", GROW_TINT)
+			build_view.position = at - Vector3.UP * bp.top_y() * 0.5
+			add_child(build_view)
+			scaffold = _scaffold(bp, build_view.transform)
+			_grow_step(build_view, _grow_plan(build_view, bp, false), 0.58)
 		await RenderingServer.frame_post_draw
-		dust.hide()
-		dust.queue_free()
+		for node: Node3D in [dust, build_view, scaffold]:
+			if node != null:
+				node.hide()
+				node.queue_free()
 		await tree.process_frame
 
 func _grow_anim(b: Dictionary) -> void:
@@ -2475,7 +2490,7 @@ const BRICK_H := 0.105                # высота ряда кладки, м
 const BRICK_L := 0.25                 # длина кирпича
 static var _brick_mesh: BoxMesh
 
-func _grow_plan(g: Node3D, bp: Bp = null) -> Array:
+func _grow_plan(g: Node3D, bp: Bp = null, shuffle_props := true) -> Array:
 	var big := []
 	var small := []
 	var walls := []
@@ -2523,7 +2538,8 @@ func _grow_plan(g: Node3D, bp: Bp = null) -> Array:
 		var bc := floorf(float(c[5]) / 0.3)
 		return ba < bc if ba != bc else float(a[6]) < float(c[6])
 	big.sort_custom(by)
-	small.shuffle()
+	if shuffle_props:
+		small.shuffle()
 	var out := []
 	if kit and not kit_wall.is_empty():
 		# своя модель — стены из Blender (bp.kit_faces): кладка по каждой стене, проёмы окон и дверей — пустые
@@ -3702,7 +3718,9 @@ static func pick_boxes(bp: Bp) -> Array:
 
 func _pick_entry(b: Dictionary) -> Dictionary:
 	var boxes := pick_boxes(city.blueprint(b))
-	if city.def(b)["kind"] == "decor":
+	var def := city.def(b)
+	var by_mesh: bool = def.get("sub") == "trees" or def.get("nat") in ["tree", "bush", "palm", "rock", "stones", "wall"]
+	if def["kind"] == "decor" and not by_mesh:
 		# мелочь (украшения на стенах, фонари, цветы) ловится чуть шире, чем нарисована
 		var g := []
 		for bx: AABB in boxes:
@@ -3713,12 +3731,94 @@ func _pick_entry(b: Dictionary) -> Dictionary:
 		bound = boxes[i] if i == 0 else bound.merge(boxes[i])
 	var xf := city.xf(b)
 	return {"b": b, "id": int(b["id"]), "tier": b["tier"], "pos": b["pos"], "yaw": b["yaw"], "y": b["y"],
-		"inv": xf.affine_inverse(), "box": xf * bound.grow(0.05), "boxes": boxes}
+		"inv": xf.affine_inverse(), "box": xf * bound.grow(0.05), "boxes": boxes, "by_mesh": by_mesh}
+
+
+## Луч по видимым экземплярам. Коробка нужна лишь для быстрого отсева.
+func _ray_pick_handles(handles: Array, o: Vector3, d: Vector3, limit: float) -> float:
+	if limit <= 0.0:
+		return limit
+	var best := limit
+	for handle: Array in handles:
+		var group: Dictionary = handle[0]
+		var slot: int = handle[1]
+		for sub: Dictionary in group["subs"]:
+			var batch: MultiMeshInstance3D = sub["mmi"]
+			var mm: MultiMesh = sub["mm"]
+			if not batch.is_visible_in_tree() or slot >= mm.instance_count or (mm.visible_instance_count >= 0 and slot >= mm.visible_instance_count):
+				continue
+			if batch.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY:
+				continue
+			var xf := batch.global_transform * mm.get_instance_transform(slot)
+			if absf(xf.basis.determinant()) < 0.000001:
+				continue
+			var mesh := mm.mesh
+			var inv := xf.affine_inverse()
+			var local_from := inv * o
+			var local_to := inv * (o + d * best)
+			var box := mesh.get_aabb()
+			if not box.has_point(local_from) and box.intersects_segment(local_from, local_to) == null:
+				continue
+			var key := mesh.get_instance_id()
+			if not _pick_faces.has(key):
+				_pick_faces[key] = mesh.get_faces()
+			var faces: PackedVector3Array = _pick_faces[key]
+			for i in range(0, faces.size(), 3):
+				var hit = Geometry3D.segment_intersects_triangle(local_from, local_to, faces[i], faces[i + 1], faces[i + 2])
+				if hit != null:
+					best = minf(best, (xf * (hit as Vector3) - o).dot(d))
+	return best
+
+
+func _pick_ray_offset(cam: Camera3D, direction: Vector3) -> float:
+	return cam.near / maxf(0.01, -cam.global_basis.z.dot(direction))
+
+
+func _pick_ground_limit(o: Vector3, p: Vector2) -> float:
+	if p == Vector2.INF:
+		return INF
+	return o.distance_to(Vector3(p.x, maxf(land.height_at(p.x, p.y), Land.WATER_Y), p.y))
+
+
+## Дикая природа для инструментов: проверяем модели вдоль луча, включая нависающие кроны.
+func _pick_nature() -> Dictionary:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return {}
+	var mp := _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
+	var d := cam.project_ray_normal(mp)
+	var o := cam.project_ray_origin(mp) + d * _pick_ray_offset(cam, d)
+	var best := minf(_pick_ground_limit(o, ground_at_mouse()) + 0.025, cam.far)
+	var start := maxf(0.0, (o.y - 24.0) / maxf(-d.y, 0.001))
+	var buckets := {}
+	var result := {}
+	for step in range(ceili(maxf(0.0, best - start) / 4.0) + 1):
+		var along := start + 4.0 * step
+		if along - 4.0 > best:
+			break
+		var at := o + d * minf(along, best)
+		var cell := Vector2i(floori(at.x / 2.0), floori(at.z / 2.0))
+		for z in range(cell.y - 3, cell.y + 4):
+			for x in range(cell.x - 3, cell.x + 4):
+				var key := Vector2i(x, z)
+				if buckets.has(key) or not nature.has(key):
+					continue
+				buckets[key] = true
+				for it: Dictionary in nature[key]:
+					var name: String = it["name"]
+					if Parts._fading_detail(name):
+						continue
+					var t := _ray_pick_handles(it["h"], o, d, best)
+					if t < best:
+						best = t
+						result = it
+	return result
 
 
 ## Во что попадает луч из камеры: ближайшая постройка {id, t, p (точка попадания)} или {}.
 ## Сначала грубо — по общей коробке постройки, потом по коробкам деталей; холм перед постройкой заслоняет её
-func _ray_pick(o: Vector3, d: Vector3, ground := true) -> Dictionary:
+func _ray_pick(o: Vector3, d: Vector3, ground := true, near := 0.0, at := Vector2.INF) -> Dictionary:
+	var from := o + d * near
 	if _pick_cache.size() > city.buildings.size() + 32:
 		for id in _pick_cache.keys():
 			if not city.buildings.has(id):
@@ -3730,28 +3830,39 @@ func _ray_pick(o: Vector3, d: Vector3, ground := true) -> Dictionary:
 		if c.is_empty() or not is_same(c["b"], b) or c["tier"] != b["tier"] or c["pos"] != b["pos"] or c["yaw"] != b["yaw"] or c["y"] != b["y"]:
 			c = _pick_entry(b)
 			_pick_cache[id] = c
-		var e = (c["box"] as AABB).intersects_ray(o, d)
-		if e != null:
-			cands.append([o.distance_to(e), c])
+		var box: AABB = c["box"]
+		if box.has_point(from):
+			cands.append([near, c])
+		else:
+			var e = box.intersects_ray(from, d)
+			if e != null:
+				cands.append([o.distance_to(e), c])
 	if cands.is_empty():
 		return {}
 	cands.sort_custom(func(a, b): return a[0] < b[0])
-	var tg := INF
-	if ground and hover != Vector2.INF:
-		tg = o.distance_to(Vector3(hover.x, maxf(land.height_at(hover.x, hover.y), Land.WATER_Y), hover.y)) + 0.6
-	var best_t := tg
+	var tg := _pick_ground_limit(o, at if near > 0.0 else hover) if ground else INF
+	var best_t := tg + 0.6
 	var best := {}
 	for cd: Array in cands:
 		if float(cd[0]) >= best_t:
 			break
 		var c: Dictionary = cd[1]
+		if c["by_mesh"] and near > 0.0:
+			var limit := minf(best_t, minf(tg + 0.025, 800.0)) - near
+			var vis: Dictionary = visuals.get(c["id"], {})
+			var depth := _ray_pick_handles(vis.get("h", []), from, d, limit)
+			if depth < limit:
+				var t := near + depth
+				best_t = t
+				best = {"id": c["id"], "t": t, "p": o + d * t}
+			continue
 		var inv: Transform3D = c["inv"]
-		var lo := inv * o
+		var lo := inv * from
 		var ld := inv.basis * d
 		for bx: AABB in c["boxes"]:
 			var h = bx.intersects_ray(lo, ld)
 			if h != null:
-				var t := lo.distance_to(h)
+				var t := near + lo.distance_to(h)
 				if t < best_t:
 					best_t = t
 					best = {"id": c["id"], "t": t, "p": o + d * t}
@@ -3766,23 +3877,32 @@ func pick_building() -> Dictionary:
 	if cam == null or city == null:
 		return {}
 	var mp := _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
+	if not get_viewport().get_visible_rect().has_point(mp):
+		_pick_hit = {}
+		_pick_point = Vector2.INF
+		return {}
 	var xf := cam.global_transform
 	var count := city.buildings.size()
 	var next := city.next_id
 	var now := Time.get_ticks_msec()
-	if mp != _pick_point or xf != _pick_transform or count != _pick_count or next != _pick_next_id or now - _pick_t > 300:
+	if mp != _pick_point or xf != _pick_transform or count != _pick_count or next != _pick_next_id or _pick_ground_rev != land.gen or now - _pick_t > 300:
 		_pick_point = mp
 		_pick_transform = xf
 		_pick_count = count
 		_pick_next_id = next
 		_pick_t = now
-		_pick_hit = _ray_pick(cam.project_ray_origin(mp), cam.project_ray_normal(mp))
+		_pick_ground_rev = land.gen
+		var direction := cam.project_ray_normal(mp)
+		_pick_hit = _ray_pick(cam.project_ray_origin(mp), direction, true, _pick_ray_offset(cam, direction), ground_at_mouse())
 	var id := int(_pick_hit.get("id", -1))
 	if id >= 0 and city.buildings.has(id):
 		return city.buildings[id]
-	if hover == Vector2.INF:
+	var at := ground_at_mouse()
+	if at == Vector2.INF:
 		return {}
-	return city.building_at(hover)
+	var b := city.building_at(at)
+	var entry: Dictionary = _pick_cache.get(b.get("id", -1), {})
+	return {} if entry.get("by_mesh", false) else b
 
 
 ## Постройка на луче из камеры через точку экрана mp — {id, t, p} или {}: житель или кошка дальше неё не видны.
@@ -3795,7 +3915,9 @@ func ray_hit(mp: Vector2) -> Dictionary:
 	if mp.distance_squared_to(m0) < 0.25:
 		pick_building()
 		return _pick_hit
-	return _ray_pick(cam.project_ray_origin(mp), cam.project_ray_normal(mp))
+	var origin := cam.project_ray_origin(mp)
+	var direction := cam.project_ray_normal(mp)
+	return _ray_pick(origin, direction, true, _pick_ray_offset(cam, direction), _ground_from_ray(origin, direction))
 
 
 ## Постройка заслоняет точку to, если смотреть из from (камера «Погладить» выбирает сторону, откуда кошку видно)
@@ -5831,10 +5953,10 @@ func _tool_note(over_ui: bool) -> void:
 
 
 ## Подсветка постройки под курсором: снос — красная, копировать и перенести — золотая
-func _hover_any(p: Vector2) -> void:
+func _hover_any(_p: Vector2) -> void:
 	var b := pick_building()
-	if b.is_empty() and tool in ["bulldoze", "move"] and p != Vector2.INF:
-		var it := nature_at(p)
+	if b.is_empty() and tool in ["bulldoze", "move"]:
+		var it := _pick_nature()
 		if not it.is_empty():
 			_hover_nature(it)
 			return
@@ -6388,6 +6510,7 @@ func _unhandled_input(e: InputEvent) -> void:
 						select_building({})
 		elif mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
+				_pick_point = Vector2.INF
 				press_screen = mb.position
 				press_hover = hover
 				press_pl = place_info.duplicate() if Defs.B.has(tool) else {}
@@ -6605,11 +6728,12 @@ func _click() -> void:
 			return
 		"bulldoze":
 			var b := pick_building()
-			if b.is_empty() and not hover_nature.is_empty() and hover != Vector2.INF:
-				remove_nature(hover_nature)
+			var nature_hit := _pick_nature() if b.is_empty() else {}
+			if not nature_hit.is_empty():
+				remove_nature(nature_hit)
 				hover_nature = {}
 				_clear_highlight()
-				_puff(Vector3(hover.x, land.height_at(hover.x, hover.y), hover.y), Color("cfe0b0"))
+				_puff((nature_hit["xf"] as Transform3D).origin, Color("cfe0b0"))
 				sound.ui("demolish")
 				return
 			if not b.is_empty():
@@ -6631,9 +6755,10 @@ func _click() -> void:
 				hud.tool_status("Украшение на стене не переносится — снесите его и повесьте заново")
 				sound.ui("error")
 				return
-			if b.is_empty() and not hover_nature.is_empty() and hover != Vector2.INF:
-				moving_nature = hover_nature.duplicate()
-				remove_nature(hover_nature)
+			var nature_hit := _pick_nature() if b.is_empty() else {}
+			if not nature_hit.is_empty():
+				moving_nature = nature_hit.duplicate()
+				remove_nature(nature_hit)
 				hover_nature = {}
 				_clear_highlight()
 				tool_yaw = 0.0

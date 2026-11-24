@@ -19,6 +19,8 @@ var process_ms := 0.0
 var draw_ms := 0.0
 var draw_started := 0
 var phase_counts := {}
+var phase_samples := {}
+var phase_pipelines := {}
 var traces := PackedStringArray()
 var frame_count := 0
 var scenario := ""
@@ -49,12 +51,16 @@ func _run() -> void:
 	for q: String in str(args.get("q", "high,low")).split(","):
 		for kind: String in str(args.get("city", "owner,new")).split(","):
 			scenario = "%s/%s" % [kind, q]
-			if args.has("focus"):
+			var perf20c := args.has("perf20c")
+			var startup_us := Time.get_ticks_usec()
+			if args.has("focus") or perf20c:
 				_begin()
 				_mark("загрузка")
 			var booted := await boot_city(kind, q, true)
-			if args.has("focus"):
+			var startup_ms := (Time.get_ticks_usec() - startup_us) / 1000.0
+			if args.has("focus") or perf20c:
 				await _finish(true)
+				_line("До готовности (%s): %.1f мс." % [scenario, startup_ms])
 			if not booted:
 				_fail("не открыт город " + scenario)
 				continue
@@ -67,10 +73,12 @@ func _run() -> void:
 				_prepare_sites()
 			set_view(OWNER_VIEWS if kind == "owner" else NEW_VIEWS, 0)
 			await frames(90)
-			if scenario == "owner/high" and not args.has("cold_crowd"):
+			if scenario == "owner/high" and not args.has("cold_crowd") and not perf20c:
 				await _pipeline_replay()
 			_begin()
-			if not args.has("free_only"):
+			if perf20c:
+				await _first_use()
+			elif not args.has("free_only"):
 				await _actions()
 			await _free_play()
 			await _finish()
@@ -96,6 +104,8 @@ func _begin() -> void:
 	pending.clear()
 	Timers.reset_frame()
 	phase_counts.clear()
+	phase_samples.clear()
+	phase_pipelines.clear()
 	traces.clear()
 	CityTimers.usec.resize(CityTimers.LABELS.size())
 	CityTimers.usec.fill(0)
@@ -107,6 +117,113 @@ func _begin() -> void:
 	before = Time.get_ticks_usec()
 	phase = "город"
 	active = true
+
+
+func _first_use() -> void:
+	var site := Vector2(64, 74)
+	game.weather.force = 0.0
+	game._set_hour(9.0)
+	game.rig.set_view(Vector3(site.x, Land.BASE_Y, site.y), 15, 42, 40)
+	await frames(60)
+	_mark("первая стройка")
+	game.build_anim = true
+	var house := game.city.place("house_pleb", site, 0.0, 0, 0, true, Vector2i.ZERO, true)
+	game.build_anim = false
+	if house.is_empty() or not game._grow_live.has(house["id"]):
+		_fail("первая стройка без анимации")
+	else:
+		game._finish_placement({}, site)
+		var build_deadline := Time.get_ticks_msec() + 12000
+		while (game._grow_live.has(house["id"]) or game._placement_running) and Time.get_ticks_msec() < build_deadline:
+			await frames(1)
+	await frames(45)
+
+	_mark("первый закат")
+	game._set_hour(20.0)
+	await frames(90)
+	_mark("первая ночь")
+	game._set_hour(23.0)
+	await frames(90)
+	_mark("первый дождь")
+	game.weather.force = 1.0
+	await frames(180)
+	if not game.weather.rain.emitting:
+		_fail("дождь не начался")
+	game.weather.force = 0.0
+	game._set_hour(9.0)
+	_mark("пауза перед фортом")
+	# Старый город владельца сохранён до появления разреза форта.
+	game.city.cozy_v = maxi(1, game.city.cozy_v)
+	game.city.legion_v = 3
+	game.city.legion.free_mode = true
+	game.city.legion.sync_v2()
+	await frames(90)
+
+	_mark("первый форт")
+	var camp := CampUI.attach(game.hud)
+	camp.open()
+	var deadline := Time.get_ticks_msec() + 15000
+	while camp.opening and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	await frames(45)
+	if not camp.visible or camp.opening or not is_instance_valid(camp.diorama):
+		_fail("форт не открылся")
+	_mark("первая карта похода")
+	camp._campaign()
+	deadline = Time.get_ticks_msec() + 15000
+	while not is_instance_valid(camp.lu.fort_map) and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	await frames(60)
+	if not camp.lu.visible or not is_instance_valid(camp.lu.fort_map):
+		_fail("карта похода не открылась")
+	camp.lu.close(false)
+	_mark("возврат из форта")
+	camp.close()
+	await frames(90)
+
+	_mark("первый бой · загрузка")
+	var battle := open_battle(false)
+	deadline = Time.get_ticks_msec() + 80000
+	while is_instance_valid(battle) and battle.phase == "loading" and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	_mark("первый бой · бой и итог")
+	while is_instance_valid(battle) and battle.phase != "result" and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	_mark("возврат из боя")
+	if is_instance_valid(battle) and battle.phase == "result":
+		battle._close()
+		await battle.tree_exited
+	else:
+		_fail("бой не дошёл до итога")
+		if is_instance_valid(battle):
+			battle.abort()
+	await frames(90)
+	if get_viewport().disable_3d:
+		_fail("город не вернулся после боя")
+
+	var views := OWNER_VIEWS if scenario.begins_with("owner") else NEW_VIEWS
+	_mark("исходный вид")
+	set_view(views, 0)
+	await frames(45)
+	_mark("отдаление")
+	set_view(views, 2)
+	await frames(90)
+	_mark("возврат к площадке")
+	game.rig.set_view(Vector3(62, Land.BASE_Y, 80), 15, 42, 64)
+	await frames(45)
+	for type: String in ["medic", "academy", "colosseum"]:
+		_mark("первая модель " + type)
+		await game._request_preview(type, 0, 0)
+		await frames(45)
+		_mark("первая постройка " + type)
+		var b := game.city.place(type, Vector2(62, 84), 0.0, 0, 0, true)
+		await frames(90)
+		if b.is_empty() or not game.visuals.has(b["id"]):
+			_fail("нет модели " + type)
+		else:
+			_mark("подготовка площадки")
+			game.city.remove(b, false)
+			await frames(12)
 
 
 func _actions() -> void:
@@ -434,6 +551,13 @@ func _frame() -> void:
 	var now := Time.get_ticks_usec()
 	var ms := (now - before) / 1000.0
 	var pipes := _pipelines()
+	if args.has("perf20c"):
+		var samples: Array = phase_samples.get_or_add(phase, [])
+		samples.append(ms)
+		var totals: PackedInt64Array = phase_pipelines.get(phase, PackedInt64Array([0, 0, 0, 0, 0]))
+		for i in pipes.size():
+			totals[i] += pipes[i] - pipeline_counts[i]
+		phase_pipelines[phase] = totals
 	if ms > LIMITS[0] or (args.has("ui_trace") and Timers.usec[Timers.UI] > 8000):
 		var split := Timers.sections()
 		for id in CityTimers.LABELS.size():
@@ -497,6 +621,8 @@ func _finish(startup := false) -> void:
 	_line("|---:|---:|---:|---:|")
 	_line("| %d | %d | %d | %d |" % [counts[0], counts[1], counts[2], counts[3]])
 	_line("")
+	if args.has("perf20c"):
+		_phase_report()
 	_line("| Кадр | мс | Действие | Основные замеры CPU, мс | GPU / компиляции draw |")
 	_line("|---:|---:|---|---|---:|")
 	for row in top:
@@ -508,6 +634,25 @@ func _finish(startup := false) -> void:
 				parts.append("%s %.1f" % [key, row["sections_ms"][key]])
 		_line("| %d | %.1f | %s | %s | %.1f / %d |" % [row["frame"], row["ms"], row["phase"],
 			", ".join(parts), row["gpu_root_ms"], row["pipeline_canvas_mesh_surface_draw_specialization"][3]])
+
+
+func _phase_report() -> void:
+	_line("| Действие | Кадры | p99, мс | 1% low, к/с | Пик, мс | >50 мс | >100 мс | Draw | Specialization |")
+	_line("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+	for action: String in phase_samples:
+		var samples: Array = phase_samples[action]
+		samples.sort()
+		var n := samples.size()
+		var p99: float = samples[ceili(n * 0.99) - 1]
+		var slow := maxi(1, ceili(n * 0.01))
+		var slow_ms := 0.0
+		for i in range(n - slow, n):
+			slow_ms += float(samples[i])
+		var late: PackedInt64Array = phase_counts.get(action, PackedInt64Array([0, 0, 0, 0]))
+		var pipes: PackedInt64Array = phase_pipelines[action]
+		_line("| %s | %d | %.2f | %.1f | %.2f | %d | %d | %d | %d |" %
+			[action, n, p99, 1000.0 * slow / maxf(0.001, slow_ms), samples[-1], late[2], late[3], pipes[3], pipes[4]])
+	_line("")
 
 
 func _line(line: String) -> void:

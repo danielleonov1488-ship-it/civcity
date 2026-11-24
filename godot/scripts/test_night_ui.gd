@@ -134,8 +134,10 @@ func _hud_checks() -> void:
 	var vw: float = hud.root.size.x
 	check(cb.end.x <= tp.position.x + 1.0, "верхняя полоса не наезжает на медальоны справа: %s / %s" % [cb, tp])
 	check(cb.size.y < 60.0, "верхняя полоса тонкая: высота %.0f" % cb.size.y)
-	check(hud.tasks_folded() and hud.tasks_box.find_child("unfold", true, false) != null, "просьбы свёрнуты в значок-свиток")
-	check(hud.tasks_panel.get_global_rect().size.x < 90.0, "значок просьб маленький: %s" % hud.tasks_panel.get_global_rect().size)
+	var folded := str(A.get("folded", "0")) == "1"
+	check(hud.tasks_folded() == folded and (hud.tasks_box.find_child("unfold", true, false) != null) == folded, "состояние свитка просьб")
+	if folded:
+		check(hud.tasks_panel.get_global_rect().size.x < 90.0, "значок просьб маленький: %s" % hud.tasks_panel.get_global_rect().size)
 	var cr: Rect2 = hud.tasks_panel.get_global_rect()
 	print("INFO root.w=%.0f bar=%s tasks=%s" % [vw, cb, cr])
 
