@@ -2,6 +2,9 @@ extends Node3D
 
 const SHOTS := "D:/CivCity/.work/stage7/ui24/shots"
 const FULL_TIP := "Полки полны — новые очки пропадают. Изучите что-нибудь."
+const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
+
+var initial_old_ui := Hud.old_ui
 
 
 func _ready() -> void:
@@ -89,8 +92,8 @@ func _run() -> void:
 		hud.refresh(1)
 		if not await _check_scales(hud):
 			return
-	print("UI24 DONE")
-	get_tree().quit()
+	print("UI24 DONE fails=0")
+	_finish(0)
 
 
 func _check_scales(hud: Hud) -> bool:
@@ -133,14 +136,20 @@ func _shot(file: String) -> bool:
 	var scale := Vector2(size) / get_viewport().get_visible_rect().size
 	var crop := Vector2i(Vector2(660, 190) * scale).min(size)
 	var image := frame.get_region(Rect2i(Vector2i(size.x - crop.x, 0), crop))
-	if not _check(image.save_png(SHOTS.path_join(file)) == OK, "save " + file):
+	var path := str(get_meta("perf14_shots", SHOTS)).path_join(file)
+	if not _check(image.save_png(path) == OK, "save " + path):
 		return false
-	print("UI24 SHOT ", file)
+	print("UI24 SHOT ", path)
 	return true
 
 
 func _check(ok: bool, message: String) -> bool:
 	if not ok:
 		print("UI24 FAIL ", message)
-		get_tree().quit(1)
+		_finish(1)
 	return ok
+
+
+func _finish(code: int) -> void:
+	Hud.old_ui = initial_old_ui
+	TestSuite.finish(self, code)

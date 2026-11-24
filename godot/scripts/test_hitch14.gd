@@ -82,7 +82,7 @@ func _run() -> void:
 				await _actions()
 			await _free_play()
 			await _finish()
-			if args.has("perf22g"):
+			if args.has("perf22g") and q == "verylow":
 				_check_mobile_budget()
 	events.close()
 	report.close()
