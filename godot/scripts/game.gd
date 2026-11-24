@@ -143,6 +143,8 @@ var flower_color := 6                 # цвет цветов из «Приро�
 var snap := true                      # привязать к пути
 var ghost: Node3D
 var ghost_key := ""
+var _ghost_mouse := Vector2.INF
+var _ghost_ground := Vector2.INF
 var highlight: Node3D                 # подсветка постройки под курсором (снос, выбор)
 var highlight_key := ""
 var selected := {}
@@ -248,7 +250,6 @@ func _needs_road(d: Dictionary) -> bool:
 var yaw_set := false                   # игрок уже поворачивал постройку (Z/X, зажатая мышь) — дальше держим его поворот
 var free_yaw := 0.0                    # …вот этот (отдельно от tool_yaw: перенос деревьев и домов его не сбивает)
 var rot_off := Vector2.ZERO            # Z/X: середина постройки относительно курсора — поворачивается на месте, не прыгает
-var press_pl := {}                     # какую постройку показывала тень в миг нажатия (поворот зажатой мышью — от неё)
 const SNAP_R := 0.8                    # фасад (постройка серединой на курсоре) ближе этого к краю дороги — прилипает к краю
 const SNAP_STAY := 1.5                 # …и держится, пока фасад не отошёл дальше этого (без дёрганья на границе)
 # у дороги — всегда ровно по ней (жалоба 27.10: «то прямо, то под углом»): постройка ближе ALIGN_R к краю мостовой
@@ -1105,6 +1106,9 @@ func _warm_city_view(fireflies: GPUParticles3D) -> void:
 	var saved_hour := hour
 	rig.cine = true
 	grass.set_process(false)
+	if _applied_quality in ["high", "medium"]:
+		await _warm_verylow_view()
+	_set_hour(9.0)
 	var mid := Vector3(Land.SIZE * 0.5, Land.BASE_Y, Land.SIZE * 5.0 / 12.0)
 	var edge := Land.SIZE - 24.0
 	for view_angle: Array in [[mid, 15.0, 55.0, 240.0],
@@ -1114,8 +1118,6 @@ func _warm_city_view(fireflies: GPUParticles3D) -> void:
 		await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
 	rig.restore_view(view)
-	if _applied_quality in ["high", "medium"]:
-		await _warm_verylow_view()
 	_set_hour(23.0)
 	await RenderingServer.frame_post_draw
 	# Широкий ночной кадр покрывает фонари и материалы за границей стартового вида.
@@ -2305,6 +2307,8 @@ func _on_added(b: Dictionary) -> void:
 		hud.on_workplace_built(b)
 	if build_anim and city.def(b)["kind"] != "decor":
 		_grow_anim(b)
+	elif ready_done and not city.bulk and city.place_compute_pending and _large_blueprint(city.blueprint(b)):
+		_show_after_prepare(b)
 	else:
 		_show(b)
 	if not (b["cells"] as PackedInt32Array).is_empty():
@@ -2327,6 +2331,7 @@ const GROW_SHORT := 2.5               # с — короткий рост (све
 const GROW_POP := 0.045               # доля стройки, за которую одна деталь «встаёт» (с лёгким отскоком)
 const GROW_TINT := Color(1.0, 0.95, 0.85, 0.35)
 var _grows := 0
+var _pending_shows := {}
 var _grow_parts := {}
 var _grow_live := {}                  # id стройки → [tween, призрак, леса] — снесли или отменили, пока растёт: убрать сразу
 const SCAFFOLD_MODELS := ["SM_Prop_Pole_01", "SM_Prop_Beam_01", "SM_Prop_Ladder_01"]
@@ -2412,7 +2417,7 @@ func _grow_anim_profiled(b: Dictionary) -> void:
 		_grows += 1
 	var tw := create_tween().set_speed_scale(Legion.test_time_factor)
 	_grow_live[id] = [tw, g, scaf]
-	var large: bool = full and String(b["type"]) in SLICED_PREVIEWS
+	var large := full and _large_blueprint(bp)
 	if large:
 		g.hide()
 		tw.pause()
@@ -2458,6 +2463,12 @@ func _begin_large_grow(id: int, g: Node3D, bp: Bp, tw: Tween, duration: float) -
 func _prepare_grow_parts(b: Dictionary, bp: Bp, xf: Transform3D, tw: Tween) -> void:
 	var id: int = b["id"]
 	var alive := func() -> bool: return _grow_parts.get(id) == tw and city.buildings.has(id)
+	await _prepare_show_groups(b, bp, xf, alive)
+	if _grow_parts.get(id) == tw:
+		_grow_parts.erase(id)
+
+
+func _prepare_show_groups(b: Dictionary, bp: Bp, xf: Transform3D, alive: Callable) -> void:
 	await get_tree().process_frame
 	while _placement_running and alive.call():
 		await get_tree().process_frame
@@ -2465,12 +2476,22 @@ func _prepare_grow_parts(b: Dictionary, bp: Bp, xf: Transform3D, tw: Tween) -> v
 		await parts.prepare_groups(bp, xf, _show_substitutions(b, bp), alive)
 	if alive.call() and city.apron_of(b) == 2:
 		await parts.prepare_groups(Kerb.blueprint(bp), xf, {}, alive)
-	if _grow_parts.get(id) == tw:
-		_grow_parts.erase(id)
+
+
+func _show_after_prepare(b: Dictionary) -> void:
+	var id: int = b["id"]
+	var ticket := RefCounted.new()
+	_pending_shows[id] = ticket
+	var alive := func() -> bool: return _pending_shows.get(id) == ticket and city.buildings.has(id)
+	await _prepare_show_groups(b, city.blueprint(b), city.xf(b), alive)
+	if alive.call():
+		await get_tree().process_frame
+		if alive.call():
+			_show(b)
 
 
 func _finish_grow(id: int, tween: Tween) -> void:
-	while city.buildings.has(id) and (_grow_parts.has(id) or (spectacle and spectacle.layout_pending(city.buildings[id]))):
+	while city.buildings.has(id) and _grow_parts.has(id):
 		await get_tree().process_frame
 	var entry: Array = _grow_live.get(id, [])
 	if entry.is_empty() or entry[0] != tween:
@@ -2899,6 +2920,7 @@ func _show(b: Dictionary) -> void:
 
 
 func _hide(b: Dictionary) -> void:
+	_pending_shows.erase(b["id"])
 	if spectacle:
 		spectacle.venue_hide(b)
 	var vis: Dictionary = visuals.get(b["id"], {})
@@ -3628,6 +3650,14 @@ func _input(e: InputEvent) -> void:
 		# правая кнопка: тянули карту — это не щелчок (он закрывает свиток и окна)
 		if _rmb_armed and e is InputEventMouseMotion:
 			_rmb_moved = maxf(_rmb_moved, _mouse_pos.distance_to(_rmb_down))
+		if ready_done and mode != "menu" and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			# Щелчок на том же пикселе ставит видимый призрак, даже если камера уже сдвинулась.
+			# Новый пиксель и конец мазка берут землю из события.
+			if _mouse_pos == _ghost_mouse and is_instance_valid(ghost) and ghost.visible \
+					and place_info.get("_t") == tool and not rot_drag and field_from == Vector2.INF:
+				hover = _ghost_ground
+			else:
+				hover = ground_at_mouse()
 		# Отпускание ловим до GUI, в том числе над окном. Последний отрезок не теряется.
 		if floor_drag and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
 			if hud != null and not hud.mouse_over_ui():
@@ -3635,8 +3665,11 @@ func _input(e: InputEvent) -> void:
 			_floor_end()
 		# мазок дороги (или забор) начат на карте, а кнопку отпустили над окном: окно отпускание себе не возьмёт — кончаем здесь
 		if (painting or fence_drag or field_from != Vector2.INF) and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
-			if field_from != Vector2.INF:
-				hover = ground_at_mouse()
+			if painting and hover != Vector2.INF:
+				if brush_line:
+					_line_update()
+				else:
+					_paint_to(hover)
 			_release()
 
 
@@ -4732,9 +4765,11 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 		for r: Rect2 in rects:
 			if r.grow(0.4).has_point(lp):
 				return "Так загородится вход соседней постройки"
-		# сосед сейчас у дороги, а новая постройка закроет ему всю мостовую у входа
-		if od["kind"] != "center" and not od.get("noroad", false) and bool(o.get("road", false)) and not _road_free_near(odp, 1.7, own):
-			return "Так загородится вход соседней постройки"
+		# Дорогу проверяем по земле: после стройки b["road"] ждёт пересчёта.
+		if paved > 0 and od["kind"] != "center" and not _road_free_near(odp, 1.7, own):
+			var has_road := city.house_connected(o) if city.is_house(o) else _road_free_near(odp, 1.7, {})
+			if has_road:
+				return "Так загородится вход соседней постройки"
 	return ""
 
 
@@ -5343,6 +5378,8 @@ func _update_tool_profiled() -> void:
 		if hud:
 			hud.thumb_update()             # живая картинка в панели — тот же облик и цвет (3.4)
 	ghost.visible = true
+	_ghost_mouse = _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
+	_ghost_ground = hover
 	var ok: bool = pl["err"] == ""
 	_ghost_look(ok)
 	var y := float(pl["y"]) if (ok or pl.has("host")) else land.height_at(pl["pos"].x, pl["pos"].y)
@@ -5361,7 +5398,9 @@ func _update_tool_profiled() -> void:
 
 const GHOST_OK := Color(0.45, 1.0, 0.45, 0.07)     # годное место: настоящие цвета постройки, лишь лёгкая зелень
 const GHOST_BAD := Color(1.0, 0.25, 0.2, 0.5)
-const SLICED_PREVIEWS := ["colosseum", "medic", "academy"]
+## Крупный чертёж: порциями готовим призрак и сетки, в том числе у новых типов.
+static func _large_blueprint(bp: Bp) -> bool:
+	return bp.parts.size() >= 32
 var _preview_serial := 0
 var _preview_pending := false
 var _preview_models := {}
@@ -5401,7 +5440,7 @@ func _request_preview(type: String, tier: int, variant: int, color := 0) -> void
 	started = Perf14.begin()
 	CityWarmup.models(bp, paths, true)
 	Perf14.detail("preview_paths", started)
-	var staged := type in SLICED_PREVIEWS
+	var staged := _large_blueprint(bp)
 	var small_textures: Array[String] = []
 	if staged and gfx != null and Gfx.mobile_renderer() and Gfx._tex_small:
 		small_textures = _queue_mobile_preview_textures(bp, paths)
@@ -5517,13 +5556,13 @@ func _ghost_frozen() -> void:
 	var size := City.field_size(pl)
 	var key := "%s:%d:%d:%d:%s" % [tool, pl["tier"], v, c, size]
 	if key != ghost_key:
-		if moving.is_empty() and tool in SLICED_PREVIEWS:
+		var bp := Catalog.make(tool, pl["tier"], v, c) if size == Vector2i.ZERO else Catalog.field_bp(tool, size)
+		if moving.is_empty() and size == Vector2i.ZERO and _large_blueprint(bp):
 			_request_preview(tool, int(pl["tier"]), v, c)
 			if _preview_pending:
 				return
 		var xf := ghost.transform
 		ghost.queue_free()
-		var bp := Catalog.make(tool, pl["tier"], v, c) if size == Vector2i.ZERO else Catalog.field_bp(tool, size)
 		ghost = _take_preview_ghost(bp, key)
 		ghost.transform = xf
 		ghost_key = key
@@ -6551,7 +6590,6 @@ func _unhandled_input(e: InputEvent) -> void:
 				_pick_point = Vector2.INF
 				press_screen = mb.position
 				press_hover = hover
-				press_pl = place_info.duplicate() if Defs.B.has(tool) else {}
 				var dp: Dictionary = people.pick(_mouse_pos if _mouse_pos.x >= 0.0 else mb.position) if mb.double_click and tool == "" and people != null else {}
 				if not dp.is_empty() and rig != null:
 					select_person(dp)
@@ -6571,7 +6609,7 @@ func _unhandled_input(e: InputEvent) -> void:
 		if not rot_drag and absf(dx) > ROT_DRAG_PX and absf(dx) > absf(mpos.y - press_screen.y) * 1.3 and press_hover != Vector2.INF:
 			rot_drag = true
 			if place_lock.is_empty():
-				var pl0 := press_pl if press_pl.has("pos") else placement(tool, press_hover)
+				var pl0 := placement(tool, press_hover)
 				place_lock = {"p": pl0["pos"]}
 				if pl0.has("ry") and not City.road_optional:     # свободная стройка: крутится плавно, не четвертями
 					place_lock["ry"] = float(pl0["ry"])    # у дороги крутится четвертями — ровно по ней
@@ -6957,7 +6995,8 @@ func _build_here() -> void:
 			_happy_pops(h0, pl["pos"])
 		else:
 			var h0 := city.happy_map() if _pops_for(tool) else {}
-			var defer_compute := city.buildings.size() >= 48 or _placement_running
+			var large := City.field_size(pl) != Vector2i.ZERO or _large_blueprint(Catalog.make(tool, pl["tier"], pl["variant"], pl["color"]))
+			var defer_compute := city.buildings.size() >= 48 or _placement_running or large
 			var snap := _undo_snap()           # до постановки: просьба или ранг, которые она даст, — уже без полного возврата
 			var place_cost := city.build_price(tool, City.field_size(pl))
 			build_anim = true
@@ -6976,7 +7015,7 @@ func _build_here() -> void:
 				hud.note_recent(tool)              # «Недавние» в меню украшений
 			_rot_hint_count()
 			if defer_compute:
-				_finish_placement(h0, pl["pos"], tool in SLICED_PREVIEWS)
+				_finish_placement(h0, pl["pos"], large)
 			else:
 				_happy_pops(h0, pl["pos"])
 			if stories != null:

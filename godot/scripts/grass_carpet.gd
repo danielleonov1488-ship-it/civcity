@@ -160,6 +160,7 @@ func set_quality(q: String) -> void:
 		radius = maxf(radius, 150.0)
 	if not is_equal_approx(sp, spacing):
 		spacing = sp
+		_job.clear()                       # недостроенный кусок тоже был со старой густотой
 		for k in tiles:
 			dirty[k] = true                   # другая густота — куски заново
 	for m: ShaderMaterial in [_mat_g, _mat_f]:
@@ -211,6 +212,15 @@ func _tile_dist(k: Vector2i, cam: Vector3) -> float:
 	return q.distance_to(cam)
 
 
+func _tile_on_screen(k: Vector2i, planes: Array[Plane]) -> bool:
+	var center := Vector3((k.x + 0.5) * TILE, Land.BASE_Y, (k.y + 0.5) * TILE)
+	var half_size := Vector3(TILE * 0.5, 20.0, TILE * 0.5)
+	for plane: Plane in planes:
+		if plane.distance_to(center) > plane.normal.abs().dot(half_size):
+			return false
+	return true
+
+
 func _process(_dt: float) -> void:
 	if radius <= 0.0 or land == null:
 		return
@@ -232,6 +242,12 @@ func step(ms: float) -> bool:
 	var c := Vector2i(int(cam.x / TILE), int(cam.z / TILE))
 	var n := int(ceil(r / TILE)) + 1
 	var want: Array = []
+	var active: Vector2i = _job.get("key", Vector2i(-1, -1))
+	if not _job.is_empty() and (_tile_dist(active, cam) >= r or dirty.has(active)):
+		_job.clear()
+		active = Vector2i(-1, -1)
+	var camera := get_viewport().get_camera_3d()
+	var planes: Array[Plane] = camera.get_frustum() if camera else []
 	for j in range(c.y - n, c.y + n + 1):
 		for i in range(c.x - n, c.x + n + 1):
 			var k := Vector2i(i, j)
@@ -239,7 +255,9 @@ func step(ms: float) -> bool:
 				continue
 			var d := _tile_dist(k, cam)
 			if d < r and (not tiles.has(k) or dirty.has(k)):
-				want.append([d, k])
+				if k != active:
+					# После смены пресета первыми возвращаем куски, которые видит игрок.
+					want.append([d if _tile_on_screen(k, planes) else d + Land.SIZE, k])
 				if d < r * 0.55 and not tiles.has(k):
 					near_hole = true          # камеру перенесли: дыра в ковре на виду — строим быстрее
 	# дальние — прочь
@@ -262,10 +280,6 @@ func step(ms: float) -> bool:
 		return false
 	_settled_cam = Vector3.INF
 	want.sort_custom(func(a, b): return a[0] < b[0])
-	if not _job.is_empty():
-		var jk: Vector2i = _job["key"]
-		if _tile_dist(jk, cam) > r:
-			_job = {}                         # камера ушла — этот кусок не нужен
 	if near_hole:
 		ms = maxf(ms, 4.0)
 	while Time.get_ticks_usec() - t0 < ms * 1000.0:

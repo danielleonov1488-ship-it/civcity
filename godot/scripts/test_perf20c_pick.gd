@@ -4,12 +4,14 @@ const SHOTS := "D:/CivCity/.work/stage7/perf20c/shots"
 const RUN := "D:/CivCity/.work/stage7/perf20c/pick"
 const TestSuite = preload("res://scripts/test_perf14a3_suite.gd")
 
+var shot_dir := SHOTS
 var fails := 0
 var cursor := Vector2.INF
 
 
 func _ready() -> void:
-	set_meta("perf14_args", {"out": RUN})
+	shot_dir = str(get_meta("perf14_shots", SHOTS))
+	set_meta("perf14_args", {"out": str(get_meta("perf14_profiles", RUN))})
 	_run.call_deferred()
 
 
@@ -163,7 +165,7 @@ func _shot(file: String) -> void:
 		marker.add_theme_constant_override("outline_size", 5)
 		marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	await RenderingServer.frame_post_draw
-	var path := SHOTS.path_join(file)
+	var path := shot_dir.path_join(file)
 	var frame := get_viewport().get_texture().get_image()
 	if frame != null and frame.save_png(path) == OK:
 		print("PERF20C_PICK SHOT ", path)

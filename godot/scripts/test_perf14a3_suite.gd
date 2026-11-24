@@ -50,7 +50,7 @@ func _run() -> void:
 				test.set("A", {"mode": "regress", "out": shots})
 			"camp_ui", "legion12":
 				test.set("out", shots)
-			"tutor13":
+			"tutor13", "perf20c_pick", "perf21b":
 				test.set_meta("perf14_shots", shots)
 				test.set_meta("perf14_profiles", profile)
 		_result = -1
