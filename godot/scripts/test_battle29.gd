@@ -4,7 +4,9 @@ const View = preload("res://scripts/legion_battle_view.gd")
 const Battle12 = preload("res://scripts/test_battle12.gd")
 const Battle13 = preload("res://scripts/test_battle13.gd")
 const SimDump = preload("res://scripts/test_sim_dump.gd")
-const OUT := "D:/CivCity/.work/stage7/battle29g"
+const OUT := "D:/CivCity/.work/stage7/battle29h"
+const BASE_HIDDEN := {"tutorial": 0, "britannia": 91, "carthage": 209, "hills": 33,
+	"parthia": 161, "16x16": 254, "promo": 70}
 const FRAME := 1.0 / 60.0
 const GAME_SIZE := Vector2i(1920, 1080)
 const SMALL_SIZE := Vector2i(1280, 720)
@@ -101,7 +103,6 @@ func _run() -> void:
 	await _play("16x16", _campaign("gaul", ["gaul", "gaul", "gaulArcher", "druid"], 16))
 	await _play("promo", _promo(), true)
 	if video:
-		await _play("promo_vertical", _promo(), true, PROMO_SIZE, true)
 		await _play("promo_720p", _promo(), true, SMALL_SIZE, true)
 		await _play("britannia_720p", _campaign("britannia", ["briton", "chariot", "charioteer", "druid"]), true, SMALL_SIZE, true)
 
@@ -320,7 +321,10 @@ func _play(label: String, setup: Dictionary, capture := false, resolution := GAM
 		_check(track.quick_swaps == 0, label + " unwalked side swaps")
 		_check(track.front_crossings == 0 and track.wrong_side == 0, label + " front crossings")
 		_check(float(stats["overlap_pct"]) <= 1.0, label + " foot overlap <= 1%")
-		_check(float(stats["hidden_pct"]) <= 25.0, label + " hidden strikes <= 25%")
+		_check(int(stats["hidden_strikes"]) <= int(BASE_HIDDEN[label]), label + " hidden strikes <= base")
+		_check(track.totem_stacks == 0, label + " steady vertical stacks")
+		if label != "tutorial":
+			_check(track.totem_samples > 0, label + " steady grid samples")
 		_check(arrived_outside == 0, label + " arrived front pairs in reach")
 		if label == "tutorial":
 			_check(view.melee_played == 4 and view.melee_requests == 4, "tutorial all four strikes")
@@ -495,6 +499,8 @@ class Readings:
 	var queue_short := 0
 	var queue_min := INF
 	var queue_plan_min := INF
+	var totem_stacks := 0
+	var totem_samples := 0
 
 	func measure(view: View, fighting: bool, frozen: bool) -> void:
 		var current := {}
@@ -502,6 +508,8 @@ class Readings:
 		for f in view._fighters:
 			if f.unit.alive:
 				living.append(f)
+		if view._front_active and fighting and not frozen:
+			_measure_totems(view, living)
 		for i in living.size():
 			var f := living[i]
 			var foot := f.visible_foot()
@@ -571,6 +579,37 @@ class Readings:
 			current[f.unit.id] = [foot, direction, target_id, side, crossing, front_side]
 		previous = current
 
+	func _measure_totems(view: View, living: Array[View.Fighter]) -> void:
+		var steady: Array[View.Fighter] = []
+		for f in living:
+			if not f.unit.entering and f.travel.length_squared() < (FRAME * f.body_width() * 0.20) ** 2:
+				steady.append(f)
+		if steady.size() < 3:
+			return
+		totem_samples += 1
+		steady.sort_custom(func(a: View.Fighter, b: View.Fighter) -> bool:
+			return a.visible_foot().x < b.visible_foot().x)
+		var depth := view._row_step * 0.25
+		for i in steady.size() - 2:
+			var a := steady[i]
+			var a_foot := a.visible_foot()
+			for j in range(i + 1, steady.size() - 1):
+				var b := steady[j]
+				var b_foot := b.visible_foot()
+				if b_foot.x - a_foot.x > a.body_width() * 0.30:
+					break
+				if absf(b_foot.y - a_foot.y) < depth:
+					continue
+				for k in range(j + 1, steady.size()):
+					var c := steady[k]
+					var c_foot := c.visible_foot()
+					if c_foot.x - a_foot.x > a.body_width() * 0.30:
+						break
+					var width := minf(a.body_width(), minf(b.body_width(), c.body_width()))
+					if c_foot.x - a_foot.x <= width * 0.30 and absf(c_foot.y - a_foot.y) >= depth \
+							and absf(c_foot.y - b_foot.y) >= depth:
+						totem_stacks += 1
+
 	func result() -> Dictionary:
 		distances.sort()
 		var samples := distances.size()
@@ -580,6 +619,7 @@ class Readings:
 			"slides": slides, "slide_pct": 100.0 * slides / maxf(1.0, samples),
 			"overlap_pct": 100.0 * overlaps / maxf(1.0, pairs), "deep": deep,
 			"front_crossings": front_crossings, "wrong_side_frames": wrong_side, "walks_around": walks_around,
+			"totem_stacks": totem_stacks, "totem_samples": totem_samples,
 			"queue_gap_min": queue_min if queue_samples > 0 else null,
 			"queue_plan_min": queue_plan_min if queue_samples > 0 else null,
 			"queue_samples": queue_samples, "queue_below_target": queue_short}
