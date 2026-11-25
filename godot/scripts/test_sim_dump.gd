@@ -24,9 +24,14 @@ func _initialize() -> void:
 			out_path = a.trim_prefix("out=")
 		elif a == "fort=1":
 			fort_cases = true
+	quit(int(not write_dump(n, out_path, rs, fort_cases)))
+
+
+static func write_dump(n: int, out_path: String, rs: int, fort_cases: bool) -> bool:
 	var r := RandomNumberGenerator.new()
 	r.seed = rs
 	var lg := Legion.new()
+	var old_hero_mode := Legion.pvp_hero_srv
 	Legion.pvp_hero_srv = true                 # сервер знает героя (иначе игра убирает героев из отряда соперника)
 	var list := []
 	var wins := 0
@@ -59,19 +64,19 @@ func _initialize() -> void:
 		list.append({"att": att, "def": def, "att_fort": a.get("fort"), "def_fort": d.get("fort"), "seed": sd, "inputs": res["inputs"],
 			"win": bool(res["win"]), "alive": int(res["alive"]), "total": int(res["total"]), "steps": sim.steps,
 			"timeout": bool(res["timeout"]), "time": _hex(float(res["time"])), "hp_left": _hex(float(res["hp_left"]))})
+	Legion.pvp_hero_srv = old_hero_mode
 	var f := FileAccess.open(out_path, FileAccess.WRITE)
 	if f == null:
 		print("SIMDUMP FAIL cannot write ", out_path)
-		quit(1)
-		return
+		return false
 	f.store_string(JSON.stringify(list, "", false, true))
 	f.close()
 	print("SIMDUMP %d боёв (побед нападающего %d, отрядов с героем %d) → %s" % [n, wins, heroes, out_path])
-	quit()
+	return true
 
 
 ## Отряд, как его хранит сервер: рода войск и уровни, умения, бонусы чудес (округлены до тысячных)
-func _snap(r: RandomNumberGenerator) -> Dictionary:
+static func _snap(r: RandomNumberGenerator) -> Dictionary:
 	var sq := []
 	var base := r.randi_range(1, 30)
 	for i in r.randi_range(1, 7):
@@ -93,7 +98,7 @@ func _snap(r: RandomNumberGenerator) -> Dictionary:
 
 
 ## Клиент считает числа сам, сервер отдельно восстанавливает их из того же состава и предметов.
-func _fort_snap(r: RandomNumberGenerator, case_id: int) -> Dictionary:
+static func _fort_snap(r: RandomNumberGenerator, case_id: int) -> Dictionary:
 	var city := City.new(Land.new())
 	city.cozy_v = 1
 	city.legion_v = 3

@@ -33,9 +33,12 @@ const FACE_HOLD := 0.12
 const PASS_DEPTH := 35.0
 const QUEUE_GAP := 0.60
 const FRONT_WALK := 115.0
-const STRIKE_WAIT := 0.75
+const STRIKE_WAIT := 1.15
 const STRIKE_HOLD := 0.22
 const STRIKE_DEPTH := 0.43
+const SIM_X := 66.0
+const ROW_HEIGHT := 0.90
+const STANDARD_HEIGHT := 234.0 * 1.08 * FIGURE_SCALE
 
 enum Pass { NONE, APPROACH, CROSS, REAR, RETURN, CROSS_HOME }
 const FIELDS := {"forest": 2, "darkforest": 2, "swamp": 3, "labyrinth": 4,
@@ -80,6 +83,8 @@ var _front_x := 0.0
 var _front_goal := 0.0
 var _front_rows := 3
 var _row_extent := 0.0
+var _row_step := 0.0
+var _road_depth := 114.0
 var _arrival_order := 0
 var _ally_line := FrontLine.new(-1.0)
 var _enemy_line := FrontLine.new(1.0)
@@ -150,7 +155,7 @@ func set_field(biome: String) -> void:
 	var index := int(FIELDS.get(biome, 1))
 	field.texture = load(ART + "battle/field_%d.jpg" % index)
 	_trail_y = TRAIL_Y[index - 1]
-	_trail_depth = TRAIL_DEPTH[index - 1]
+	_road_depth = TRAIL_DEPTH[index - 1]
 	_fit()
 
 
@@ -168,9 +173,19 @@ func set_zoom(value: float) -> void:
 func _fit() -> void:
 	var cover_h := maxf(size.y, size.x * 1080.0 / 2560.0)
 	var path_y := size.y * 0.5 + (_trail_y - 0.5) * cover_h
-	world.position = Vector2(size.x * 0.5, minf(path_y, size.y * 0.79))
 	var design_scale := minf(size.x / DESIGN.x, size.y / DESIGN.y)
 	world.scale = Vector2.ONE * maxf(0.001, design_scale / (_zoom if legacy_layout else 1.0))
+	var field_y := minf(path_y, size.y * 0.79)
+	_trail_depth = _road_depth
+	if not legacy_layout and size.y > 1.0:
+		# Оставляем место головам у верхней панели и опорам над кнопками умений.
+		field_y = minf(path_y, size.y * 0.64)
+		var top := size.y * 0.12 + world.scale.y * 275.0
+		var bottom := size.y - 116.0
+		_trail_depth = clampf(minf(field_y - top, bottom - field_y) / world.scale.y, 0.0, 200.0)
+	world.position = Vector2(size.x * 0.5, field_y)
+	_fit_rows()
+	_layout_step = -1
 	var half := size.x * 0.5 / world.scale.x
 	_field_bounds = Rect2(-half, -_trail_depth, half * 2.0, _trail_depth * 2.0)
 	if legacy_layout:
@@ -183,6 +198,19 @@ func _fit() -> void:
 	for id in views:
 		var f: Fighter = views[id]
 		_place_actor(f)
+
+
+func _fit_rows() -> void:
+	var height := STANDARD_HEIGHT / clampf(_zoom, 0.94, 1.07)
+	# Замеряем высоту стандартного легионера через ту же камеру, что и стопы.
+	for f in _fighters:
+		if f.unit.key == "legionary":
+			height = maxf(height, f.body_height())
+	var projected_height := absf(screen(Vector2.ZERO).y - screen(Vector2(0.0, -height)).y)
+	_row_step = projected_height * ROW_HEIGHT / world.scale.y
+	var available := maxf(0.0, _trail_depth - PASS_DEPTH)
+	_front_rows = 3 if available >= _row_step else 2
+	_row_extent = _row_step * (_front_rows - 1) * 0.5
 
 
 static func point(x: float, z: float) -> Vector2:
@@ -511,7 +539,7 @@ func request_strike(source: Fighter, target: Fighter, action := "") -> void:
 
 
 func _may_strike(f: Fighter) -> bool:
-	return not _front_active or f.rank == 0 or f.pass_phase in [Pass.CROSS, Pass.REAR]
+	return not _front_active or f.rank >= 0 or f.pass_phase in [Pass.CROSS, Pass.REAR, Pass.RETURN]
 
 
 func _play_strike(source: Fighter, target: Fighter) -> void:
@@ -575,7 +603,7 @@ func _plan_layout(sim_dt: float) -> void:
 			if f.rear or target == null or target.rear or f.unit.entering or target.unit.entering:
 				continue
 			var reach := f.unit.range_m + 0.35 * (f.unit.size + target.unit.size - 2.0)
-			if LegionSim.dist(f.unit, target.unit) <= reach + 1.20:
+			if LegionSim.dist(f.unit, target.unit) <= reach + 3.20:
 				_start_front(ally, enemy)
 				break
 
@@ -583,8 +611,7 @@ func _plan_layout(sim_dt: float) -> void:
 		_plan_passes(_ally_line, _enemy_line)
 		_plan_passes(_enemy_line, _ally_line)
 		_plan_front()
-		_guard_duels(_ally_line)
-		_guard_duels(_enemy_line)
+		_plan_contact_gaps()
 		_place_ranks(_ally_line, _enemy_line)
 		_place_ranks(_enemy_line, _ally_line)
 
@@ -632,8 +659,7 @@ func _start_front(ally: Fighter, enemy: Fighter) -> void:
 	_front_x = (ally.position.x + enemy.position.x) * 0.5
 	var left := _field_bounds.position.x
 	var right := _field_bounds.end.x
-	var height := 0.0
-	var count := 0
+	_fit_rows()
 	for f in _fighters:
 		if not f.unit.alive:
 			continue
@@ -641,13 +667,7 @@ func _start_front(ally: Fighter, enemy: Fighter) -> void:
 			left = maxf(left, f.position.x)
 		else:
 			right = minf(right, f.position.x)
-		if not f.rear and not f.wide and not f.unit.boss:
-			height += f.body_height()
-			count += 1
 	_front_x = clampf(_front_x, left, right) if left <= right else (left + right) * 0.5
-	var spacing := maxf(55.0, 0.45 * height / maxi(1, count))
-	_front_rows = clampi(maxi(_ally_line.melee.size(), _enemy_line.melee.size()), 3, 5)
-	_row_extent = minf(_trail_depth - 12.0, spacing * (_front_rows - 1) * 0.55)
 	_record_arrivals(_ally_line)
 	_record_arrivals(_enemy_line)
 
@@ -666,10 +686,10 @@ func _record_arrivals(line: FrontLine) -> void:
 func _plan_passes(line: FrontLine, foes: FrontLine) -> void:
 	for f in line.melee:
 		var target := f.layout_target
-		var attack_rear := target != null and (target.rear or target.unit.row == 1)
+		var attack_rear := target != null and target.rear
 		var sent_through := foes.lead != null and (f.unit.x - foes.lead.unit.x) * line.side < -0.45
 		var wants_pass := attack_rear and foes.lead != null and (f.unit.backline or sent_through)
-		wants_pass = wants_pass and (not f.wide or sent_through)
+		wants_pass = wants_pass and not f.wide
 		if f.pass_phase == Pass.NONE:
 			if not wants_pass or (f.was_front and f.strike_hold > 0.0):
 				continue
@@ -696,13 +716,15 @@ func _plan_passes(line: FrontLine, foes: FrontLine) -> void:
 
 
 func _row_span(f: Fighter) -> int:
-	if f.wide or f.unit.boss:
-		return mini(_front_rows, 3 if f.body_width() > 300.0 else 2)
+	if f.unit.boss or not f.long_model.is_empty() or (f.wide and f.body_width() > _row_step):
+		return 2
 	return 1
 
 
 func _row_depth(row: int, span: int) -> float:
-	return lerpf(-_row_extent, _row_extent, (row + (span - 1) * 0.5) / (_front_rows - 1))
+	if span == 2:
+		return 0.0
+	return (row + (span - 1) * 0.5) * _row_step - _row_extent
 
 
 func _plan_front() -> void:
@@ -714,6 +736,8 @@ func _plan_front() -> void:
 				f.arrival_order = _arrival_order
 			f.duel_weight = 0.0
 			f.incoming = 0
+			f.line_gap = INF
+			f.diagonal_contact = false
 	for line: FrontLine in [_ally_line, _enemy_line]:
 		for f in line.melee:
 			var target := f.layout_target
@@ -725,17 +749,17 @@ func _plan_front() -> void:
 		var target := f.layout_target
 		var reach := f.unit.range_m + 0.35 * (f.unit.size + target.unit.size - 2.0)
 		var walking := maxf(0.0, LegionSim.dist(f.unit, target.unit) - reach)
-		f.duel_weight = 24.0 * mini(target.incoming, 3) - minf(walking, 4.0) * 48.0
-		f.duel_weight += 72.0 if f.duel_with == target.unit.id and f.was_front and target.was_front else 0.0
+		f.duel_weight = 12.0 * mini(target.incoming, 3) - minf(walking, 4.0) * 40.0
+		f.duel_weight += 56.0 if f.duel_with == target.unit.id and f.was_front and target.was_front else 0.0
 		f.duel_weight += 45.0 if target.layout_target == f else 0.0
-		f.duel_weight += 28.0 if f.strike_wait > 0.0 else 0.0
+		f.duel_weight += 32.0 if f.strike_wait > 0.0 and f.strike_target == target else 0.0
 		f.duel_weight += 28.0 if f.unit.boss or target.unit.boss else 0.0
 		f.duel_weight -= minf(f.unit.timer, 2.0) * 8.0
 	pairs.sort_custom(func(a: Fighter, b: Fighter) -> bool:
 		return a.duel_weight > b.duel_weight if a.duel_weight != b.duel_weight else a.unit.id < b.unit.id)
 	for f in pairs:
 		var target := f.layout_target
-		if target.front_attackers < 3 and _seat_duel(f, target):
+		if target.front_attackers < _front_rows and _seat_duel(f, target):
 			target.front_attackers += 1
 			f.duel_with = target.unit.id
 		else:
@@ -747,8 +771,6 @@ func _plan_front() -> void:
 
 
 func _seat_duel(f: Fighter, target: Fighter) -> bool:
-	if f.rank == 0 and target.rank == 0:
-		return f.neighbouring_row(target)
 	var line := _ally_line if f.side_dir < 0.0 else _enemy_line
 	var foes := _enemy_line if f.side_dir < 0.0 else _ally_line
 	var a_span := _row_span(f)
@@ -762,10 +784,12 @@ func _seat_duel(f: Fighter, target: Fighter) -> bool:
 			continue
 		for b in range(_front_rows + 1 - b_span):
 			var b_mask := ((1 << b_span) - 1) << b
-			if ((a_mask | (a_mask << 1) | (a_mask >> 1)) & b_mask) == 0 or not _can_use_row(foes, target, b, b_mask):
+			if not _can_use_row(foes, target, b, b_mask):
 				continue
-			var score := _row_cost(f, a, a_span) + _row_cost(target, b, b_span)
-			score += absf(_row_depth(a, a_span) - _row_depth(b, b_span)) * 0.72
+			var dy := absf(_row_depth(a, a_span) - _row_depth(b, b_span))
+			if dy * STRIKE_DEPTH + 2.0 >= f.projected_reach(target):
+				continue
+			var score := _row_cost(f, a, a_span) + _row_cost(target, b, b_span) + dy * 0.95
 			if score < best:
 				best = score
 				a_row = a
@@ -823,31 +847,45 @@ func _claim_front(line: FrontLine, f: Fighter, row: int) -> void:
 	line.front_mask |= f.row_mask
 
 
-func _guard_duels(line: FrontLine) -> void:
-	for f in line.front:
-		var target := f.layout_target
-		if target != null and target.rank == 0 and f.neighbouring_row(target) \
-				and (not f.long_model.is_empty() or not target.long_model.is_empty()):
-			f.front_guard = true
-			target.front_guard = true
+func _plan_contact_gaps() -> void:
+	for line: FrontLine in [_ally_line, _enemy_line]:
+		for f in line.front:
+			var target := f.layout_target
+			if target == null or target.rank != 0:
+				continue
+			var dy := _row_depth(f.front_row, _row_span(f)) - _row_depth(target.front_row, _row_span(target))
+			if absf(dy) > 1.0 or _row_span(f) > 1 or _row_span(target) > 1:
+				f.diagonal_contact = true
+				target.diagonal_contact = true
+			var reach := f.projected_reach(target)
+			var depth := dy * STRIKE_DEPTH
+			var budget := sqrt(maxf(0.0, reach * reach - depth * depth))
+			var long := not f.long_model.is_empty() or not target.long_model.is_empty()
+			# Место у линии ограничивает самая короткая из направленных атак пары.
+			var gap := minf(budget * 0.21, 1.5 if long else 15.0)
+			f.line_gap = minf(f.line_gap, gap)
+			target.line_gap = minf(target.line_gap, gap)
+			f.front_guard = f.front_guard or long
+			target.front_guard = target.front_guard or long
 
 
 func _place_ranks(line: FrontLine, foes: FrontLine) -> void:
 	for f in line.front:
 		var foe := f.layout_target
-		var span := _row_span(f)
-		var depth := _row_depth(f.front_row, span)
-		if foe != null and foe.rear and foes.lead == null and line.front.size() == 1:
-			depth = foe.goal.y
-		var edge := f.edge_toward(-line.side)
-		var clearance := 2.0 if f.front_guard else 4.0
-		var stagger := 0.0
-		if not f.wide and line.front.size() > 1:
-			var parity := f.front_row % 2
-			var at_nose := (f.front_guard and foe != null and not foe.long_model.is_empty()
-				and absf(depth - _row_depth(foe.front_row, _row_span(foe))) < 30.0)
-			stagger = 23.0 if not at_nose and parity == (0 if line.side > 0.0 else 1) else 0.0
-		f.goal = Vector2(line.side * (edge + clearance + stagger), depth)
+		var depth := _row_depth(f.front_row, _row_span(f))
+		if foe != null and foe.rear and foes.lead == null:
+			depth = foe.goal.y if line.front.size() == 1 else clampf(foe.goal.y, depth - 20.0, depth + 20.0)
+		var edge := f.front_edge()
+		var clearance := minf(f.line_gap, 15.0)
+		if foe != null and foe.rear and foes.lead == null:
+			clearance = minf(clearance, 2.0)
+		var x := line.side * (edge + clearance)
+		# Разводим дуэли в соседних рядах ещё и по X, сохраняя общую сторону фронта.
+		if foe != null and foe.rank == 0 and not f.diagonal_contact and not foe.diagonal_contact:
+			var left_room := (f if line.side < 0.0 else foe).front_edge() + clearance - 8.0
+			var right_room := (foe if line.side < 0.0 else f).front_edge() + clearance - 8.0
+			x += clampf(depth * 0.30, -right_room, left_room)
+		f.goal = Vector2(x, depth)
 		_mark_rank(line, f)
 
 	line.front_room = line.back + 16.0
@@ -883,6 +921,10 @@ func _place_ranks(line: FrontLine, foes: FrontLine) -> void:
 		var back := ahead.goal.x * line.side + ahead.edge_toward(line.side) if ahead != null else 0.0
 		var distance := back + f.edge_toward(-line.side) + QUEUE_GAP * f.body_width()
 		var y := _row_depth(best_row, span)
+		if span == 2 and ahead != null and not f.long_model.is_empty() and not ahead.long_model.is_empty():
+			y = signf(f.position.y - ahead.goal.y) * (_trail_depth - 4.0)
+			if is_zero_approx(y):
+				y = _trail_depth - 4.0
 		f.goal = Vector2(line.side * distance, y)
 		_mark_rank(line, f)
 
@@ -1055,7 +1097,7 @@ func _front_route(f: Fighter) -> Vector2:
 		if other == f or other.rank <= 0:
 			continue
 		var dx := (f.position.x - other.position.x) * f.side_dir
-		var depth_needed := minf(82.0, minf(f.body_half, other.body_half) * 1.20)
+		var depth_needed := minf(_row_step * 0.75, minf(f.body_half, other.body_half) * 1.38)
 		if dx < -depth_needed or dx > minf(advance, other.edge_toward(f.side_dir) + f.body_half + 76.0):
 			continue
 		if absf(other.position.y - result.y) >= depth_needed:
@@ -1136,7 +1178,7 @@ func _display_pair(a: Fighter, b: Fighter) -> void:
 		var height := minf(d.y + a_box.end.y, b_box.end.y) - maxf(d.y + a_box.position.y, b_box.position.y)
 		if height > 0.0 and not (changing_rank and (a.long_model.is_empty() or b.long_model.is_empty())):
 			var separate_rows := same_side and a.rank >= 0 and b.rank >= 0 and (a.row_mask & b.row_mask) == 0
-			var tolerance := 0.21 if separate_rows else (0.15 if same_side else 0.10)
+			var tolerance := 0.25 if separate_rows else (0.15 if same_side else 0.10)
 			var allowed := minf(a.outline_area, b.outline_area) * tolerance / height
 			if allowed < minf(a_box.size.x, b_box.size.x):
 				gap = maxf(gap, edge - allowed)
@@ -1565,6 +1607,8 @@ class Fighter extends Node2D:
 	var rump := 25.0
 	var beam := 50.0
 	var strike_distance := 55.0
+	var line_gap := INF
+	var diagonal_contact := false
 	var aim_depth := 0.0
 	var outline := Rect2()
 	var hull_points := PackedVector3Array()
@@ -1760,8 +1804,13 @@ class Fighter extends Node2D:
 	func on_own_side() -> bool:
 		return pass_phase == Pass.NONE or pass_phase == Pass.APPROACH
 
-	func front_clearance() -> float:
-		return strike_distance * (0.39 if long_model.is_empty() else 0.04)
+	func front_edge() -> float:
+		if wide and long_model.is_empty():
+			return edge_toward(-side_dir)
+		return muzzle
+
+	func projected_reach(target: Fighter) -> float:
+		return (unit.range_m + 0.35 * (unit.size + target.unit.size - 2.0)) * SIM_X
 
 	func neighbouring_row(target: Fighter) -> bool:
 		var adjacent := row_mask | (row_mask << 1) | (row_mask >> 1)
@@ -1771,19 +1820,26 @@ class Fighter extends Node2D:
 		var d := target.body_ground() - body_ground()
 		var source_edge := edge_toward(d.x) if wide and long_model.is_empty() else muzzle
 		var depth := d.y
-		if view != null and not view.legacy_layout and rank == 0 and target.rank == 0:
-			# Удар в соседний ряд идёт по диагонали в глубину сцены.
-			depth *= STRIKE_DEPTH
-			if not neighbouring_row(target) and absf(d.y) > view._row_extent + 1.0:
-				return false
+		var reach := strike_distance
+		if view != null and not view.legacy_layout:
+			reach = projected_reach(target)
+			if rank >= 0 and target.rank >= 0 and on_own_side() and target.on_own_side():
+				depth *= STRIKE_DEPTH
 		var gap := Vector2(maxf(0.0, absf(d.x) - source_edge - target.edge_toward(-d.x)), depth)
-		if gap.length_squared() > strike_distance * strike_distance or flip_h != (d.x < 0.0):
+		if gap.length_squared() > reach * reach or flip_h != (d.x < 0.0):
 			return false
 		if view == null or view.legacy_layout:
 			return true
 		var relative_box := Rect2(outline.position - d, outline.size)
 		var shared := relative_box.intersection(target.outline).get_area()
-		return shared <= minf(outline_area, target.outline_area) * 0.29
+		if shared > minf(outline_area, target.outline_area) * 0.29:
+			return false
+		# Из второго ряда можно достать по свободной диагонали мимо своего переднего.
+		if rank > 0 and is_instance_valid(queue_ahead) and queue_ahead.unit.alive:
+			var ahead := queue_ahead.body_ground() - body_ground()
+			if absf(d.x) > 1.0 and ahead.x / d.x > 0.0 and ahead.x / d.x < 1.0:
+				return absf(ahead.y - d.y * ahead.x / d.x) > queue_ahead.beam * 0.5
+		return true
 
 	func aim_at(target: Fighter, stable := false) -> void:
 		var d := target.body_ground() - body_ground()
@@ -1797,7 +1853,7 @@ class Fighter extends Node2D:
 	func layout_point(x: float, z: float) -> Vector2:
 		if view != null and not view.legacy_layout:
 			var depth := clampf(lerpf(lane_z, z, 0.30) * 29.0, -view._trail_depth, view._trail_depth)
-			var sx := clampf(x * 66.0, -box_limit(), box_limit())
+			var sx := clampf(x * SIM_X, -box_limit(), box_limit())
 			if rear:
 				var row := (unit.id % 3) - 1
 				sx = side_dir * (REAR_X - body_half * 0.45 + row * 37.0)
