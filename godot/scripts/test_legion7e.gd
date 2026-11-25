@@ -9,8 +9,14 @@ var battle: LegionBattle
 var fails := 0
 
 
+signal check_done
+var embedded_output := ""
+
+
 func _ready() -> void:
-	for arg in OS.get_cmdline_user_args():
+	if not embedded_output.is_empty():
+		out_dir = embedded_output
+	for arg in OS.get_cmdline_user_args() if embedded_output.is_empty() else []:
 		if arg.begins_with("out="):
 			out_dir = arg.trim_prefix("out=").trim_suffix("/")
 	Game.boot = {"new": "1"}
@@ -32,7 +38,10 @@ func finish() -> void:
 	if is_instance_valid(battle) and LegionBattle.current == battle:
 		battle.abort()
 	print("LEGION7E DONE fails=", fails)
-	get_tree().quit(int(fails > 0))
+	if embedded_output.is_empty():
+		get_tree().quit(int(fails > 0))
+	else:
+		check_done.emit()
 
 
 func until(ready: Callable, seconds: float) -> bool:

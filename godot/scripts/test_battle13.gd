@@ -11,9 +11,12 @@ var game: Game
 var battle: LegionBattle
 var fails := 0
 var output := OUT
+var run_suite := true
 
 
 func _ready() -> void:
+	if not run_suite:
+		return
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			output = arg.trim_prefix("out=")
@@ -22,8 +25,17 @@ func _ready() -> void:
 	game.can_save = false
 	game.hero_screen_auto = false
 	add_child(game)
-	if _check(await _until(func() -> bool: return game.ready_done, 150.0), "ready_done") and _check(
-			DisplayServer.get_name() != "headless" and DirAccess.make_dir_recursive_absolute(output) == OK,
+	if _check(await _until(func() -> bool: return game.ready_done, 150.0), "ready_done"):
+		await run_on(game, output)
+	else:
+		print("BATTLE13 DONE fails=", fails)
+	get_tree().quit(int(fails != 0))
+
+
+func run_on(test_game: Game, shots: String) -> void:
+	game = test_game
+	output = shots
+	if _check(DisplayServer.get_name() != "headless" and DirAccess.make_dir_recursive_absolute(output) == OK,
 			"shot directory and graphics"):
 		game.settings["autosave"] = false
 		game.city.name = "Аврелия"
@@ -34,7 +46,6 @@ func _ready() -> void:
 		await _tutorial_loss()
 		await _timeout()
 	print("BATTLE13 DONE fails=", fails)
-	get_tree().quit(int(fails != 0))
 
 
 func _check(ok: bool, reason: String) -> bool:
@@ -217,6 +228,8 @@ func _timeout() -> void:
 		_check(bool(battle.sim.result["timeout"]) and battle.time_left == 0.0 and
 			battle.battle_clock.text == "00:00", "sim timeout at zero")
 		_tick(150)
+		# Панель итога собирается по частям на кадрах дерева.
+		await _until(func() -> bool: return battle.phase == "result", 10.0)
 		var title := battle.modal.find_child("LegionBattleResultTitle", true, false) as Label if battle.modal else null
 		_check(battle.phase == "result" and title != null and title.text == I18n.t("Время вышло"), "timeout result")
 	await _close()

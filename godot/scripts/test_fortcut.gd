@@ -11,8 +11,14 @@ var clock_owned := false
 var peak_draws := 0
 
 
+signal check_done
+var embedded_output := ""
+
+
 func _ready() -> void:
-	for arg in OS.get_cmdline_user_args():
+	if not embedded_output.is_empty():
+		out = embedded_output
+	for arg: String in OS.get_cmdline_user_args() if embedded_output.is_empty() else []:
 		var pair := arg.split("=", true, 1)
 		if pair.size() == 2 and pair[0] == "out":
 			out = pair[1].trim_suffix("/") + "/"
@@ -333,4 +339,7 @@ func _finish() -> void:
 	if clock_owned:
 		Legion.clock = saved_clock
 	print("FORTCUT DONE fails=%d" % fails)
-	get_tree().quit(1 if fails > 0 else 0)
+	if embedded_output.is_empty():
+		get_tree().quit(1 if fails > 0 else 0)
+	else:
+		check_done.emit()

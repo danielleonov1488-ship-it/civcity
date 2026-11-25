@@ -16,8 +16,14 @@ var fails := 0
 var output := OUT
 
 
+signal check_done
+var embedded_output := ""
+
+
 func _ready() -> void:
-	for arg in OS.get_cmdline_user_args():
+	if not embedded_output.is_empty():
+		output = embedded_output
+	for arg in OS.get_cmdline_user_args() if embedded_output.is_empty() else []:
 		if arg.begins_with("out="):
 			output = arg.trim_prefix("out=").trim_suffix("/") + "/"
 	get_window().content_scale_size = Vector2i.ZERO
@@ -35,7 +41,10 @@ func _ready() -> void:
 	if is_instance_valid(battle):
 		battle.abort()
 	print("BOWANIM DONE fails=", fails)
-	get_tree().quit(int(fails != 0))
+	if embedded_output.is_empty():
+		get_tree().quit(int(fails != 0))
+	else:
+		check_done.emit()
 
 
 func _check(ok: bool, reason: String) -> bool:

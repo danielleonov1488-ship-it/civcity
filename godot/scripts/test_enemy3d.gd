@@ -20,10 +20,16 @@ var run_suite := true
 var report_full_contact := false
 
 
+signal check_done
+var embedded_output := ""
+
+
 func _ready() -> void:
 	if not run_suite:
 		return
-	for arg: String in OS.get_cmdline_user_args():
+	if not embedded_output.is_empty():
+		out = embedded_output
+	for arg: String in OS.get_cmdline_user_args() if embedded_output.is_empty() else []:
 		if arg.begins_with("out="):
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
 	get_window().content_scale_size = Vector2i.ZERO
@@ -48,7 +54,10 @@ func _ready() -> void:
 	Legion.V2 = saved_v2
 	Legion.v2_test = forced_v2
 	print("ENEMY3D DONE fails=", fails)
-	get_tree().quit(int(fails > 0))
+	if embedded_output.is_empty():
+		get_tree().quit(int(fails > 0))
+	else:
+		check_done.emit()
 
 
 func battle12_contacts(test_game: Game, shots: String) -> void:
@@ -727,6 +736,8 @@ func _fps() -> void:
 func _death(fighters: Array[View.Fighter]) -> void:
 	var fallen := {}
 	for view: View.Fighter in fighters:
+		if not check(is_instance_valid(view), "model still present before death check"):
+			continue
 		if check(view.unit.alive, "live model before kill " + view.unit.key):
 			fallen[view.unit.id] = view.unit.key
 			battle.sim._hurt(view.unit, view.unit.hp + 1.0)

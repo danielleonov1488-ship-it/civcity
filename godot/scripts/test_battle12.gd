@@ -45,9 +45,12 @@ var forest_after: Image
 var multi_shot := false
 var busy_shot := false
 var compare_sample := 0
+var run_suite := true
 
 
 func _ready() -> void:
+	if not run_suite:
+		return
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			output = arg.trim_prefix("out=").trim_suffix("/") + "/"
@@ -62,13 +65,21 @@ func _ready() -> void:
 	add_child(game)
 	if check(await _until(func() -> bool: return game.ready_done, 150.0), "ready_done"):
 		game.settings["autosave"] = false
-		if check(DisplayServer.get_name() != "headless", "graphics required") and check(
-				DirAccess.make_dir_recursive_absolute(output) == OK, "shot directory"):
-			DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
-			Engine.max_fps = 0
-			await _run()
-	print("BATTLE12 DONE fails=", fails)
+		await run_on(game, output)
+	else:
+		print("BATTLE12 DONE fails=", fails)
 	get_tree().quit(int(fails != 0))
+
+
+func run_on(test_game: Game, shots: String) -> void:
+	game = test_game
+	output = shots
+	if check(DisplayServer.get_name() != "headless", "graphics required") and check(
+			DirAccess.make_dir_recursive_absolute(output) == OK, "shot directory"):
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+		Engine.max_fps = 0
+		await _run()
+	print("BATTLE12 DONE fails=", fails)
 
 
 func check(ok: bool, reason: String) -> bool:
@@ -212,9 +223,10 @@ func _play(name_: String, setup: Dictionary, resolution: Vector2i, speed: float,
 	get_window().size = resolution
 	battle = LegionBattle.open(game, setup.duplicate(true), Callable(),
 		{"legion": game.city.legion, "speed": speed, "auto": false, "legacy_layout": before})
-	if not check(await _until(func() -> bool: return battle.sim != null, 30.0), "open " + label):
-		return {}
 	battle.set_process(false)
+	if not check(await _until(func() -> bool: return battle.phase == "intro", 30.0), "open " + label):
+		battle.abort()
+		return {}
 	battle.fade.hide()
 	battle.battle_view.melee_pose.connect(_striking)
 	battle.battle_view.melee_event.connect(_events)

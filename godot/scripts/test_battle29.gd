@@ -1,7 +1,9 @@
 extends Node
 
 const View = preload("res://scripts/legion_battle_view.gd")
-const OUT := "D:/CivCity/.work/stage7/battle29c"
+const Battle12 = preload("res://scripts/test_battle12.gd")
+const Battle13 = preload("res://scripts/test_battle13.gd")
+const OUT := "D:/CivCity/.work/stage7/battle29d"
 const FRAME := 1.0 / 60.0
 const VIDEO_SIZE := Vector2i(1080, 1920)
 const CLIP_START := 216
@@ -13,6 +15,8 @@ var output := OUT
 var version := "after"
 var failures := 0
 var video := true
+var diagnose := false
+var checks := false
 var air := 0
 var strikes := 0
 var focus := 0.0
@@ -26,6 +30,11 @@ func _ready() -> void:
 			version = arg.trim_prefix("mode=")
 		elif arg == "metrics-only":
 			video = false
+		elif arg == "diagnose":
+			diagnose = true
+			video = false
+		elif arg == "checks":
+			checks = true
 	get_window().content_scale_size = Vector2i.ZERO
 	get_window().size = VIDEO_SIZE if video else Vector2i(1600, 900)
 	Game.boot = {"new": "1", "hour": "11"}
@@ -40,6 +49,8 @@ func _ready() -> void:
 			Engine.max_fps = 0
 		_check(DirAccess.make_dir_recursive_absolute(output.path_join("shots")) == OK, "shot directory")
 		await _run()
+		if checks:
+			await _regression_fixtures()
 	print("BATTLE29 DONE fails=", failures)
 	get_tree().quit(int(failures > 0))
 
@@ -59,6 +70,11 @@ func _until(condition: Callable, seconds: float) -> bool:
 
 
 func _run() -> void:
+	if diagnose:
+		await _play("britannia", _campaign("britannia", ["briton", "chariot", "charioteer", "druid"]))
+		await _play("carthage", _campaign("carthage", ["elephant", "mercenary", "slinger"]))
+		await _play("16x16", _campaign("gaul", ["gaul", "gaul", "gaulArcher", "druid"], 16))
+		return
 	var legion := game.city.legion
 	var tutorial := legion.make_battle(legion.stage_info(0, 0, 0), 29)
 	tutorial["tutorial"] = "oil"
@@ -72,6 +88,32 @@ func _run() -> void:
 	await _play("parthia", _campaign("parthia", ["horseArcher", "cataphract", "numidian"]))
 	await _play("16x16", _campaign("gaul", ["gaul", "gaul", "gaulArcher", "druid"], 16))
 	await _play("promo", _promo(), true)
+
+
+func _regression_fixtures() -> void:
+	var spacing := Battle12.new()
+	spacing.run_suite = false
+	add_child(spacing)
+	await spacing.run_on(game, output.path_join("shots/battle12_" + version))
+	_check(spacing.fails <= 1, "battle spacing and contacts")
+	var scoring := Battle13.new()
+	scoring.run_suite = false
+	add_child(scoring)
+	await scoring.run_on(game, output.path_join("shots/battle13_" + version))
+	_check(scoring.fails == 0, "score and timeout")
+	game.queue_free()
+	await get_tree().process_frame
+	for name_: String in ["enemy3d", "legion7e", "bowanim", "legion12", "fortcut"]:
+		get_window().content_scale_size = Vector2i.ZERO
+		get_window().size = Vector2i(1920, 1080)
+		var script := load("res://scripts/test_%s.gd" % name_) as GDScript
+		var fixture: Node = script.new()
+		fixture.set("embedded_output", output.path_join("shots/%s_%s" % [name_, version]) + "/")
+		call_deferred("add_child", fixture)
+		await Signal(fixture, "check_done")
+		_check(int(fixture.get("fails")) <= (1 if name_ == "fortcut" else 0), name_)
+		fixture.queue_free()
+		await get_tree().process_frame
 
 
 func _campaign(region: String, foes: Array, count := 6) -> Dictionary:
@@ -135,18 +177,27 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 	var view := battle.battle_view
 	view.melee_pose.connect(_strike)
 	var track := Readings.new()
+	var spacing := FileAccess.open(output.path_join("spacing_%s_%s.csv" % [label, version]), FileAccess.WRITE) \
+		if label in ["britannia", "carthage"] else null
+	if spacing != null:
+		spacing.store_line("frame,ally_layout_p95,ally_display_p95,long_layout_p95,long_display_p95,mean_display_lag_widths")
 	var path := output.path_join("frames").path_join(label + "_" + version)
 	capture = capture and video and _check(DirAccess.make_dir_recursive_absolute(path) == OK, path)
 	var tick_times: Array[float] = []
 	var peak := 0
 	var clips := 0
+	var profile_frames := 0
 	for frame in 60 * 182:
+		view.profile_display = label == "16x16" and view._fighters.size() == 32 and frame >= 240
+		profile_frames += int(view.profile_display)
 		var started := Time.get_ticks_usec()
 		battle._process(FRAME)
 		var elapsed := Time.get_ticks_usec() - started
 		if view._fighters.size() == 32 and frame >= 240:
 			tick_times.append(elapsed / 1000.0)
 		track.measure(view, battle.phase in ["intro", "fight"], battle.tut_freeze)
+		if spacing != null:
+			_measure_spacing(view, frame, spacing)
 		peak = maxi(peak, view._fighters.size())
 		if capture and frame >= CLIP_START and clips < CLIP_FRAMES:
 			_frame_pose(view, clips)
@@ -179,11 +230,18 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 		tick_times.sort()
 		stats["script_mean_ms"] = tick_times.reduce(func(total: float, ms: float) -> float: return total + ms, 0.0) / maxf(1.0, tick_times.size())
 		stats["script_p99_ms"] = tick_times[maxi(0, ceili(tick_times.size() * 0.99) - 1)] if not tick_times.is_empty() else 0.0
+		var to_ms := 0.001 / maxf(1.0, profile_frames)
+		print("BATTLE29 PROFILE frames=%d layout=%.3f ms follower=%.3f ms gaps=%.3f ms" %
+			[profile_frames, view.layout_usec * to_ms, view.display_usec * to_ms, view.display_gaps_usec * to_ms])
 	print("BATTLE29 METRICS ", label, " ", JSON.stringify(stats))
 	if version != "before":
 		_check(track.teleports == 0, label + " teleports")
 		_check(track.quick_swaps == 0, label + " unwalked side swaps")
 		_check(air == 0 and strikes > 0, label + " contact strikes")
+		if not diagnose:
+			_check(float(stats["slide_pct"]) <= 0.30, label + " slides <= 0.30%")
+			if label == "16x16":
+				_check(float(stats["script_mean_ms"]) <= 4.60, label + " script budget <= 4.60 ms")
 	battle.abort()
 	await get_tree().process_frame
 
@@ -191,6 +249,47 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 func _strike(source: View.Fighter, target: View.Fighter) -> void:
 	strikes += 1
 	air += int(not source.can_strike(target))
+
+
+func _measure_spacing(view: View, frame: int, log_file: FileAccess) -> void:
+	var living: Array[View.Fighter] = []
+	var display: Array[Rect2] = []
+	var layout: Array[Rect2] = []
+	var lag := 0.0
+	for f: View.Fighter in view._fighters:
+		if not f.unit.alive:
+			continue
+		living.append(f)
+		var box := f.screen_box()
+		var offset := f.layout_pos - f.visible_foot()
+		display.append(box)
+		layout.append(Rect2(box.position + offset * view.world.scale, box.size))
+		lag += offset.length() / f.body_width()
+	var ally_layout: Array[float] = []
+	var ally_display: Array[float] = []
+	var long_layout: Array[float] = []
+	var long_display: Array[float] = []
+	for i in living.size():
+		var a := living[i]
+		for j in i:
+			var b := living[j]
+			if a.unit.side == "ally" and b.unit.side == "ally":
+				ally_layout.append(_box_overlap(layout[i], layout[j]))
+				ally_display.append(_box_overlap(display[i], display[j]))
+			elif a.unit.side != b.unit.side and (not a.long_model.is_empty() or not b.long_model.is_empty()):
+				long_layout.append(_box_overlap(layout[i], layout[j]))
+				long_display.append(_box_overlap(display[i], display[j]))
+	log_file.store_line("%d,%.4f,%.4f,%.4f,%.4f,%.4f" % [frame, _p95(ally_layout),
+		_p95(ally_display), _p95(long_layout), _p95(long_display), lag / maxf(1.0, living.size())])
+
+
+func _p95(values: Array[float]) -> float:
+	values.sort()
+	return values[ceili(values.size() * 0.95) - 1] if not values.is_empty() else 0.0
+
+
+func _box_overlap(a: Rect2, b: Rect2) -> float:
+	return a.intersection(b).get_area() / maxf(1.0, minf(a.get_area(), b.get_area()))
 
 
 func _frame_pose(view: View, frame: int) -> void:

@@ -18,13 +18,19 @@ var tutorial_wait := 0.0
 var longest_wait := 0.0
 
 
+signal check_done
+var embedded_output := ""
+
+
 func _ready() -> void:
-	for arg: String in OS.get_cmdline_user_args():
+	if not embedded_output.is_empty():
+		out = embedded_output
+	for arg: String in OS.get_cmdline_user_args() if embedded_output.is_empty() else []:
 		if arg.begins_with("out=") and arg.length() > 4:
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
 	if not check(DirAccess.make_dir_recursive_absolute(out) == OK, "shot directory " + out):
 		print("LEGION12 DONE fails=", fails)
-		TestSuite.finish(self, 1)
+		_finish_check(1)
 		return
 	Game.boot = {"new": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate() as Game
@@ -34,7 +40,14 @@ func _ready() -> void:
 	await _run()
 	Legion.clock = previous_clock
 	print("LEGION12 DONE fails=", fails)
-	TestSuite.finish(self, 0 if fails == 0 else 1)
+	_finish_check(int(fails != 0))
+
+
+func _finish_check(code: int) -> void:
+	if embedded_output.is_empty():
+		TestSuite.finish(self, code)
+	else:
+		check_done.emit()
 
 
 func check(ok: bool, reason: String) -> bool:
