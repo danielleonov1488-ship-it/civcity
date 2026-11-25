@@ -10,16 +10,20 @@ const FRAME := 1.0 / 60.0
 var game: Game
 var battle: LegionBattle
 var fails := 0
+var output := OUT
 
 
 func _ready() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("out="):
+			output = arg.trim_prefix("out=")
 	Game.boot = {"new": "1", "hour": "11"}
 	game = (load("res://main.tscn") as PackedScene).instantiate() as Game
 	game.can_save = false
 	game.hero_screen_auto = false
 	add_child(game)
 	if _check(await _until(func() -> bool: return game.ready_done, 150.0), "ready_done") and _check(
-			DisplayServer.get_name() != "headless" and DirAccess.make_dir_recursive_absolute(OUT) == OK,
+			DisplayServer.get_name() != "headless" and DirAccess.make_dir_recursive_absolute(output) == OK,
 			"shot directory and graphics"):
 		game.settings["autosave"] = false
 		game.city.name = "Аврелия"
@@ -50,7 +54,7 @@ func _until(condition: Callable, seconds: float) -> bool:
 func _open(setup: Dictionary, auto := false) -> bool:
 	battle = LegionBattle.open(game, setup, Callable(), {"speed": 1.0, "auto": auto, "auto_any": true})
 	battle.set_process(false)
-	if not _check(await _until(func() -> bool: return battle.sim != null, 30.0), "open battle"):
+	if not _check(await _until(func() -> bool: return battle.phase == "intro", 30.0), "open battle"):
 		await _close()
 		return false
 	battle.fade.hide()
@@ -80,7 +84,7 @@ func _shot(file: String, resolution: Vector2i) -> void:
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
 	_check(image.get_size() == resolution, "shot resolution " + file)
-	var path := OUT.path_join(file)
+	var path := output.path_join(file)
 	if _check(image.save_png(path) == OK, "save " + file):
 		print("BATTLE13 SHOT ", path)
 
