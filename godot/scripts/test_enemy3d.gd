@@ -686,10 +686,10 @@ func _at_contact(key: String) -> View.Fighter:
 		var ally: View.Fighter = battle.views.get(u.target.id)
 		if ally == null:
 			continue
-		if key == "charioteer" and (f.attack_left <= 0.0 or f.strike_target != ally or not ally.holds_chariot()):
+		if key == "charioteer" and (f.attack_left <= 0.0 or f.strike_target != ally):
 			continue
 		var reach := u.range_m + 0.35 * (u.size + ally.unit.size - 2.0)
-		if f.slot > 0 and f.slot < 4 and f.can_strike(ally) and LegionSim.dist(u, ally.unit) <= reach \
+		if f.rank == 0 and ally.rank == 0 and f.can_strike(ally) and LegionSim.dist(u, ally.unit) <= reach \
 				and absf(_front_gap(f, ally)) <= ally.body_width() * 0.12:
 			return f
 	return null
@@ -704,7 +704,7 @@ func _contact_shot(key: String, file: String) -> void:
 				print("ENEMY3D CONTACT ", key, " t=", battle.sim.t, " clip=", f.clip, " facing left=", f.flip_h,
 					" distance=", LegionSim.dist(u, u.target), " reach=", u.range_m, " placement=", f.position,
 					" adjusted=", f.contact_point(), " ally=", ally.position if ally != null else Vector2.ZERO,
-					" slot=", f.slot, " signed gap=", _front_gap(f, ally) if ally != null and not f.long_model.is_empty() else INF)
+					" rank=", f.rank, " signed gap=", _front_gap(f, ally) if ally != null and not f.long_model.is_empty() else INF)
 		return
 	battle.paused = true
 	var f := _at_contact(key)

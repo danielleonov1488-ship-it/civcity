@@ -3,11 +3,13 @@ extends Node
 const View = preload("res://scripts/legion_battle_view.gd")
 const Battle12 = preload("res://scripts/test_battle12.gd")
 const Battle13 = preload("res://scripts/test_battle13.gd")
-const OUT := "D:/CivCity/.work/stage7/battle29d"
+const OUT := "D:/CivCity/.work/stage7/battle29e"
 const FRAME := 1.0 / 60.0
 const VIDEO_SIZE := Vector2i(1080, 1920)
 const CLIP_START := 216
 const CLIP_FRAMES := 360
+const BASE_STRIKES := {"tutorial": 4, "britannia": 75, "carthage": 147, "hills": 32,
+	"parthia": 190, "16x16": 172, "promo": 228}
 
 var game: Game
 var battle: LegionBattle
@@ -20,6 +22,7 @@ var checks := false
 var air := 0
 var strikes := 0
 var focus := 0.0
+var strike_context := {}
 
 
 func _ready() -> void:
@@ -163,6 +166,7 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 	air = 0
 	strikes = 0
 	focus = 0.0
+	strike_context.clear()
 	get_window().size = VIDEO_SIZE if capture and video else Vector2i(1920, 1080)
 	await get_tree().process_frame
 	var options := {"speed": 1.0, "auto": false}
@@ -176,6 +180,7 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 	battle.fade.hide()
 	var view := battle.battle_view
 	view.melee_pose.connect(_strike)
+	view.melee_event.connect(_count_request)
 	var track := Readings.new()
 	var spacing := FileAccess.open(output.path_join("spacing_%s_%s.csv" % [label, version]), FileAccess.WRITE) \
 		if label in ["britannia", "carthage"] else null
@@ -223,7 +228,11 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 	var stats := track.result()
 	stats["air"] = air
 	stats["strikes"] = strikes
+	stats["melee_requests"] = view.melee_requests
+	stats["hidden_strikes"] = view.melee_requests - view.melee_played
+	stats["hidden_pct"] = 100.0 * int(stats["hidden_strikes"]) / maxi(1, view.melee_requests)
 	stats["peak"] = peak
+	stats["strike_context"] = strike_context
 	stats["outcome"] = battle.sim.result
 	if label == "16x16":
 		_check(peak == 32 and not tick_times.is_empty(), "16x16 timing samples")
@@ -237,6 +246,10 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 	if version != "before":
 		_check(track.teleports == 0, label + " teleports")
 		_check(track.quick_swaps == 0, label + " unwalked side swaps")
+		_check(track.front_crossings == 0 and track.wrong_side == 0, label + " front crossings")
+		_check(float(stats["overlap_pct"]) <= 1.0, label + " foot overlap <= 1%")
+		_check(strikes >= float(BASE_STRIKES[label]) * 0.80 or float(stats["hidden_pct"]) <= 25.0,
+			label + " visible or hidden strikes")
 		_check(air == 0 and strikes > 0, label + " contact strikes")
 		if not diagnose:
 			_check(float(stats["slide_pct"]) <= 0.30, label + " slides <= 0.30%")
@@ -244,6 +257,24 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 				_check(float(stats["script_mean_ms"]) <= 4.60, label + " script budget <= 4.60 ms")
 	battle.abort()
 	await get_tree().process_frame
+
+
+func _count_request(source: View.Fighter, target: View.Fighter) -> void:
+	var state := "before_front"
+	if source.view._front_active:
+		if source.pass_phase != View.Pass.NONE:
+			state = "passing"
+		elif source.rank > 0:
+			state = "queued"
+		elif source.can_strike(target):
+			state = "in_contact"
+		elif target.rear:
+			state = "rear_target"
+		elif target.rank > 0:
+			state = "queued_target"
+		else:
+			state = "front_out_of_reach"
+	strike_context[state] = int(strike_context.get(state, 0)) + 1
 
 
 func _strike(source: View.Fighter, target: View.Fighter) -> void:
@@ -301,7 +332,11 @@ func _frame_pose(view: View, frame: int) -> void:
 			sum += (view.screen(f.position).x - view.size.x * 0.5) * weight
 			weights += weight
 	if weights > 0.0:
-		focus = lerpf(focus, sum / weights, 0.036)
+		var center := sum / weights
+		if view._front_active:
+			var front := view.screen(Vector2(view._front_x, 0.0)).x - view.size.x * 0.5
+			center = lerpf(center, front, 0.80)
+		focus = lerpf(focus, center, 0.036)
 	var magnify := 2.08 + smoothstep(0.0, 12.0, frame * FRAME) * 0.12
 	view.scale = Vector2.ONE * magnify
 	view.pivot_offset = Vector2(view.size.x * 0.5, view.world.position.y)
@@ -320,6 +355,13 @@ class Readings:
 	var pairs := 0
 	var overlaps := 0
 	var deep := 0
+	var front_crossings := 0
+	var wrong_side := 0
+	var walks_around := 0
+	var queue_samples := 0
+	var queue_short := 0
+	var queue_min := INF
+	var queue_plan_min := INF
 
 	func measure(view: View, fighting: bool, frozen: bool) -> void:
 		var current := {}
@@ -343,6 +385,26 @@ class Readings:
 				side = signf(foot.x - target.visible_foot().x)
 			var target_id := target.unit.id if is_instance_valid(target) else -1
 			var last: Array = previous.get(f.unit.id, [])
+			var front_side := 0
+			if view._front_active:
+				var x := (foot.x - view._front_x) * f.side_dir
+				front_side = 1 if x >= -0.01 else -1
+				if front_side < 0 and f.on_own_side():
+					wrong_side += 1
+				if not last.is_empty() and int(last[5]) * front_side < 0:
+					if f.display_passing and absf(foot.y) >= view._trail_depth - 4.0:
+						walks_around += 1
+					else:
+						front_crossings += 1
+				var ahead := f.queue_ahead
+				if is_instance_valid(ahead) and ahead.unit.alive:
+					var edges := f.edge_toward(-f.side_dir) + ahead.edge_toward(f.side_dir)
+					var gap := ((foot.x - ahead.visible_foot().x) * f.side_dir - edges) / width
+					var planned := ((f.layout_pos.x - ahead.layout_pos.x) * f.side_dir - edges) / width
+					queue_min = minf(queue_min, gap)
+					queue_plan_min = minf(queue_plan_min, planned)
+					queue_samples += 1
+					queue_short += int(gap < View.QUEUE_GAP - 0.01)
 			var direction := Vector2.ZERO
 			var crossing := false
 			if not last.is_empty():
@@ -364,15 +426,16 @@ class Readings:
 					var old_dir: Vector2 = last[1]
 					reversals += int(direction.dot(old_dir) < -0.5)
 				if target_id == int(last[2]):
-					var walked := f.display_passing and is_instance_valid(target) and absf(foot.y - target.visible_foot().y) >= View.PASS_DEPTH
-					crossing = bool(last[4]) or (walked and moving and movement < 0.25)
+					var walked := is_instance_valid(target) and (f.display_passing or target.display_passing) \
+						and (absf(foot.y) >= view._trail_depth - 4.0 or absf(target.visible_foot().y) >= view._trail_depth - 4.0)
+					crossing = bool(last[4]) or (walked and movement < 0.25)
 					if side == 0.0:
 						side = float(last[3])
 					elif side * float(last[3]) < 0.0:
 						swaps += 1
 						quick_swaps += int(not crossing)
 						crossing = false
-			current[f.unit.id] = [foot, direction, target_id, side, crossing]
+			current[f.unit.id] = [foot, direction, target_id, side, crossing, front_side]
 		previous = current
 
 	func result() -> Dictionary:
@@ -382,4 +445,8 @@ class Readings:
 			"p99": distances[ceili(samples * 0.99) - 1] if samples else 0.0, "teleports": teleports,
 			"swaps": swaps, "unwalked_swaps": quick_swaps, "reversals_s": 60.0 * reversals / maxf(1.0, samples),
 			"slides": slides, "slide_pct": 100.0 * slides / maxf(1.0, samples),
-			"overlap_pct": 100.0 * overlaps / maxf(1.0, pairs), "deep": deep}
+			"overlap_pct": 100.0 * overlaps / maxf(1.0, pairs), "deep": deep,
+			"front_crossings": front_crossings, "wrong_side_frames": wrong_side, "walks_around": walks_around,
+			"queue_gap_min": queue_min if queue_samples > 0 else null,
+			"queue_plan_min": queue_plan_min if queue_samples > 0 else null,
+			"queue_samples": queue_samples, "queue_below_target": queue_short}

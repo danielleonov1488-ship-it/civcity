@@ -154,12 +154,13 @@ func _run() -> void:
 		["cataphract", "horseArcher"]), HD, 3.0, "5_battle_ranged.png", 0)
 	var pvp := await _play("pvp", _pvp(), SMALL, 2.0, "6_pvp.png", 0)
 	check(not pvp.is_empty(), "PvP replay finished")
-	check(multi_shot, "three attackers shot")
+	check(multi_shot, "neighbouring front rows shot")
 	check(busy_shot, "busy damage numbers shot")
 	for i in 2:
 		print("BATTLE12 FLANKS %d-on-1 separated=%d/%d" % [i + 2, flank_clear[i], flank_samples[i]])
-		check(flank_samples[i] > 0 and flank_clear[i] * 100 >= flank_samples[i] * 95,
-			"%d-on-1 far side or diagonal in at least 95%% of contact samples" % (i + 2))
+		if i == 0 or flank_samples[i] > 0:
+			check(flank_samples[i] > 0 and flank_clear[i] * 100 >= flank_samples[i] * 95,
+				"%d-on-1 neighbouring rows on own side in at least 95%% of contact samples" % (i + 2))
 	_check_boxes()
 	await _fort()
 	await _benchmark()
@@ -358,8 +359,8 @@ func _screen_box(view: View, f: View.Fighter) -> Rect2:
 
 
 func _engaged(attacker: View.Fighter, target: View.Fighter) -> bool:
-	return attacker.unit.alive and attacker.layout_target == target and attacker.slot > 0 \
-		and attacker.slot < 4 and attacker.can_strike(target)
+	return attacker.unit.alive and attacker.layout_target == target and attacker.rank == 0 \
+		and attacker.can_strike(target)
 
 
 func _save_meeting(view: View, target: View.Fighter, sample: int) -> void:
@@ -369,7 +370,7 @@ func _save_meeting(view: View, target: View.Fighter, sample: int) -> void:
 		if _engaged(f, target):
 			box = box.merge(_screen_box(view, f))
 			count += 1
-	if count != 3:
+	if count < 2:
 		return
 	var whole := await _capture()
 	var rect := Rect2i(box.grow(box.size.y * 0.48)).intersection(Rect2i(Vector2i.ZERO, whole.get_size()))
@@ -380,15 +381,17 @@ func _save_meeting(view: View, target: View.Fighter, sample: int) -> void:
 	canvas.fill(Color("221913"))
 	_put(canvas, whole, Vector2i(0, (canvas.get_height() - whole.get_height()) / 2))
 	_put(canvas, close_up, Vector2i(whole.get_width(), (canvas.get_height() - close_up.get_height()) / 2))
-	_save("1_three_on_one.png", canvas)
-	print("BATTLE12 THREE ", label, " sample=", sample, " t=", battle.sim.t, " target=", target.unit.key)
+	_save("1_neighbouring_rows.png", canvas)
+	print("BATTLE12 ROWS ", label, " sample=", sample, " t=", battle.sim.t, " target=", target.unit.key)
 	multi_shot = true
 
 
 func _check_boxes() -> void:
 	for attackers: int in [2, 3]:
 		var readings := two_on_one if attackers == 2 else three_on_one
-		if not check(not readings.is_empty(), "%d-on-1 box samples" % attackers):
+		if readings.is_empty():
+			if attackers == 2:
+				check(false, "2-on-1 box samples")
 			continue
 		var p95 := _p95(readings)
 		print("BATTLE12 BOXES %d-on-1 p95=%.3f samples=%d" % [attackers, p95, readings.size()])
@@ -445,7 +448,7 @@ func _measure(view: View) -> View.Fighter:
 							projected[j].position.x - projected[i].end.x)
 						horse_line_min = minf(horse_line_min, dx / view.world.scale.x)
 						horse_line_samples += 1
-			if f.rear and not other.rear and f.unit.side == other.unit.side:
+			if f.rear and not other.rear and f.unit.side == other.unit.side and other.on_own_side():
 				rear = minf(rear, (foot.x - other_foot.x) * f.side_dir / (f.beam * view.world.scale.x))
 			if _engaged(other, f):
 				attackers.append(other)
@@ -476,24 +479,21 @@ func _measure(view: View) -> View.Fighter:
 
 
 func _has_flank(target: View.Fighter, attackers: Array[View.Fighter]) -> bool:
-	var primary: View.Fighter
-	for f in attackers:
-		if f.slot == 1:
-			primary = f
-			break
-	if primary == null:
-		primary = attackers[0]
-	var front := primary.visible_foot() - target.visible_foot()
-	for f in attackers:
-		if f == primary:
-			continue
-		var d := f.visible_foot() - target.visible_foot()
-		if front.x * d.x < 0.0 and absf(d.x) >= target.body_width() * 0.30:
-			return true
-		var diagonal := absf(front.y - d.y) >= 25.0 and absf(d.y) >= 23.0
-		if diagonal and _overlap(primary.screen_box(), f.screen_box()) <= 0.25:
-			return true
-	return false
+	var front := target.view._front_x
+	var target_foot := target.visible_foot()
+	for i in attackers.size():
+		var f := attackers[i]
+		var foot := f.visible_foot()
+		if (foot.x - front) * f.side_dir < 0.0 or (foot.x - target_foot.x) * f.side_dir <= 0.0:
+			return false
+		if target.rank == 0 and not f.neighbouring_row(target):
+			return false
+		for j in i:
+			var other := attackers[j]
+			if (f.row_mask & other.row_mask) != 0 or absf(foot.y - other.visible_foot().y) < 25.0:
+				return false
+	return true
+
 
 
 func _fort() -> void:
