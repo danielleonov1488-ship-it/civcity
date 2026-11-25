@@ -13,7 +13,7 @@ extends Node
 ## Без vertical — 2560×1440 в promo/video/public2/shots2/<клип>.mp4; vertical — 1080×1920 в promo/video/public2/shots2/<клип>_v.mp4;
 ## петли (loop_*) — 1920×1080 в promo/video/public2/shots2/<клип>.mp4 (петлю склеивает promo/site_media.py).
 
-const FPS := 30
+var fps := 30
 const LIFE := 11.0                   # час, в который город «просыпается» перед съёмкой: дела, лавки, прогулки
 const SHOTS := "D:/CivCity/promo/video/public2/shots2"
 
@@ -147,6 +147,7 @@ var frames_total := 0
 var ev_i := 0
 var out := ""
 var pipe: FileAccess
+var encoder_errors: FileAccess
 var pid := -1
 # предметы, за которыми следит камера
 var anchor_pos := Vector3.ZERO
@@ -167,17 +168,19 @@ func _ready() -> void:
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	vertical = args.has("vertical")
+	fps = int(args.get("fps", 30))
 	process_priority = 1000           # после людей и повозки: кошку на скамью и камеру ставим последними
 	set_process(false)
 	var h0 := 9.0
 	if args.has("clip"):
 		clip_name = str(args["clip"])
-		if not CLIPS.has(clip_name):
+		var config := _clip_config(clip_name)
+		if config.is_empty():
 			push_error("нет клипа " + clip_name)
 			get_tree().quit(2)
 			return
-		h0 = float(CLIPS[clip_name].get("life", LIFE))
-	Game.boot = {"promo": "1", "noui": "1", "hour": str(h0), "shot": "D:/CivCity/.work/promo/_unused.png", "frames": "999999999"}
+		h0 = float(config.get("life", LIFE))
+	Game.boot = _boot_args(h0)
 	if clip_name.begins_with("arena") or clip_name.begins_with("circus") or args.has("circus"):
 		Game.boot["circus"] = "1"                 # зрелища: в витрине и цирк (Showcase)
 	var t0 := Time.get_ticks_msec()
@@ -198,6 +201,14 @@ func _ready() -> void:
 		await _check()
 	else:
 		_start_clip()
+
+
+func _clip_config(name: String) -> Dictionary:
+	return CLIPS.get(name, {})
+
+
+func _boot_args(hour: float) -> Dictionary:
+	return {"promo": "1", "noui": "1", "hour": str(hour), "shot": "D:/CivCity/.work/promo/_unused.png", "frames": "999999999"}
 
 
 func _frames(n: int) -> void:
@@ -232,7 +243,7 @@ func _parse_size(def: Vector2i) -> Vector2i:
 
 func _load_clip(name: String) -> void:
 	clip_name = name
-	clip = CLIPS[name]
+	clip = _clip_config(name)
 	var v: Dictionary = clip.get("v", {}) if vertical else {}
 	dur = float(v.get("dur", clip["dur"]))
 	if args.has("dur"):
@@ -273,9 +284,9 @@ func _start_clip() -> void:
 	out = str(args.get("out", SHOTS.path_join(clip_name + ("_v" if vertical else "") + ".mp4")))
 	DirAccess.make_dir_recursive_absolute(out.get_base_dir())
 	_setup(true)
-	warm_n = int(float(args.get("warm", str(clip.get("warm", 8.0)))) * FPS)
-	life_until = frames_total + maxi(0, warm_n - 75)    # последние 2,5 с прогрева — уже при свете клипа
-	rec_n = int(round(dur * FPS))
+	warm_n = int(float(args.get("warm", str(clip.get("warm", 8.0)))) * fps)
+	life_until = frames_total + maxi(0, warm_n - roundi(2.5 * fps))
+	rec_n = int(round(dur * fps))
 	state = "warm"
 	RenderingServer.frame_post_draw.connect(_post_draw)
 	set_process(true)
@@ -297,37 +308,48 @@ func _setup(full: bool) -> void:
 
 func _process(_dt: float) -> void:
 	frames_total += 1
-	AnimClock.movie = frames_total / float(FPS)
+	AnimClock.movie = frames_total / float(fps)
 	if state == "hold":
 		_pose(hold_t)
 	if state == "warm":
 		warm_i += 1
 		_pose(0.0)
-		if warm_i >= warm_n and (_gate() or warm_i > warm_n + 40 * FPS):
-			_rec_start()
+		if warm_i >= warm_n and (_gate() or warm_i > warm_n + 40 * fps):
+			if not _rec_start():
+				return
 			state = "rec"
 			rec_i = 0
 	if state == "rec":
-		var t := rec_i / float(FPS)
+		var t := rec_i / float(fps)
 		_events(t)
 		_pose(t)
 		_log_cam()
 
 
-func _rec_start() -> void:
+func _rec_start() -> bool:
 	pin_cart = false
 	var ff := str(args.get("ffmpeg", "ffmpeg"))
 	var crf := str(args.get("crf", "13"))
-	var a := PackedStringArray(["-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % [W, H],
-		"-r", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", str(args.get("preset", "faster")), "-crf", crf,
+	var a := PackedStringArray(["-y", "-hide_banner", "-loglevel", "error"])
+	var size_text := "%dx%d" % [W, H]
+	if args.has("rawpipe"):
+		# В сборке ffmpeg из Remotion есть декодер RGB, но нет демультиплексора rawvideo.
+		a.append_array(["-f", "image2pipe", "-c:v", "rawvideo", "-frame_size", str(W * H * 3),
+			"-pixel_format", "rgb24", "-video_size", size_text, "-framerate", str(fps)])
+	else:
+		a.append_array(["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", size_text, "-r", str(fps)])
+	a.append_array(["-i", "-", "-an", "-c:v", "libx264", "-preset", str(args.get("preset", "faster")), "-crf", crf,
+		"-threads", str(args.get("threads", "6")),
 		"-pix_fmt", "yuv420p", "-movflags", "+faststart", out])
 	var pr := OS.execute_with_pipe(ff, a)
 	if pr.is_empty():
 		push_error("ffmpeg не запустился")
 		get_tree().quit(3)
-		return
+		return false
 	pipe = pr["stdio"]
+	encoder_errors = pr["stderr"]
 	pid = int(pr["pid"])
+	return true
 
 
 func _post_draw() -> void:
@@ -342,9 +364,10 @@ func _post_draw() -> void:
 		img.resize(W, H, Image.INTERPOLATE_LANCZOS)
 	pipe.store_buffer(img.get_data())
 	if rec_i == 0 or rec_i == rec_n / 2 or rec_i == rec_n - 1:
-		var pv := "D:/CivCity/.work/promo/cam_rec"
+		var pv := str(args.get("shots", "D:/CivCity/.work/promo/cam_rec"))
 		DirAccess.make_dir_recursive_absolute(pv)
-		img.save_jpg(pv.path_join(out.get_file().get_basename() + "_%d.jpg" % (0 if rec_i == 0 else (1 if rec_i == rec_n / 2 else 2))), 0.88)
+		var shot_name := str(args.get("shot_name", out.get_file().get_basename()))
+		img.save_jpg(pv.path_join(shot_name + "_%d.jpg" % (0 if rec_i == 0 else (1 if rec_i == rec_n / 2 else 2))), 0.88)
 	rec_i += 1
 	if rec_i >= rec_n:
 		state = "done"
@@ -359,6 +382,12 @@ func _finish() -> void:
 	while OS.is_process_running(pid) and Time.get_ticks_msec() - t0 < 120000:
 		OS.delay_msec(100)
 	var ok := FileAccess.file_exists(out)
+	if encoder_errors != null:
+		if not ok and not OS.is_process_running(pid):
+			var report := encoder_errors.get_as_text()
+			if not report.is_empty():
+				print("PROMO_CAM ffmpeg: ", report)
+		encoder_errors.close()
 	print("PROMO_CAM done %s: %s, %d frames" % [clip_name, "ok" if ok else "FAILED", rec_n])
 	get_tree().quit(0 if ok else 4)
 
@@ -489,7 +518,7 @@ func _setup_venue() -> void:
 
 func _on_sfx(kind: String, at: Vector3, vol: float) -> void:
 	if state == "rec":
-		sfx_log.append([rec_i / float(FPS), kind, at.x, at.y, at.z, vol])
+		sfx_log.append([rec_i / float(fps), kind, at.x, at.y, at.z, vol])
 
 
 func _log_cam() -> void:
@@ -504,14 +533,16 @@ func _log_cam() -> void:
 	if not V.is_empty() and V["act"] is CircusShow:
 		for ch: Dictionary in V["act"].chariots:
 			near = minf(near, (ch["n"] as Node3D).global_position.distance_to(cam.global_position))
-	cam_log.append([rec_i / float(FPS), cam.global_position.x, cam.global_position.y, cam.global_position.z, n, c.x, c.y, c.z, near])
+	cam_log.append([rec_i / float(fps), cam.global_position.x, cam.global_position.y, cam.global_position.z, n, c.x, c.y, c.z, near])
 
 
 func _save_logs() -> void:
-	if not (follow in ["venue", "chariot"]):
+	if args.has("nologs") or not (follow in ["venue", "chariot"]):
 		return
 	var f := FileAccess.open(out.get_basename() + "_sfx.json", FileAccess.WRITE)
-	f.store_string(JSON.stringify({"fps": FPS, "dur": dur, "sfx": sfx_log, "cam": cam_log}))
+	if f == null:
+		return
+	f.store_string(JSON.stringify({"fps": fps, "dur": dur, "sfx": sfx_log, "cam": cam_log}))
 	f.close()
 
 
@@ -766,7 +797,7 @@ func _check() -> void:
 	state = "hold"
 	set_process(true)
 	for nm in names:
-		if not CLIPS.has(nm):
+		if _clip_config(nm).is_empty():
 			continue
 		_load_clip(nm)
 		cat = {}
@@ -778,7 +809,7 @@ func _check() -> void:
 			hold_t = u * dur
 			await _frames(75 if first else 30)
 			var guard := 0
-			while first and not _gate() and guard < 40 * FPS:
+			while first and not _gate() and guard < 40 * fps:
 				await _frames(1)
 				guard += 1
 			first = false
@@ -814,10 +845,10 @@ func _stills() -> void:
 		await _frames(150 if first or follow == "cart" else 70)
 		if follow == "cat":
 			var guard := 0
-			while not (not cat.is_empty() and cat["state"] == "pet") and guard < 40 * FPS:
+			while not (not cat.is_empty() and cat["state"] == "pet") and guard < 40 * fps:
 				await _frames(1)
 				guard += 1
-			await _frames(int(float(s[2]) * FPS))
+			await _frames(int(float(s[2]) * fps))
 		first = false
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()

@@ -25,6 +25,7 @@ promo/video/public/music/
 promo/audio/
 promo/music-preview/
 promo/shots2/
+promo/gameplay_*/
 promo/video/public2/
 # ролики-петли и снимки для сайта (большие файлы — выкладываются на сервер, не в git)
 site_media/
