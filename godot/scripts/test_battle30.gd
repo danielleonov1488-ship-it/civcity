@@ -46,7 +46,7 @@ func _ready() -> void:
 	if _check(await _until(func() -> bool: return game.ready_done, 150.0), "ready_done"):
 		game.settings["autosave"] = false
 		DirAccess.make_dir_recursive_absolute(output)
-		for label: String in ["tutorial", "stage", "promo", "britannia", "carthage", "big"]:
+		for label: String in ["tutorial", "stage", "promo", "britannia", "carthage", "five"]:
 			if only.is_empty() or label in only:
 				if not base_only:
 					await _play(label, false)
@@ -95,8 +95,8 @@ func _setup(label: String) -> Dictionary:
 			return _campaign("britannia", ["briton", "chariot", "charioteer", "druid"])
 		"carthage":
 			return _campaign("carthage", ["elephant", "mercenary", "slinger"])
-		"big":
-			return _campaign("gaul", ["gaul", "gaul", "gaulArcher", "druid"], 10)
+		"five":
+			return _campaign("gaul", ["gaul", "gaul", "gaul", "gaulArcher", "druid"], 5)
 	return {}
 
 
@@ -143,8 +143,13 @@ func _promo() -> Dictionary:
 	return setup
 
 
-func _count_request(_source, _target) -> void:
+var last_attack := {}
+var sim_time := 0.0
+
+
+func _count_request(source, _target) -> void:
 	requests += 1
+	last_attack[source.unit.id] = sim_time
 
 
 func _count_played(_source, _target) -> void:
@@ -187,8 +192,14 @@ func _play(label: String, old: bool) -> void:
 	var idle := 0
 	var melee_samples := 0
 	var clips := 0
+	var afk := 0.0
+	var afk_by := {}
+	var inside_by := {}
+	var behind_by := {}
+	last_attack.clear()
 	for frame in 60 * 182:
 		battle._process(FRAME)
+		sim_time = battle.sim.t
 		var fighting: bool = battle.phase in ["intro", "fight"] and not battle.tut_freeze
 		var alive: Array = []
 		for f in view._fighters:
@@ -208,11 +219,18 @@ func _play(label: String, old: bool) -> void:
 				if f.rear or f.unit.entering:
 					continue
 				melee_samples += 1
+				var u = f.unit
+				if not u.ranged() and u.speed > 0.0 and u.heal_pow <= 0.0 and not u.moving and u.target != null and u.target.alive:
+					if sim_time - float(last_attack.get(u.id, sim_time - 99.0 if sim_time > 3.0 else sim_time)) > 2.5:
+						afk += FRAME
+						var why := "%s slot=%d rate=%.1f stun=%s" % [u.key, u.slot_i, u.rate, str(u.stun_t > sim_time)]
+						afk_by[why] = float(afk_by.get(why, 0.0)) + FRAME
 				var t = f.layout_target
 				if t != null and t.unit.alive and f.contact_blend >= 0.95 and t.long_model.is_empty() and f.long_model.is_empty():
 					engaged += 1
 					if (f.position.x - t.position.x) * f.side_dir < -0.15 * width:
 						behind += 1
+						behind_by[f.unit.key] = int(behind_by.get(f.unit.key, 0)) + 1
 						if (f.goal.x - t.goal.x) * f.side_dir < -0.15 * width:
 							behind_goal += 1
 						if f.slot == 1 and t.layout_target == f:
@@ -229,6 +247,15 @@ func _play(label: String, old: bool) -> void:
 					var w: float = minf(a.body_width(), b.body_width())
 					if absf(a.position.x - b.position.x) < w * 0.35 and absf(a.position.y - b.position.y) < 22.0:
 						inside += 1
+						var pair_key := "%s/%s" % [a.unit.key, b.unit.key]
+						inside_by[pair_key] = int(inside_by.get(pair_key, 0)) + 1
+		if label == "promo" and frame in [600, 1200, 2400]:
+			for f in alive:
+				var u = f.unit
+				var tg = u.target
+				print("B30DBG f=%d %s %s x=%.2f z=%.2f px=%.0f tgt=%s tx=%.2f slot=%d s=%.0f lt=%s" % [frame, u.side, u.key, u.x, u.z, f.position.x,
+					tg.key if tg != null else "-", tg.x if tg != null else 0.0, u.slot_i, u.slot_s,
+					f.layout_target.unit.key if f.layout_target != null else "-"])
 		if shooting and frame >= CLIP_START and clips < CLIP_FRAMES:
 			await RenderingServer.frame_post_draw
 			var image := get_viewport().get_texture().get_image()
@@ -247,6 +274,7 @@ func _play(label: String, old: bool) -> void:
 		"behind_goal": behind_goal, "behind_mutual": behind_mutual, "behind": behind,
 		"inside_pct": snappedf(100.0 * inside / maxi(1, pairs), 0.001),
 		"idle_pct": snappedf(100.0 * idle / maxi(1, melee_samples), 0.01),
+		"afk_seconds": snappedf(afk, 0.01), "afk_by": afk_by, "behind_by": behind_by, "inside_by": inside_by,
 		"strikes_played": played, "strike_requests": requests, "clips": clips,
 		"outcome": battle.sim.result,
 	}

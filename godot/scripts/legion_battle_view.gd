@@ -33,6 +33,8 @@ const PEOPLE_FRAME := 1.0 / 120.0
 const DISPLAY_GAIN := 7.0
 # Бойцы занимают всю ширину тропы в глубину, как в Hustle Castle, а не узкую полосу посередине.
 const DEPTH_SCALE := 40.0
+# Бойцы стоят там, где их поставил расчёт боя; картинка только плавно ведёт фигуры.
+const SIM_POSITIONS := true
 const DISPLAY_ACCEL := 6.0
 const FIELDS := {"forest": 2, "darkforest": 2, "swamp": 3, "labyrinth": 4,
 	"rocks": 4, "desert": 4, "hades": 4}
@@ -473,7 +475,7 @@ func request_strike(source: Fighter, target: Fighter, action := "") -> void:
 		source.attack(action)
 		return
 	melee_event.emit(source, target)
-	if legacy_layout:
+	if legacy_layout or SIM_POSITIONS:
 		source.attack(action)
 		melee_pose.emit(source, target)
 		return
@@ -486,6 +488,13 @@ func request_strike(source: Fighter, target: Fighter, action := "") -> void:
 func _fit_foot(f: Fighter, pos: Vector2) -> Vector2:
 	var limits := _foot_limits(f)
 	return Vector2(clampf(pos.x, limits.x, limits.y), clampf(pos.y, -_trail_depth, _trail_depth))
+
+
+func _sim_foot(f: Fighter, pos: Vector2) -> Vector2:
+	# Только край поля: место бойца задаёт расчёт боя.
+	var left := _field_bounds.position.x - f.outline.position.x + 12.0
+	var right := _field_bounds.end.x - f.outline.end.x - 12.0
+	return Vector2(clampf(pos.x, left, maxf(left, right)), clampf(pos.y, -_trail_depth, _trail_depth))
 
 
 func _foot_limits(f: Fighter) -> Vector2:
@@ -570,6 +579,12 @@ func _plan_layout_profiled() -> void:
 			target.approachers.append(f)
 		if f.layout_target != previous:
 			f.slot = 0
+	if SIM_POSITIONS:
+		# Места у цели выбирает сам расчёт боя (как в Hustle Castle): рисуем бойцов там, где они в бою.
+		for f in _fighters:
+			if f.layout_target != null:
+				f.slot = 1
+		return
 	for target in _fighters:
 		if not target.approachers.is_empty():
 			if target.approachers.size() >= 2:
@@ -816,6 +831,12 @@ func _engagement_goal_profiled(f: Fighter) -> void:
 
 func _layout(weight: float) -> void:
 	_wide_fighters.clear()
+	if SIM_POSITIONS:
+		for f in _fighters:
+			if f.unit.alive:
+				f.spawn_pending = false
+				f.position = _sim_foot(f, f.layout_point(f.unit.x, f.unit.z))
+		return
 	for f in _fighters:
 		if not f.unit.alive:
 			continue
@@ -833,7 +854,7 @@ func _layout(weight: float) -> void:
 		if f.spawn_pending:
 			f.spawn_pending = false
 			f.position = _fit_foot(f, f.position)
-		var path := _around(f, goal) if not f.wide and not f.rear else goal
+		var path := goal if SIM_POSITIONS or f.wide or f.rear else _around(f, goal)
 		f.next_foot = _fit_foot(f, f.position.lerp(path, minf(1.0, weight * 2.0) if f.passing else weight))
 		if f.wide:
 			_wide_fighters.append(f)
@@ -1723,9 +1744,9 @@ class Fighter extends Node2D:
 
 	func layout_point(x: float, z: float) -> Vector2:
 		if view != null and not view.legacy_layout:
-			var depth := clampf(lerpf(lane_z, z, 0.30) * LegionBattleView.DEPTH_SCALE, -view._trail_depth, view._trail_depth)
+			var depth := clampf((z if LegionBattleView.SIM_POSITIONS else lerpf(lane_z, z, 0.30)) * LegionBattleView.DEPTH_SCALE, -view._trail_depth, view._trail_depth)
 			var sx := clampf(x * 66.0, -box_limit(), box_limit())
-			if rear:
+			if rear and not LegionBattleView.SIM_POSITIONS:
 				var row := (unit.id % 3) - 1
 				sx = side_dir * (REAR_X - body_half * 0.45 + row * 37.0)
 				depth = clampf(depth + row * 14.0, -view._trail_depth, view._trail_depth)
