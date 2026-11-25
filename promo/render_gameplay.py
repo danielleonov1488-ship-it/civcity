@@ -1,4 +1,4 @@
-"""Съёмка PROMO27 из рабочей копии через общий замок Godot."""
+"""Съёмка игровых клипов из рабочей копии через общий замок Godot."""
 
 import argparse
 import json
@@ -20,6 +20,7 @@ CATEGORIES = {
     "B": "Как играть",
     "C": "Легион",
     "D": "Город с нуля",
+    "E": "Жизнь города",
 }
 # Имя, длительность, широкий дубль, подпись для монтажёра.
 CLIPS = {
@@ -62,11 +63,17 @@ CLIPS = {
     "C": [
         ("fort", 11, True, "В разрезе форта видно, как люди работают в комнатах."),
         ("recruit", 10, False, "Игрок открывает список новобранцев и принимает бойца."),
-        ("battle", 12, True, "Отряды сходятся в коротком игровом бою."),
+        ("battle", 12, True, "Герой ведёт легионеров и конницу в бой с галлами."),
         ("campaign", 10, False, "Карта похода с лагерями и этапами кампании."),
     ],
     "D": [
-        ("cityrise", 20, True, "Из пустого участка вырастает город со своими кварталами."),
+        ("cityrise", 20, True, "Римский город растёт кварталами, от первых домов до рынка, форумов и садов."),
+    ],
+    "E": [
+        ("life_porters", 8, False, "Жители несут корзину и амфору по главной улице."),
+        ("life_cat_wall", 8, False, "Рыжая кошка на садовой стенке у виллы."),
+        ("life_market", 8, False, "У фруктовой лавки на площади идёт торговля."),
+        ("life_lamps", 8, False, "На улице в сумерках загораются фонари."),
     ],
 }
 
@@ -107,13 +114,13 @@ def available_path(path):
     raise RuntimeError(f"Нет свободного имени рядом с {path}")
 
 
-def render(name, duration, orientation, out, args):
+def render(name, duration, orientation, out, args, scene):
     ffmpeg, ffprobe = binaries()
     w, h = SIZES[orientation]
     video_dir = out / orientation
-    shots = STAGE / "shots" / orientation
-    logs = STAGE / "render_logs"
-    saves = STAGE / "saves"
+    shots = args.stage / "shots" / orientation
+    logs = args.stage / "render_logs"
+    saves = args.stage / "saves"
     for folder in (video_dir, shots, logs, saves):
         os.makedirs(folder, exist_ok=True)
     path = video_dir / f"{name}.mp4"
@@ -122,11 +129,12 @@ def render(name, duration, orientation, out, args):
         return True
     pending = available_path(logs / f"{orientation}_{name}.mp4")
     env = dict(os.environ, ONE_GODOT="1", GPU_TIMEOUT="900",
-               CIVCITY_NOLOGIN="1", CIVCITY_SAVEDIR=saves.as_posix())
+               CIVCITY_NOLOGIN="1", CIVCITY_SAVEDIR=saves.as_posix(),
+               CIVCITY_PROJ=LANE.as_posix())
     bash = Path(os.environ["ProgramFiles"]) / "Git/usr/bin/bash.exe"
     capture = [
         bash, "/d/CivCity/.work/py/gpu_run.sh", "--rendering-method", "forward_plus",
-        "--fixed-fps", str(FPS), f"res://{args.scene}.tscn", "--", f"clip={name}", f"fps={FPS}",
+        "--fixed-fps", str(FPS), f"res://{scene}.tscn", "--", f"clip={name}", f"fps={FPS}",
         f"dur={duration}", f"size={w}x{h}", f"ffmpeg={Path(ffmpeg).as_posix()}",
         "rawpipe", "crf=14", "threads=6", "nologs", f"shot_name={name}",
         f"out={pending.as_posix()}", f"shots={shots.as_posix()}",
@@ -137,7 +145,8 @@ def render(name, duration, orientation, out, args):
     with available_path(logs / f"{orientation}_{name}.txt").open("x", encoding="utf-8") as log:
         result = subprocess.run(capture, env=env, cwd=LANE, stdout=log, stderr=log)
         log_path = log.name
-    if result.returncode or not probe(pending, ffprobe, (w, h), duration):
+    log_text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    if result.returncode or "SCRIPT ERROR" in log_text or not probe(pending, ffprobe, (w, h), duration):
         print(f"Сбой {orientation}/{name} · {log_path}", flush=True)
         return False
     if path.exists():
@@ -153,8 +162,9 @@ def main():
     parser.add_argument("--format", choices=[*SIZES, "both"], default="both")
     parser.add_argument("--group", choices=CATEGORIES)
     parser.add_argument("--out", type=Path, default=HANDOFF)
+    parser.add_argument("--stage", type=Path, default=STAGE, help="Папка журналов, кадров и тестовых сохранений")
     parser.add_argument("--redo", action="store_true", help="Переснять, сохранив предыдущий дубль в журнале")
-    parser.add_argument("--scene", default="promo27_cam", help=argparse.SUPPRESS)
+    parser.add_argument("--scene", help=argparse.SUPPRESS)
     args = parser.parse_args()
     names = {clip[0] for category in CLIPS.values() for clip in category}
     if unknown := set(args.clips) - names:
@@ -166,12 +176,15 @@ def main():
         for group, category in CLIPS.items():
             if args.group and group != args.group:
                 continue
+            if group == "E" and not (args.group or args.clips):
+                continue
             for name, duration, wide, _ in category:
                 if args.clips and name not in args.clips:
                     continue
                 if orientation == "horizontal" and not (wide or args.clips):
                     continue
-                if not render(name, duration, orientation, args.out.resolve(), args):
+                scene = args.scene or ("promo28_life" if group == "E" else "promo27_cam")
+                if not render(name, duration, orientation, args.out.resolve(), args, scene):
                     failed.append(f"{orientation}/{name}")
     if failed:
         print("Требуют пересъёмки: " + ", ".join(failed), file=sys.stderr)

@@ -1,4 +1,4 @@
-"""Листы контактов из готовых проверенных дублей PROMO27."""
+"""Каталог и лист контактов из готовых игровых клипов."""
 
 import argparse
 from html import escape
@@ -8,10 +8,11 @@ import subprocess
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageStat
 
-from render_gameplay import CATEGORIES, CLIPS, HANDOFF, SIZES, STAGE, binaries, probe
+from render_gameplay import CATEGORIES, CLIPS, ROOT, SIZES, STAGE, binaries, probe
 
+CATALOG = ROOT / "promo/gameplay_20261125"
 FORMATS = {"vertical": "Вертикальные · 9:16", "horizontal": "Горизонтальные · 16:9"}
-POSTERS = {"fruit_stall": 0.48, "hire": 0.7, "battle": 0.38, "cityrise": 0.9}
+POSTERS = {"fruit_stall": 0.48, "hire": 0.7, "battle": 0.38, "cityrise": 0.96}
 
 
 def frame(ffmpeg, src, seconds, destination, width):
@@ -21,7 +22,7 @@ def frame(ffmpeg, src, seconds, destination, width):
     ], check=True)
 
 
-def collect(out, rejected):
+def collect(out, rejected, media):
     ffmpeg, ffprobe = binaries()
     groups = []
     for orientation, size in SIZES.items():
@@ -31,7 +32,7 @@ def collect(out, rejected):
             entries = []
             for name, dur, _, caption in category:
                 relative = f"{orientation}/{name}.mp4"
-                src = out / relative
+                src = media / relative
                 if relative in rejected or not probe(src, ffprobe, size, dur):
                     continue
                 thumb = folder / f"{name}.jpg"
@@ -43,7 +44,7 @@ def collect(out, rejected):
     return groups
 
 
-def make_html(out, groups):
+def make_html(out, groups, media):
     orientation = ""
     content = []
     for ratio, group, entries in groups:
@@ -54,8 +55,9 @@ def make_html(out, groups):
         for relative, thumb, dur, caption, _ in entries:
             file = Path(relative).name
             img = thumb.relative_to(out).as_posix()
+            href = Path(os.path.relpath(media / relative, out)).as_posix()
             content.append(
-                f'<article><a href="{relative}"><img loading="lazy" src="{img}" alt="{escape(caption)}">'
+                f'<article><a href="{escape(href)}"><img loading="lazy" src="{img}" alt="{escape(caption)}">'
                 f'<div class="meta"><strong>{file}</strong><span>{dur:g} с</span></div></a>'
                 f'<p>{escape(caption)}</p></article>'
             )
@@ -142,7 +144,7 @@ def make_jpg(out, groups):
     sheet.save(out / "contact_sheet.jpg", quality=92, optimize=True)
 
 
-def review(out, groups):
+def review(media, groups):
     ffmpeg, _ = binaries()
     dest = STAGE / "review"
     os.makedirs(dest, exist_ok=True)
@@ -153,7 +155,7 @@ def review(out, groups):
             samples = []
             for label, fraction in (("start", 0.0), ("mid", 0.5), ("end", 0.98)):
                 pic = dest / f"{name}_{label}.jpg"
-                src = out / relative
+                src = media / relative
                 if not pic.exists() or pic.stat().st_mtime < src.stat().st_mtime:
                     frame(ffmpeg, src, duration * fraction, pic, 250)
                 with Image.open(pic) as im:
@@ -177,18 +179,20 @@ def review(out, groups):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", type=Path, default=HANDOFF)
+    parser.add_argument("--out", type=Path, default=CATALOG)
+    parser.add_argument("--media", type=Path, help="Читать клипы из другой папки, не записывая туда каталог")
     parser.add_argument("--exclude", type=Path, help="Список отклонённых дублей, один путь на строку")
     parser.add_argument("--review", action="store_true")
     args = parser.parse_args()
     rejected = set(args.exclude.read_text(encoding="utf-8").splitlines()) if args.exclude else set()
-    groups = collect(args.out, rejected)
+    media = args.media or args.out
+    groups = collect(args.out, rejected, media)
     if not groups:
         parser.exit(1, "Нет проверенных клипов\n")
-    make_html(args.out, groups)
+    make_html(args.out, groups, media)
     make_jpg(args.out, groups)
     if args.review:
-        review(args.out, groups)
+        review(media, groups)
     for ratio in SIZES:
         clips = [entry for key, _, entries in groups if key == ratio for entry in entries]
         print(f"{ratio}: {len(clips)} клипов, {sum(e[2] for e in clips):g} с, {sum(e[4] for e in clips) / 1048576:.1f} МиБ")
