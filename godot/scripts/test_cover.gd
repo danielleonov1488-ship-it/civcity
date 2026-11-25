@@ -411,7 +411,7 @@ func _shop_selected() -> void:
 	check(cover.state == "" and cover.want.is_empty(), "сняли выбор — подсветка гаснет")
 
 
-## Новая лавка без дороги или найма действительно никого не снабжает.
+## Для охвата нужна дорога. При ручном найме виден будущий охват.
 func _shop_access() -> void:
 	var isolated := {}
 	for p in [Vector2(158, 183), Vector2(174, 183), Vector2(184, 192)]:
@@ -431,8 +431,8 @@ func _shop_access() -> void:
 		c.auto_hire = false
 		var no_staff := Cover.place_sets(c, "stall_fruit", pl["pos"], not pl.get("noroad", false))
 		var shop: Dictionary = c.place("stall_fruit", pl["pos"], pl["yaw"], pl["variant"], pl["color"])
-		check(no_staff["green"].is_empty() and no_staff["why"] == "staff" and shop["why"] == "staff" and shop["serves"].is_empty(),
-			"при ручном найме новая лавка ждёт работников")
+		check(int(no_staff["new"]) + int(no_staff["dup"]) > 0 and no_staff["why"] == "staff" and shop["why"] == "staff" and shop["serves"].is_empty(),
+			"при ручном найме виден будущий охват, а построенная лавка ждёт работников")
 		c.auto_hire = true
 		c.remove(shop, false)
 

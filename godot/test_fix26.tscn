@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/test_fix26.gd" id="1"]
+
+[node name="TestFix26" type="Node3D"]
+script = ExtResource("1")

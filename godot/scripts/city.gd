@@ -2324,14 +2324,22 @@ func _shop_targets(houses: Array, indices: Array, pos: Vector2, radius: float) -
 	return near
 
 
-## Охват новой лавки в момент открытия. При ручном найме места пока пусты.
+## Охват новой лавки. Пока ждём работников, показываем, сколько домов она потянет с полным штатом.
 func preview_shop(type: String, pos: Vector2, road: bool) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	if not road:
 		return {"why": "road", "serves": []}
-	if manual_hiring() and d.has("jobs"):
-		return {"why": "staff", "serves": []}
 	var shop := {"type": type, "pos": pos}
+	if manual_hiring() and d.has("jobs"):
+		var stores := []
+		if d.get("store", false):
+			for b: Dictionary in buildings.values():
+				if def(b)["kind"] == "store" and b.get("active", false):
+					stores.append(b)
+		var serves := []
+		if _shop_block(d, shop, road, 1.0, stores, goods) == "":
+			serves = _preview_shop_serves(d, pos, buildings.values().filter(is_house), 1.0)
+		return {"why": "staff", "serves": serves}
 	var houses := []
 	var residents := {}
 	var jobs := {}
@@ -2368,10 +2376,18 @@ func preview_shop(type: String, pos: Vector2, road: bool) -> Dictionary:
 	var why := _shop_block(d, shop, road, staff, stores, supply)
 	var serves := []
 	if why == "":
-		var near := _shop_targets(houses, range(houses.size()), pos, shop_range(d))
-		for i in mini(_shop_capacity(d, staff), near.size()):
-			serves.append(near[i][1]["id"])
+		serves = _preview_shop_serves(d, pos, houses, staff)
+	elif why == "staff" and _shop_block(d, shop, road, 1.0, stores, supply) == "":
+		serves = _preview_shop_serves(d, pos, houses, 1.0)
 	return {"why": why, "serves": serves}
+
+
+func _preview_shop_serves(d: Dictionary, pos: Vector2, houses: Array, staff: float) -> Array:
+	var near := _shop_targets(houses, range(houses.size()), pos, shop_range(d))
+	var serves := []
+	for i in mini(_shop_capacity(d, staff), near.size()):
+		serves.append(near[i][1]["id"])
+	return serves
 
 
 ## Дальность лавки (еда — дальше после исследования «reach1»), как в compute()
