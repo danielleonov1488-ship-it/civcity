@@ -4,7 +4,7 @@ const View = preload("res://scripts/legion_battle_view.gd")
 const Battle12 = preload("res://scripts/test_battle12.gd")
 const Battle13 = preload("res://scripts/test_battle13.gd")
 const SimDump = preload("res://scripts/test_sim_dump.gd")
-const OUT := "D:/CivCity/.work/stage7/battle29h"
+const OUT := "D:/CivCity/.work/stage7/battle29i"
 const BASE_HIDDEN := {"tutorial": 0, "britannia": 91, "carthage": 209, "hills": 33,
 	"parthia": 161, "16x16": 254, "promo": 70}
 const FRAME := 1.0 / 60.0
@@ -12,7 +12,7 @@ const GAME_SIZE := Vector2i(1920, 1080)
 const SMALL_SIZE := Vector2i(1280, 720)
 const PROMO_SIZE := Vector2i(1080, 1920)
 const CLIP_START := 216
-const CLIP_FRAMES := 360
+const CLIP_FRAMES := 600
 
 var game: Game
 var battle: LegionBattle
@@ -29,7 +29,7 @@ var focus := 0.0
 var zoom := 2.08
 var strike_context := {}
 var requests: Array[Dictionary] = []
-var latest_request := {}
+var request_index := {}
 var played_requests := 0
 var arrived_pairs := 0
 var arrived_outside := 0
@@ -213,7 +213,7 @@ func _play(label: String, setup: Dictionary, capture := false, resolution := GAM
 	zoom = 2.08
 	strike_context.clear()
 	requests.clear()
-	latest_request.clear()
+	request_index.clear()
 	played_requests = 0
 	arrived_pairs = 0
 	arrived_outside = 0
@@ -248,6 +248,10 @@ func _play(label: String, setup: Dictionary, capture := false, resolution := GAM
 	var tick_times: Array[float] = []
 	var peak := 0
 	var clips := 0
+	var duel := FileAccess.open(output.path_join("promo_duel_%s.csv" % version), FileAccess.WRITE) \
+		if capture and label == "promo" else null
+	if duel != null:
+		duel.store_line("frame,time,fighter,target,left,top,right,bottom,target_left,target_top,target_right,target_bottom,signed_gap,pass,target_pass,rank,target_rank")
 	var frame_count := 1 if still else CLIP_FRAMES
 	var start_frame := CLIP_START + 150 if still else CLIP_START
 	var profile_frames := 0
@@ -271,6 +275,8 @@ func _play(label: String, setup: Dictionary, capture := false, resolution := GAM
 			if clips == 0:
 				print("BATTLE29 CAPTURE ", label, " ", image.get_size())
 				_check(image.get_size() == resolution, label + " captured resolution")
+			if duel != null:
+				_measure_duel(view, clips, duel)
 			var shot := path.path_join("%05d.jpg" % clips)
 			if not _check(image.save_jpg(shot, 0.92) == OK, "capture " + label):
 				capture = false
@@ -336,6 +342,20 @@ func _play(label: String, setup: Dictionary, capture := false, resolution := GAM
 	await get_tree().process_frame
 
 
+func _measure_duel(view: View, frame: int, log_file: FileAccess) -> void:
+	for f in view._fighters:
+		var target := f.layout_target
+		if f.unit.key not in ["hero", "vercingetorix"] or not f.unit.alive or not is_instance_valid(target):
+			continue
+		var box := f.screen_box()
+		var other := target.screen_box()
+		var gap := other.position.x - box.end.x if f.side_dir < 0.0 else box.position.x - other.end.x
+		log_file.store_csv_line(PackedStringArray([str(frame), str(battle.sim.t), f.unit.key, target.unit.key,
+			str(box.position.x), str(box.position.y), str(box.end.x), str(box.end.y),
+			str(other.position.x), str(other.position.y), str(other.end.x), str(other.end.y),
+			str(gap), str(f.pass_phase), str(target.pass_phase), str(f.rank), str(target.rank)]))
+
+
 func _count_request(source: View.Fighter, target: View.Fighter) -> void:
 	var state := "before_front"
 	var in_reach := source.can_strike(target)
@@ -363,7 +383,7 @@ func _count_request(source: View.Fighter, target: View.Fighter) -> void:
 	if not diagnose:
 		return
 	var d := target.body_ground() - source.body_ground()
-	var edge := source.edge_toward(d.x) if source.wide and source.long_model.is_empty() else source.muzzle
+	var edge := source.edge_toward(d.x) if source.large_body() and source.long_model.is_empty() else source.muzzle
 	var gap := maxf(0.0, absf(d.x) - edge - target.edge_toward(-d.x))
 	var adjacent := source.neighbouring_row(target)
 	var ranked := source.rank >= 0 and target.rank >= 0 and source.on_own_side() and target.on_own_side()
@@ -374,7 +394,7 @@ func _count_request(source: View.Fighter, target: View.Fighter) -> void:
 		if other.unit.alive and other.side_dir != source.side_dir and other.rank == 0:
 			if nearest == null or absf(other.position.y - source.position.y) < absf(nearest.position.y - source.position.y):
 				nearest = other
-	latest_request[source.unit.id] = requests.size()
+	request_index[source.view.melee_sequence] = requests.size()
 	requests.append({"time": battle.sim.t, "source": source.unit.id, "source_key": source.unit.key,
 		"target": target.unit.id, "target_key": target.unit.key, "source_rank": source.rank,
 		"target_rank": target.rank, "source_row": source.front_row, "target_row": target.front_row,
@@ -391,7 +411,7 @@ func _strike(source: View.Fighter, target: View.Fighter) -> void:
 	air += int(not source.can_strike(target))
 	if diagnose and source.view.melee_played > played_requests:
 		played_requests = source.view.melee_played
-		var index: int = latest_request.get(source.unit.id, -1)
+		var index: int = request_index.get(source.played_sequence, -1)
 		if index >= 0 and int(requests[index]["target"]) == target.unit.id:
 			requests[index]["visible"] = true
 

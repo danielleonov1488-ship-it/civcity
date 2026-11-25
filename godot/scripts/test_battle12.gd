@@ -442,14 +442,24 @@ func _measure(view: View) -> View.Fighter:
 					if same_side and f.unit.side == "ally":
 						ally_boxes.append(_overlap(projected[i], projected[j]))
 					if not same_side and (not f.long_model.is_empty() or not other.long_model.is_empty()):
-						big_boxes.append(_overlap(projected[i], projected[j]))
+						var overlap := _overlap(projected[i], projected[j])
+						big_boxes.append(overlap)
+						if label == "britannia" and overlap > 0.24 and int(battle.sim.t * 10.0) % 5 == 0:
+							print("BATTLE12 LONG t=%.2f %s/%s overlap=%.2f at %s/%s plan %s/%s front=%.1f enters=%s/%s" %
+								[battle.sim.t, f.unit.key, other.unit.key, overlap, f.position, other.position,
+								f.layout_pos, other.layout_pos, view._front_x, f.unit.entering, other.unit.entering])
 					if not same_side and (f.rear_mount or other.rear_mount):
 						var dx := maxf(projected[i].position.x - projected[j].end.x,
 							projected[j].position.x - projected[i].end.x)
 						horse_line_min = minf(horse_line_min, dx / view.world.scale.x)
 						horse_line_samples += 1
 			if f.rear and not other.rear and f.unit.side == other.unit.side and other.on_own_side():
-				rear = minf(rear, (foot.x - other_foot.x) * f.side_dir / (f.beam * view.world.scale.x))
+				var gap := (foot.x - other_foot.x) * f.side_dir / (f.beam * view.world.scale.x)
+				if not legacy and gap < minf(2.0, rear_min) - 0.02:
+					print("BATTLE12 REAR %s t=%.2f %s/%s gap=%.2f at %s/%s plan %s/%s front=%.1f enters=%s" %
+						[label, battle.sim.t, f.unit.key, other.unit.key, gap, f.position, other.position,
+						f.layout_pos, other.layout_pos, view._front_x, other.unit.entering])
+				rear = minf(rear, gap)
 			if _engaged(other, f):
 				attackers.append(other)
 				ratios.append(_overlap(box, boxes[j]) if legacy else _overlap(projected[i], projected[j]))

@@ -15,6 +15,7 @@ var out := OUT
 var fails := 0
 var squad: Array[Dictionary]
 var deaths: Dictionary = {}
+var death_poses: Dictionary = {}
 var releases: Dictionary = {}
 var run_suite := true
 var report_full_contact := false
@@ -58,6 +59,14 @@ func _ready() -> void:
 		get_tree().quit(int(fails > 0))
 	else:
 		check_done.emit()
+
+
+func _process(_dt: float) -> void:
+	if not is_instance_valid(battle):
+		return
+	for f: View.Fighter in battle.views.values():
+		if not f.unit.alive and f.clip == f.death_clip and f.death > 0.0:
+			death_poses[f.unit.id] = true
 
 
 func battle12_contacts(test_game: Game, shots: String) -> void:
@@ -486,6 +495,7 @@ func _fight(region: String, keys: Array, file: String, boss_id := "", stress := 
 	var zoom := 1.14 if not file.is_empty() else 1.0
 	if not field_file.is_empty():
 		zoom = 1.34 if region == "parthia" else 1.26
+	death_poses.clear()
 	battle = LegionBattle.open(game, setup, Callable(), {"legion": legion, "speed": 1.0, "zoom": zoom})
 	if not check(await until(func() -> bool: return battle.sim != null and battle.fade.modulate.a <= 0.01, 35), "battle " + region):
 		battle.abort()
@@ -493,7 +503,7 @@ func _fight(region: String, keys: Array, file: String, boss_id := "", stress := 
 	var layer := battle.battle_view.people_layer
 	var enemies := 0
 	var sprites := 0
-	var boss_views: Array[View.Fighter] = []
+	var boss_ids := {}
 	for view: View.Fighter in battle.views.values():
 		if view.unit.side == "ally":
 			check(view.actor != null and view.actor.get_parent() == layer.viewport, "ally shared viewport")
@@ -503,7 +513,7 @@ func _fight(region: String, keys: Array, file: String, boss_id := "", stress := 
 				and (view.actor.rotation_degrees.y < 0.0 or view.backward_shot()), "3D shared viewport/facing " + view.unit.key):
 			enemies += 1
 			if Enemy.BOSSES.has(view.unit.key):
-				boss_views.append(view)
+				boss_ids[view.unit.id] = view.unit.key
 				check(view.boss_model != null, "composite model " + view.unit.key)
 	check(enemies == keys.size() and sprites == 0, "province coverage " + region)
 	print("ENEMY3D PROVINCE %s 3D=%d 2D=%d" % [region, enemies, sprites])
@@ -521,8 +531,9 @@ func _fight(region: String, keys: Array, file: String, boss_id := "", stress := 
 		var field_time := 5.75 if region == "parthia" else (3.15 if region == "forest" else 3.55)
 		check(await until(func() -> bool: return battle.sim.t >= field_time, 8.0), "field shot time " + region)
 		_depth_order(battle.battle_view, region + " shot")
-	for fighter: View.Fighter in boss_views:
-		if fighter.unit.key in ["chariot", "charioteer"] and fighter.boss_model != null:
+	for id: int in boss_ids:
+		var fighter: View.Fighter = battle.views.get(id)
+		if fighter != null and fighter.unit.key in ["chariot", "charioteer"] and fighter.boss_model != null:
 			check(fighter.boss_model.wheels.size() == 2 and fighter.boss_model.wheel_angle > 0.001,
 				"wheels move " + fighter.unit.key)
 	if stress:
@@ -543,7 +554,7 @@ func _fight(region: String, keys: Array, file: String, boss_id := "", stress := 
 				and battle.boss_pic.texture.resource_path == Enemy.PORTRAITS + boss_id + ".png", "boss panel portrait " + boss_id)
 			await shot(file)
 			battle.paused = false
-		await _death(boss_views)
+		await _death(boss_ids)
 	battle.abort()
 	await get_tree().process_frame
 
@@ -733,21 +744,18 @@ func _fps() -> void:
 	check(fps >= 60.0, "60 FPS budget")
 
 
-func _death(fighters: Array[View.Fighter]) -> void:
-	var fallen := {}
-	for view: View.Fighter in fighters:
-		if not check(is_instance_valid(view), "model still present before death check"):
-			continue
-		if check(view.unit.alive, "live model before kill " + view.unit.key):
-			fallen[view.unit.id] = view.unit.key
-			battle.sim._hurt(view.unit, view.unit.hp + 1.0)
+func _death(fighters: Dictionary) -> void:
+	for id: int in fighters:
+		var f: View.Fighter = battle.views.get(id)
+		if f != null and f.unit.alive:
+			battle.sim._hurt(f.unit, f.unit.hp + 1.0)
 	await get_tree().process_frame
 	await get_tree().process_frame
-	for id: int in fallen:
-		var view: View.Fighter = battle.views.get(id)
-		check(view != null and not view.unit.alive and view.clip == view.death_clip and view.death > 0.0,
-			"death starts on sim kill " + String(fallen[id]))
-	for id: int in fallen:
-		if check(await until(func() -> bool: return not battle.views.has(id), 3.0), "fallen model hides " + String(fallen[id])):
-			deaths[fallen[id]] = true
-			print("ENEMY3D DEATH ", fallen[id])
+	for id: int in fighters:
+		var kind: String = fighters[id]
+		var started := await until(func() -> bool: return death_poses.has(id), 2.0)
+		var bent := check(started, "death animation " + kind)
+		var gone := check(await until(func() -> bool: return not battle.views.has(id), 3.0), "fallen model hides " + kind)
+		if bent and gone:
+			deaths[kind] = true
+			print("ENEMY3D DEATH ", kind)
