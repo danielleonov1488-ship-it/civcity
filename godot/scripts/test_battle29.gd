@@ -3,26 +3,28 @@ extends Node
 const View = preload("res://scripts/legion_battle_view.gd")
 const Battle12 = preload("res://scripts/test_battle12.gd")
 const Battle13 = preload("res://scripts/test_battle13.gd")
-const OUT := "D:/CivCity/.work/stage7/battle29e"
+const OUT := "D:/CivCity/.work/stage7/battle29f"
 const FRAME := 1.0 / 60.0
 const VIDEO_SIZE := Vector2i(1080, 1920)
 const CLIP_START := 216
 const CLIP_FRAMES := 360
-const BASE_STRIKES := {"tutorial": 4, "britannia": 75, "carthage": 147, "hills": 32,
-	"parthia": 190, "16x16": 172, "promo": 228}
 
 var game: Game
 var battle: LegionBattle
 var output := OUT
 var version := "after"
 var failures := 0
-var video := true
+var video := false
 var diagnose := false
 var checks := false
 var air := 0
 var strikes := 0
 var focus := 0.0
+var zoom := 2.08
 var strike_context := {}
+var requests: Array[Dictionary] = []
+var latest_request := {}
+var played_requests := 0
 
 
 func _ready() -> void:
@@ -33,9 +35,10 @@ func _ready() -> void:
 			version = arg.trim_prefix("mode=")
 		elif arg == "metrics-only":
 			video = false
+		elif arg == "capture":
+			video = true
 		elif arg == "diagnose":
 			diagnose = true
-			video = false
 		elif arg == "checks":
 			checks = true
 	get_window().content_scale_size = Vector2i.ZERO
@@ -73,11 +76,6 @@ func _until(condition: Callable, seconds: float) -> bool:
 
 
 func _run() -> void:
-	if diagnose:
-		await _play("britannia", _campaign("britannia", ["briton", "chariot", "charioteer", "druid"]))
-		await _play("carthage", _campaign("carthage", ["elephant", "mercenary", "slinger"]))
-		await _play("16x16", _campaign("gaul", ["gaul", "gaul", "gaulArcher", "druid"], 16))
-		return
 	var legion := game.city.legion
 	var tutorial := legion.make_battle(legion.stage_info(0, 0, 0), 29)
 	tutorial["tutorial"] = "oil"
@@ -166,7 +164,11 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 	air = 0
 	strikes = 0
 	focus = 0.0
+	zoom = 2.08
 	strike_context.clear()
+	requests.clear()
+	latest_request.clear()
+	played_requests = 0
 	get_window().size = VIDEO_SIZE if capture and video else Vector2i(1920, 1080)
 	await get_tree().process_frame
 	var options := {"speed": 1.0, "auto": false}
@@ -187,6 +189,11 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 	if spacing != null:
 		spacing.store_line("frame,ally_layout_p95,ally_display_p95,long_layout_p95,long_display_p95,mean_display_lag_widths")
 	var path := output.path_join("frames").path_join(label + "_" + version)
+	if capture and video:
+		var disk := DirAccess.open(output)
+		if disk != null and disk.get_space_left() < 1500000000:
+			print("BATTLE29 CAPTURE SKIP ", label, ": less than 1.5 GB")
+			capture = false
 	capture = capture and video and _check(DirAccess.make_dir_recursive_absolute(path) == OK, path)
 	var tick_times: Array[float] = []
 	var peak := 0
@@ -210,11 +217,11 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 			var image := get_viewport().get_texture().get_image()
 			if clips == 0:
 				print("BATTLE29 CAPTURE ", label, " ", image.get_size())
-				var shot := output.path_join("shots/%s_%s.png" % [label, version])
-				if _check(image.save_png(shot) == OK, "save " + shot):
-					print("BATTLE29 SHOT ", shot)
-			if not _check(image.save_jpg(path.path_join("%05d.jpg" % clips), 0.96) == OK, "capture " + label):
+			var shot := path.path_join("%05d.jpg" % clips)
+			if not _check(image.save_jpg(shot, 0.92) == OK, "capture " + label):
 				capture = false
+			elif clips == 0:
+				print("BATTLE29 SHOT ", shot)
 			clips += 1
 		elif frame % 120 == 119:
 			await get_tree().process_frame
@@ -234,6 +241,8 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 	stats["peak"] = peak
 	stats["strike_context"] = strike_context
 	stats["outcome"] = battle.sim.result
+	if diagnose:
+		_write_hidden(label, view.melee_requests - view.melee_played)
 	if label == "16x16":
 		_check(peak == 32 and not tick_times.is_empty(), "16x16 timing samples")
 		tick_times.sort()
@@ -248,13 +257,13 @@ func _play(label: String, setup: Dictionary, capture := false) -> void:
 		_check(track.quick_swaps == 0, label + " unwalked side swaps")
 		_check(track.front_crossings == 0 and track.wrong_side == 0, label + " front crossings")
 		_check(float(stats["overlap_pct"]) <= 1.0, label + " foot overlap <= 1%")
-		_check(strikes >= float(BASE_STRIKES[label]) * 0.80 or float(stats["hidden_pct"]) <= 25.0,
-			label + " visible or hidden strikes")
+		_check(float(stats["hidden_pct"]) <= 25.0, label + " hidden strikes <= 25%")
+		if label == "tutorial":
+			_check(view.melee_played == 4 and view.melee_requests == 4, "tutorial all four strikes")
 		_check(air == 0 and strikes > 0, label + " contact strikes")
-		if not diagnose:
-			_check(float(stats["slide_pct"]) <= 0.30, label + " slides <= 0.30%")
-			if label == "16x16":
-				_check(float(stats["script_mean_ms"]) <= 4.60, label + " script budget <= 4.60 ms")
+		_check(float(stats["slide_pct"]) <= 0.30, label + " slides <= 0.30%")
+		if label == "16x16":
+			_check(float(stats["script_mean_ms"]) <= 4.60, label + " script budget <= 4.60 ms")
 	battle.abort()
 	await get_tree().process_frame
 
@@ -275,11 +284,53 @@ func _count_request(source: View.Fighter, target: View.Fighter) -> void:
 		else:
 			state = "front_out_of_reach"
 	strike_context[state] = int(strike_context.get(state, 0)) + 1
+	if not diagnose:
+		return
+	var d := target.body_ground() - source.body_ground()
+	var edge := source.edge_toward(d.x) if source.wide and source.long_model.is_empty() else source.muzzle
+	var gap := maxf(0.0, absf(d.x) - edge - target.edge_toward(-d.x))
+	var adjacent := source.neighbouring_row(target)
+	var front_pair := source.rank == 0 and target.rank == 0
+	var depth := absf(d.y) * (View.STRIKE_DEPTH if front_pair else 1.0)
+	var overlap := Rect2(source.outline.position - d, source.outline.size).intersection(target.outline).get_area()
+	var nearest: View.Fighter
+	for other in source.view._fighters:
+		if other.unit.alive and other.side_dir != source.side_dir and other.rank == 0:
+			if nearest == null or absf(other.position.y - source.position.y) < absf(nearest.position.y - source.position.y):
+				nearest = other
+	latest_request[source.unit.id] = requests.size()
+	requests.append({"time": battle.sim.t, "source": source.unit.id, "source_key": source.unit.key,
+		"target": target.unit.id, "target_key": target.unit.key, "source_rank": source.rank,
+		"target_rank": target.rank, "source_row": source.front_row, "target_row": target.front_row,
+		"dx": absf(d.x), "dy": absf(d.y), "edge_gap": gap, "effective": Vector2(gap, depth).length(),
+		"reach": source.strike_distance, "adjacent": adjacent, "facing": source.flip_h == (d.x < 0.0),
+		"overlap": overlap / maxf(1.0, minf(source.outline_area, target.outline_area)),
+		"nearest_front": nearest.unit.id if nearest != null else -1, "planned_dx": absf(target.layout_pos.x - source.layout_pos.x),
+		"target_alive": target.unit.alive, "source_alive": source.unit.alive, "state": state,
+		"contact": source.can_strike(target), "visible": false})
 
 
 func _strike(source: View.Fighter, target: View.Fighter) -> void:
 	strikes += 1
 	air += int(not source.can_strike(target))
+	if diagnose and source.view.melee_played > played_requests:
+		played_requests = source.view.melee_played
+		var index: int = latest_request.get(source.unit.id, -1)
+		if index >= 0 and int(requests[index]["target"]) == target.unit.id:
+			requests[index]["visible"] = true
+
+
+func _write_hidden(label: String, expected: int) -> void:
+	var path := output.path_join("hidden_%s_%s.jsonl" % [label, version])
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if not _check(file != null, "write " + path):
+		return
+	var hidden := 0
+	for entry in requests:
+		if not entry["visible"]:
+			file.store_line(JSON.stringify(entry))
+			hidden += 1
+	_check(hidden == expected, label + " hidden request accounting %d/%d" % [hidden, expected])
 
 
 func _measure_spacing(view: View, frame: int, log_file: FileAccess) -> void:
@@ -324,23 +375,26 @@ func _box_overlap(a: Rect2, b: Rect2) -> float:
 
 
 func _frame_pose(view: View, frame: int) -> void:
-	var sum := 0.0
-	var weights := 0.0
+	var center := view.size.x * 0.5
+	var front := view.screen(Vector2(view._front_x, 0.0)).x
+	var low := front
+	var high := front
 	for f: View.Fighter in view._fighters:
-		if f.unit.alive and absf(f.position.x) < 570.0:
-			var weight := 2.5 if f.unit.key == "hero" or f.unit.boss else 1.0
-			sum += (view.screen(f.position).x - view.size.x * 0.5) * weight
-			weights += weight
-	if weights > 0.0:
-		var center := sum / weights
-		if view._front_active:
-			var front := view.screen(Vector2(view._front_x, 0.0)).x - view.size.x * 0.5
-			center = lerpf(center, front, 0.80)
-		focus = lerpf(focus, center, 0.036)
-	var magnify := 2.08 + smoothstep(0.0, 12.0, frame * FRAME) * 0.12
-	view.scale = Vector2.ONE * magnify
-	view.pivot_offset = Vector2(view.size.x * 0.5, view.world.position.y)
-	view.position = Vector2(-focus * magnify, view.size.y * 0.59 - view.world.position.y)
+		if f.unit.alive and (f.rank == 0 or f.rank == 1 or (not view._front_active and not f.rear)):
+			var box := f.screen_box()
+			low = minf(low, box.position.x)
+			high = maxf(high, box.end.x)
+	var anchor := lerpf(front, (low + high) * 0.5, 0.35)
+	var desired := 2.08 + smoothstep(0.0, 12.0, frame * FRAME) * 0.12
+	var width := view.size.x - 64.0
+	var fit := width / maxf(high - low, 1.0)
+	zoom = minf(fit, lerpf(zoom, minf(desired, fit), 0.08))
+	var half := width * 0.5 / zoom
+	var pan := anchor - center if frame == 0 else lerpf(focus, anchor - center, 0.13)
+	focus = clampf(pan, high - half - center, low + half - center)
+	view.scale = Vector2.ONE * zoom
+	view.pivot_offset = Vector2(center, view.world.position.y)
+	view.position = Vector2(-focus * zoom, view.size.y * 0.59 - view.world.position.y)
 	battle.ui.hide()
 
 
