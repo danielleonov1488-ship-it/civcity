@@ -9,9 +9,11 @@ signal field_sound(event: String, pan: float)
 signal melee_pose(source: Fighter, target: Fighter)
 signal melee_event(source: Fighter, target: Fighter)
 
-const FIGURE_SCALE := 0.64
+# Фигуры мельче поля, как в Hustle Castle: между бойцами остаётся воздух.
+const FIGURE_SCALE := 0.52
 const REAR_X := 657.0
-const TRAIL_DEPTH := [48.0, 51.0, 54.0, 61.0]
+# Бой занимает широкую полосу луга, а не узкую тропу: бойцам есть где разойтись по глубине.
+const TRAIL_DEPTH := [106.0, 112.0, 116.0, 124.0]
 
 const FortPerson = preload("res://scripts/fort_person.gd")
 const Actor = preload("res://scripts/charpilot_actor.gd")
@@ -28,6 +30,10 @@ const WIDE_LANE_Y := -118.0
 const WIDE_LANE_STEP := 48.0
 const PEOPLE_DEPTH := 1024.0
 const PEOPLE_FRAME := 1.0 / 120.0
+const DISPLAY_GAIN := 7.0
+# Бойцы занимают всю ширину тропы в глубину, как в Hustle Castle, а не узкую полосу посередине.
+const DEPTH_SCALE := 40.0
+const DISPLAY_ACCEL := 6.0
 const FIELDS := {"forest": 2, "darkforest": 2, "swamp": 3, "labyrinth": 4,
 	"rocks": 4, "desert": 4, "hades": 4}
 const TRAIL_Y := [0.718, 0.710, 0.743, 0.714]
@@ -65,6 +71,7 @@ var _trail_depth := 51.0
 var _field_bounds := Rect2()
 var _fighters: Array[Fighter] = []
 var _wide_fighters: Array[Fighter] = []
+var _cluster_lanes := {}
 var _mounted_line_edge := INF
 var _mounted_front_min := -INF
 var _layout_step := -1
@@ -579,7 +586,7 @@ func _plan_layout_profiled() -> void:
 			continue
 		# Взаимная пара встречается посередине между исходными местами.
 		var center := (f.goal + target.goal) * 0.5
-		center.y = clampf(center.y, -_trail_depth * 0.30, _trail_depth * 0.30)
+		center.y = clampf(center.y, -_trail_depth * 0.80, _trail_depth * 0.80)
 		var gap := f.edge_toward(-f.side_dir) + target.edge_toward(f.side_dir) + minf(f.front_clearance(), target.front_clearance())
 		var blend := minf(f.contact_blend, target.contact_blend)
 		f.goal = f.goal.lerp(_fit_foot(f, center + Vector2(f.side_dir * gap * 0.5, 0.0)), blend)
@@ -593,6 +600,110 @@ func _plan_layout_profiled() -> void:
 	for f in _fighters:
 		if f.unit.alive:
 			_engagement_goal(f)
+	_spread_clusters()
+
+
+func _cluster_root(f: Fighter) -> Fighter:
+	var root := f
+	while root.cluster_parent != root:
+		root = root.cluster_parent
+	var node := f
+	while node.cluster_parent != root:
+		var next := node.cluster_parent
+		node.cluster_parent = root
+		node = next
+	return root
+
+
+func _spread_clusters() -> void:
+	# Схватки (цель и её противники) разводим по глубине тропы, чтобы соседние драки не сливались в кучу.
+	var members: Array[Fighter] = []
+	for f in _fighters:
+		f.cluster_parent = f
+		if f.unit.alive and not f.rear and not f.wide:
+			members.append(f)
+	for f in members:
+		var t := f.layout_target
+		if t != null and t.unit.alive and not t.rear and not t.wide:
+			var a := _cluster_root(f)
+			var b := _cluster_root(t)
+			if a != b:
+				if a.unit.id < b.unit.id:
+					b.cluster_parent = a
+				else:
+					a.cluster_parent = b
+	var groups := {}
+	for f in members:
+		var root := _cluster_root(f)
+		if root == f and f.layout_target == null and f.approachers.is_empty():
+			continue
+		if not groups.has(root):
+			groups[root] = []
+		(groups[root] as Array).append(f)
+	var clusters: Array[Dictionary] = []
+	for root: Fighter in groups:
+		var list: Array = groups[root]
+		if list.size() < 2:
+			continue
+		var left := INF
+		var right := -INF
+		var y := 0.0
+		for f: Fighter in list:
+			left = minf(left, f.goal.x - f.body_half * 1.6)
+			right = maxf(right, f.goal.x + f.body_half * 1.6)
+			y += f.goal.y
+		y /= list.size()
+		clusters.append({"root": root, "list": list, "left": left, "right": right, "y": y, "lane": INF})
+	if clusters.size() < 2:
+		_cluster_lanes.clear()
+		return
+	var step := minf(_trail_depth * 0.62, 74.0)
+	var lanes: Array[float] = [-step, 0.0, step, -step * 0.5, step * 0.5]
+	clusters.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["y"]) < float(b["y"]))
+	var seen := {}
+	for c: Dictionary in clusters:
+		var taken: Array[float] = []
+		for other: Dictionary in clusters:
+			if other == c or float(other["lane"]) == INF:
+				continue
+			if float(other["left"]) < float(c["right"]) and float(c["left"]) < float(other["right"]):
+				taken.append(float(other["lane"]))
+		var root: Fighter = c["root"]
+		var key := root.unit.id
+		seen[key] = true
+		if taken.is_empty():
+			# Одиночная схватка остаётся на своей глубине, лишь не уходит за край тропы.
+			c["lane"] = clampf(float(c["y"]), -step, step)
+			_cluster_lanes[key] = c["lane"]
+			continue
+		var best := INF
+		var best_cost := INF
+		for lane in lanes:
+			var clash := false
+			for used in taken:
+				if absf(used - lane) < step * 0.45:
+					clash = true
+			if clash:
+				continue
+			var cost := absf(lane - float(c["y"]))
+			if _cluster_lanes.has(key) and absf(float(_cluster_lanes[key]) - lane) < 1.0:
+				cost -= step * 0.8
+			if cost < best_cost:
+				best_cost = cost
+				best = lane
+		if best == INF:
+			best = clampf(float(c["y"]), -step, step)
+		c["lane"] = best
+		_cluster_lanes[key] = best
+	for key in _cluster_lanes.keys():
+		if not seen.has(key):
+			_cluster_lanes.erase(key)
+	for c: Dictionary in clusters:
+		var dy := float(c["lane"]) - float(c["y"])
+		if absf(dy) < 0.5:
+			continue
+		for f: Fighter in c["list"]:
+			f.goal = _fit_foot(f, f.goal + Vector2(0.0, dy))
 
 
 func _reserve_spots(target: Fighter) -> void:
@@ -602,7 +713,7 @@ func _reserve_spots(target: Fighter) -> void:
 	for f in target.approachers:
 		var cost := f.position.distance_to(_spot(f, target, at, 1))
 		if f.slot == 1:
-			cost -= 85.0
+			cost -= 170.0
 		if target.layout_target == f:
 			cost -= 240.0
 		if f.unit.boss and not f.long_model.is_empty():
@@ -629,13 +740,9 @@ func _reserve_spots(target: Fighter) -> void:
 					continue
 				var p := _spot(f, target, at, slot_index)
 				var cost := f.position.distance_to(p)
-				# Обход вокруг корпуса длиннее прямого пути.
-				if (f.position.x - at.x) * (p.x - at.x) < 0.0:
-					cost += target.body_width() * 0.48
-				if slot_index == 2 and count == 0 and not target.wide and not f.wide:
-					cost -= 255.0
+				# Занятое место держим: перестановки у цели выглядят как беготня.
 				if f.slot == slot_index:
-					cost -= 105.0
+					cost -= 190.0
 				if cost < best:
 					best = cost
 					selected = f
@@ -665,19 +772,17 @@ func _spot(f: Fighter, target: Fighter, at: Vector2, slot: int) -> Vector2:
 	var space := f.front_clearance()
 	if their_long and not our_long:
 		space = 8.0
-	if slot == 2 and not their_long and not our_long:
-		dir = -dir
-		depth -= f.strike_distance * 0.70
-		space *= 0.64
-	elif slot == 2 or slot == 3:
+	if slot == 2 or slot == 3:
+		# Второй и третий нападающие встают наискосок со своей стороны, не за спиной цели.
 		var lane := -1.0 if slot == 2 else 1.0
 		if lane * at.y > _trail_depth - 35.0:
 			lane = -lane
-		depth += lane * minf(56.0, f.strike_distance * 0.72)
+		depth += lane * minf(50.0, f.strike_distance * 0.72)
 		if their_long or our_long:
 			space = f.strike_distance * (0.48 if their_long else 0.10)
 		else:
-			space = 3.0
+			# Дальний по глубине чуть отступает, ближний чуть подходит: группа не встаёт столбиком.
+			space = f.front_clearance() * (0.55 if depth < at.y else 0.25) + (f.body_half * 0.55 if depth < at.y else 0.0)
 	elif slot >= 4:
 		space += maxf(64.0, f.body_width())
 		depth = f.goal.y
@@ -687,7 +792,7 @@ func _spot(f: Fighter, target: Fighter, at: Vector2, slot: int) -> Vector2:
 	var distance := source_edge + target_edge + space
 	var x := at.x + dir * distance
 	if x * f.side_dir > f.front_limit and not their_long:
-		x = at.x - dir * distance
+		x = f.front_limit * f.side_dir
 	return _fit_foot(f, Vector2(x, depth))
 
 
@@ -728,7 +833,6 @@ func _layout(weight: float) -> void:
 		if f.spawn_pending:
 			f.spawn_pending = false
 			f.position = _fit_foot(f, f.position)
-		f.travel = f.position
 		var path := _around(f, goal) if not f.wide and not f.rear else goal
 		f.next_foot = _fit_foot(f, f.position.lerp(path, minf(1.0, weight * 2.0) if f.passing else weight))
 		if f.wide:
@@ -747,10 +851,60 @@ func _layout(weight: float) -> void:
 		var pull := minf(1.0, weight * 2.5)
 		f.position = _fit_foot(f, Vector2(lerpf(f.position.x, contact, pull), f.position.y))
 	_separate()
+
+
+func _use_layout_positions() -> void:
+	for f in _fighters:
+		if f.unit.alive and f.display_ready:
+			f.display_pos = f.position
+			f.position = f.layout_pos
+
+
+func _keep_layout_positions() -> void:
 	for f in _fighters:
 		if not f.unit.alive:
 			continue
-		f.travel = f.position - f.travel
+		f.layout_pos = f.position
+		if f.display_ready:
+			f.position = f.display_pos
+		else:
+			f.display_ready = true
+			f.display_vel = Vector2.ZERO
+
+
+func _advance_display(gdt: float) -> void:
+	# Экранная фигура догоняет расчётное место шагом: без рывков и без мгновенных разворотов.
+	for f in _fighters:
+		if not f.unit.alive or not f.display_ready:
+			f.travel = Vector2.ZERO
+			continue
+		var delta := f.layout_pos - f.position
+		var distance := delta.length()
+		if gdt <= 0.0:
+			f.travel = Vector2.ZERO
+			continue
+		var cap := f.walk_cap()
+		if distance < 0.6 and f.display_vel.length_squared() < 400.0:
+			f.position = f.layout_pos
+			f.display_vel = Vector2.ZERO
+			f.travel = Vector2.ZERO
+			continue
+		var desired := delta * DISPLAY_GAIN
+		if desired.length() > cap:
+			desired = desired * (cap / desired.length())
+		f.display_vel = f.display_vel.move_toward(desired, cap * DISPLAY_ACCEL * gdt)
+		var step := f.display_vel * gdt
+		if step.length() > distance:
+			step = delta
+			f.display_vel = delta / gdt
+		f.position += step
+		f.travel = step
+
+
+func _layout_finish() -> void:
+	for f in _fighters:
+		if not f.unit.alive:
+			continue
 		var u := f.unit
 		var aim := f.aim_target if f.aim_target != null and f.aim_target.alive else u.target
 		var target: Fighter = views.get(aim.id) if aim != null and aim.alive else f.layout_target
@@ -1180,13 +1334,20 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 	if not legacy_layout and weight > 0.0:
 		_layout_time += dt
 		_layout_sim_time += gdt
+		var laid_out := false
 		if _layout_time >= 1.0 / 60.0:
+			_use_layout_positions()
 			if _layout_step != sim.steps:
 				_plan_layout()
 				_layout_step = sim.steps
 			_layout(1.0 - exp(-_layout_sim_time * 14.0))
+			_keep_layout_positions()
 			_layout_time = fposmod(_layout_time, 1.0 / 60.0)
 			_layout_sim_time = 0.0
+			laid_out = true
+		_advance_display(gdt)
+		if laid_out:
+			_layout_finish()
 	var started := Time.get_ticks_usec() if profile_poses else 0
 	for id in views:
 		var f: Fighter = views[id]
@@ -1310,6 +1471,12 @@ class Fighter extends Node2D:
 	var turn_radius := 0.0
 	var goal := Vector2.ZERO
 	var travel := Vector2.ZERO
+	# Расстановка считает layout_pos, а на экране боец идёт к нему шагом.
+	var layout_pos := Vector2.ZERO
+	var display_pos := Vector2.ZERO
+	var display_vel := Vector2.ZERO
+	var display_ready := false
+	var cluster_parent: Fighter
 	var drawn_foot := Vector2.ZERO
 	var spawn_pending := true
 	var body_half := 25.0
@@ -1496,6 +1663,10 @@ class Fighter extends Node2D:
 	func body_width() -> float:
 		return body_half * 2.0
 
+	func walk_cap() -> float:
+		# Скорость шага на экране: как в симуляции с запасом, но не меньше двух корпусов в секунду.
+		return maxf(unit.speed * 66.0 * 1.6, body_width() * 2.4)
+
 	func rear_spacing() -> float:
 		return maxf(beam * 2.80, 154.0)
 
@@ -1552,7 +1723,7 @@ class Fighter extends Node2D:
 
 	func layout_point(x: float, z: float) -> Vector2:
 		if view != null and not view.legacy_layout:
-			var depth := clampf(lerpf(lane_z, z, 0.30) * 23.0, -view._trail_depth, view._trail_depth)
+			var depth := clampf(lerpf(lane_z, z, 0.30) * LegionBattleView.DEPTH_SCALE, -view._trail_depth, view._trail_depth)
 			var sx := clampf(x * 66.0, -box_limit(), box_limit())
 			if rear:
 				var row := (unit.id % 3) - 1
