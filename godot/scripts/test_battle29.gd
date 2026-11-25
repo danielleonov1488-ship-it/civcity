@@ -1,7 +1,7 @@
 extends Node
 
 const View = preload("res://scripts/legion_battle_view.gd")
-const OUT := "D:/CivCity/.work/stage7/battle29"
+const OUT := "D:/CivCity/.work/stage7/battle29c"
 const FRAME := 1.0 / 60.0
 const VIDEO_SIZE := Vector2i(1080, 1920)
 const CLIP_START := 216
@@ -265,7 +265,8 @@ class Readings:
 					var old_dir: Vector2 = last[1]
 					reversals += int(direction.dot(old_dir) < -0.5)
 				if target_id == int(last[2]):
-					crossing = bool(last[4]) or (f.passing and f.bypass == target and moving and movement < 0.25)
+					var walked := f.display_passing and is_instance_valid(target) and absf(foot.y - target.visible_foot().y) >= View.PASS_DEPTH
+					crossing = bool(last[4]) or (walked and moving and movement < 0.25)
 					if side == 0.0:
 						side = float(last[3])
 					elif side * float(last[3]) < 0.0:
