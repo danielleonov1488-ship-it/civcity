@@ -62,11 +62,6 @@ const BUSH_LANES := [0.0, -2.35, 2.35, -1.15, 1.15]
 const HEAL_EVERY := 3.0
 const ROW_X := [4.6, 6.0]
 const ROW_STEP := 1.1
-## Насколько места наискосок отстоят от цели поперёк поля (не больше 0.8 дальности удара)
-const SLOT_DZ := 0.55
-## Котёл масла: бойцы стоят не в одной точке, а по местам вокруг цели — круг шире прежних 2.0/2.2
-const OIL_FIND := 2.4
-const OIL_R := 2.6
 ## Сила умений: [на 1 уровне, прибавка за уровень]. oil/volley/burn — доля среднего урона отряда (oil, volley — по
 ## каждому врагу; burn — в секунду 4 с), за уровень ×(1 + прибавка); testudo — насколько меньше урон (доля),
 ## bandage — доля здоровья, horn — во сколько раз быстрее бьют и ходят. Мягче, чем в старой игре: умения — сильная
@@ -169,12 +164,6 @@ class Unit:
 	var heal_pow := 0.0            # жрец: лечит раненого союзника на heal × ATK
 	var heal_t := 0.0              # секунд до следующего лечения
 	var backline := false          # всадник: сперва бьёт задний ряд и стрелков врага
-	# Места для ближнего боя, как в Hustle Castle: у каждого бойца по пять мест с каждой стороны
-	# (спереди, два наискосок и два шире). Боец ближнего боя встаёт на такое место вплотную.
-	var slot_of: Unit = null       # чьё место занято
-	var slot_i := -1               # 0 — спереди, 1/2 — наискосок сверху/снизу, 3/4 — шире сверху/снизу
-	var slot_s := 0.0              # с какой стороны цели: −1 слева, 1 справа
-	var holders: Array = [null, null, null, null, null, null, null, null, null, null]
 
 	func ranged() -> bool:
 		return range_m > 3.0
@@ -503,139 +492,6 @@ func _pick_target(u: Unit) -> Unit:
 	return best2
 
 
-static func _slot_walker(u: Unit) -> bool:
-	return not u.ranged() and u.speed > 0.0 and u.heal_pow <= 0.0
-
-
-## Место i (0…4) у цели tg со стороны s для бойца u: [x, z]; пустой массив, если место за краем поля.
-## Только числа float (double), без Vector2 — сервер (server/legion_sim.js) считает так же, до бита.
-static func _slot_pos(u: Unit, tg: Unit, i: int, s: float) -> Array:
-	var reach := u.range_m + 0.35 * (u.size + tg.size - 2.0)
-	if i == 0:
-		var z0 := tg.z
-		if tg.target == u and tg.slot_of == u and tg.slot_i == 0:
-			z0 = (u.z + tg.z) * 0.5               # встречная пара сходится посередине
-		return [tg.x + s * reach * 0.88, z0]
-	var dz := minf(reach * (0.8 if i < 3 else 0.95), SLOT_DZ * (1.0 if i < 3 else 2.0)) * (1.0 if i % 2 == 0 else -1.0)
-	var z := tg.z + dz
-	if z < -FIELD_Z or z > FIELD_Z:
-		return []
-	var dx := sqrt(maxf(0.04, reach * reach * 0.9 - dz * dz * 0.64))
-	return [tg.x + s * dx, z]
-
-
-static func _slot_side(u: Unit, tg: Unit) -> float:
-	if u.slot_of == tg and u.slot_i >= 0:
-		return u.slot_s
-	return -1.0 if u.x < tg.x else 1.0
-
-
-func _has_slot_for(u: Unit, o: Unit) -> bool:
-	if u.slot_of == o and u.slot_i >= 0:
-		return true
-	var near := _slot_side(u, o)
-	for s: float in [near, -near]:
-		var base := 0 if s < 0.0 else 5
-		for i in 5:
-			var h: Unit = o.holders[base + i]
-			if (h == null or not h.alive or h.slot_of != o) and not _slot_pos(u, o, i, s).is_empty():
-				return true
-	return false
-
-
-func _release_slot(u: Unit) -> void:
-	if u.slot_of != null and u.slot_i >= 0:
-		var idx := u.slot_i + (0 if u.slot_s < 0.0 else 5)
-		if u.slot_of.holders[idx] == u:
-			u.slot_of.holders[idx] = null
-	u.slot_of = null
-	u.slot_i = -1
-
-
-func _claim_slot(u: Unit, tg: Unit) -> bool:
-	if u.slot_of == tg and u.slot_i >= 0:
-		return true
-	_release_slot(u)
-	# Сначала места со своей стороны; если их нет — обходим цель на другую сторону, как в Hustle Castle.
-	var near := _slot_side(u, tg)
-	for s: float in [near, -near]:
-		var base := 0 if s < 0.0 else 5
-		var best := -1
-		var best_d := INF
-		for i in 5:
-			var h: Unit = tg.holders[base + i]
-			if h != null and h.alive and h.slot_of == tg:
-				continue
-			var p := _slot_pos(u, tg, i, s)
-			if p.is_empty():
-				continue
-			var px: float = p[0]
-			var pz: float = p[1]
-			var d := sqrt((px - u.x) * (px - u.x) + (pz - u.z) * (pz - u.z)) + i * 0.3
-			if d < best_d:
-				best_d = d
-				best = i
-		if best >= 0:
-			tg.holders[base + best] = u
-			u.slot_of = tg
-			u.slot_i = best
-			u.slot_s = s
-			return true
-	return false
-
-
-## Ближний бой: подойти шагом на своё место у цели и бить только оттуда
-func _melee_step(u: Unit, tg: Unit, reach: float, fast: float, dt: float) -> void:
-	var has_slot := _claim_slot(u, tg)
-	var s := u.slot_s if has_slot else _slot_side(u, tg)
-	var gx := tg.x + s * (reach + 1.1)
-	var gz := u.z
-	if has_slot:
-		var p := _slot_pos(u, tg, u.slot_i, s)
-		if p.is_empty():
-			gx = tg.x + s * reach * 0.88
-			gz = tg.z
-		else:
-			gx = p[0]
-			gz = p[1]
-	gx = clampf(gx, FIELD_X.x, FIELD_X.y)
-	var body := 0.5 * (tg.size + u.size)
-	if has_slot and (gx - tg.x) * (u.x - tg.x) < 0.0 and absf(u.z - tg.z) < body + 0.45:
-		# Место за целью: обходим её сверху или снизу, а не сквозь неё.
-		var lane := 1.0 if gz >= tg.z else -1.0
-		if absf(tg.z + lane * (body + 0.6)) > FIELD_Z:
-			lane = -lane
-		gx = u.x + signf(gx - u.x) * 0.25
-		gz = tg.z + lane * (body + 0.6)
-	var tx := gx - u.x
-	var tz := gz - u.z
-	var gap := sqrt(tx * tx + tz * tz)
-	if has_slot and tg.slot_of == u and tg.slot_i > 0 and dist(u, tg) <= reach:
-		gap = 0.0                                  # цель уже встала к нам наискосок — не гоняемся за ней
-	if gap > 0.08:
-		var stride := minf(u.speed * fast * dt, gap)
-		u.x += tx / gap * stride
-		u.z += tz / gap * stride
-		u.moving = true
-		var d := dist(u, tg)
-		# Минотавр с разбега бьёт сильнее и отбрасывает
-		if u.charge and d < 4.0 and u.charge_cd <= 0.0:
-			u.charge_cd = 7.0
-			events.append({"type": "charge", "unit": u, "target": tg})
-			_damage(u.atk, u.vs, u, tg, 1.8)
-			tg.x = clampf(tg.x + signf(tg.x - u.x) * 1.2, FIELD_X.x, FIELD_X.y)
-			events.append({"type": "slam", "x": tg.x, "z": tg.z, "r": 1.0})
-	else:
-		u.moving = false
-	# Бьёт, как только цель в досягаемости — и когда ещё доходит до своего места (темп боя прежний)
-	var d2 := dist(u, tg)
-	if d2 <= reach:
-		u.timer -= dt * fast
-	if u.timer <= 0.0 and d2 <= reach + 0.05:
-		_attack(u, tg)
-		u.timer = u.rate * (0.92 + rng.randf() * 0.16)
-
-
 static func _mult(vs: Dictionary, tg: Unit) -> float:
 	var m := 1.0
 	for tag in tg.tags:
@@ -713,13 +569,6 @@ func _kill(tg: Unit) -> void:
 	tg.alive = false
 	tg.hp = 0.0
 	tg.target = null
-	_release_slot(tg)
-	for i in tg.holders.size():
-		var h: Unit = tg.holders[i]
-		if h != null and h.slot_of == tg:
-			h.slot_of = null
-			h.slot_i = -1
-		tg.holders[i] = null
 	events.append({"type": "death", "unit": tg})
 
 
@@ -823,7 +672,7 @@ func use_perk(id: String, side := "ally") -> bool:
 			for o in foes:
 				var n := 0
 				for q in foes:
-					if Vector2(q.x - o.x, q.z - o.z).length() < OIL_FIND:
+					if Vector2(q.x - o.x, q.z - o.z).length() < 2.0:
 						n += 1
 				if n > bn:
 					bn = n
@@ -832,7 +681,7 @@ func use_perk(id: String, side := "ally") -> bool:
 			var cz := c.z
 			var hits := 0
 			for o in foes:
-				if Vector2(o.x - cx, o.z - cz).length() < OIL_R:
+				if Vector2(o.x - cx, o.z - cz).length() < 2.2:
 					hits += 1
 					_damage(a * PERK_K["oil"][0] * (1.0 + PERK_K["oil"][1] * (lvl - 1)), {}, null, o)
 					o.burn = t + 4.0
@@ -947,7 +796,7 @@ func _auto_perks(side: String) -> void:
 		for o in foes:
 			var n := 0
 			for q in foes:
-				if Vector2(q.x - o.x, q.z - o.z).length() < OIL_FIND:
+				if Vector2(q.x - o.x, q.z - o.z).length() < 2.0:
 					n += 1
 			bn = maxi(bn, n)
 		# походы: впереди волна-«куча» (setup.packs) — масло бережём для неё, не тратим на последнего врага волны
@@ -1076,10 +925,6 @@ func step(dt := DT) -> void:
 		var fast := u.horn_k if u.horn > t else 1.0
 		var reach := u.range_m + 0.35 * (u.size + tg.size - 2.0)
 		var d := dist(u, tg)
-		if _slot_walker(u):
-			_melee_step(u, tg, reach, fast, dt)
-			u.charge_cd -= dt
-			continue
 		if d > reach and u.speed > 0.0:
 			var dir := signf(tg.x - u.x)
 			if dir == 0.0:

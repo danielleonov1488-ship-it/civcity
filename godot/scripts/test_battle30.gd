@@ -223,7 +223,7 @@ func _play(label: String, old: bool) -> void:
 				if not u.ranged() and u.speed > 0.0 and u.heal_pow <= 0.0 and not u.moving and u.target != null and u.target.alive:
 					if sim_time - float(last_attack.get(u.id, sim_time - 99.0 if sim_time > 3.0 else sim_time)) > 2.5:
 						afk += FRAME
-						var why := "%s slot=%d rate=%.1f stun=%s" % [u.key, u.slot_i, u.rate, str(u.stun_t > sim_time)]
+						var why := "%s rate=%.1f" % [u.key, u.rate]
 						afk_by[why] = float(afk_by.get(why, 0.0)) + FRAME
 				var t = f.layout_target
 				if t != null and t.unit.alive and f.contact_blend >= 0.95 and t.long_model.is_empty() and f.long_model.is_empty():
@@ -249,13 +249,6 @@ func _play(label: String, old: bool) -> void:
 						inside += 1
 						var pair_key := "%s/%s" % [a.unit.key, b.unit.key]
 						inside_by[pair_key] = int(inside_by.get(pair_key, 0)) + 1
-		if label == "promo" and frame in [600, 1200, 2400]:
-			for f in alive:
-				var u = f.unit
-				var tg = u.target
-				print("B30DBG f=%d %s %s x=%.2f z=%.2f px=%.0f tgt=%s tx=%.2f slot=%d s=%.0f lt=%s" % [frame, u.side, u.key, u.x, u.z, f.position.x,
-					tg.key if tg != null else "-", tg.x if tg != null else 0.0, u.slot_i, u.slot_s,
-					f.layout_target.unit.key if f.layout_target != null else "-"])
 		if shooting and frame >= CLIP_START and clips < CLIP_FRAMES:
 			await RenderingServer.frame_post_draw
 			var image := get_viewport().get_texture().get_image()

@@ -35,6 +35,9 @@ const DISPLAY_GAIN := 7.0
 const DEPTH_SCALE := 40.0
 # Бойцы стоят там, где их поставил расчёт боя; картинка только плавно ведёт фигуры.
 const SIM_POSITIONS := true
+# Места у цели на картинке: шаг поперёк тропы (в единицах расчёта боя) и пересчёт единиц расчёта в точки поля
+const VSLOT_DZ := 0.95
+const SIM_X_PX := 66.0
 const DISPLAY_ACCEL := 6.0
 const FIELDS := {"forest": 2, "darkforest": 2, "swamp": 3, "labyrinth": 4,
 	"rocks": 4, "desert": 4, "hades": 4}
@@ -832,10 +835,7 @@ func _engagement_goal_profiled(f: Fighter) -> void:
 func _layout(weight: float) -> void:
 	_wide_fighters.clear()
 	if SIM_POSITIONS:
-		for f in _fighters:
-			if f.unit.alive:
-				f.spawn_pending = false
-				f.position = _sim_foot(f, f.layout_point(f.unit.x, f.unit.z))
+		_slot_layout()
 		return
 	for f in _fighters:
 		if not f.unit.alive:
@@ -872,6 +872,164 @@ func _layout(weight: float) -> void:
 		var pull := minf(1.0, weight * 2.5)
 		f.position = _fit_foot(f, Vector2(lerpf(f.position.x, contact, pull), f.position.y))
 	_separate()
+
+
+func _slot_melee(f: Fighter) -> bool:
+	var u := f.unit
+	return not f.rear and not f.wide and f.long_model.is_empty() and not u.entering and not u.ranged() and u.speed > 0.0
+
+
+## Место i (0…4) у цели t со стороны s для бойца f, в точках поля; INF — место за краем тропы
+func _vslot_pos(f: Fighter, t: Fighter, i: int, s: float) -> Vector2:
+	var u := f.unit
+	var reach := u.range_m + 0.35 * (u.size + t.unit.size - 2.0)
+	var at := t.goal
+	if t.wide or not t.long_model.is_empty():
+		# у большой модели места — у края её тела на картинке, а не внутри
+		var edge := t.edge_toward(s) + f.body_half + 8.0
+		if i == 0:
+			return Vector2(at.x + s * edge, at.y)
+		var step_y := 44.0 * (2.0 if i >= 3 else 1.0) * (1.0 if i % 2 == 0 else -1.0)
+		var by := at.y + step_y
+		if absf(by) > _trail_depth:
+			return Vector2(INF, INF)
+		return Vector2(at.x + s * edge * (0.92 if i < 3 else 0.84), by)
+	if i == 0:
+		return Vector2(at.x + s * reach * 0.9 * SIM_X_PX, at.y)
+	var wide := i >= 3
+	var dz := minf(reach * (0.8 if not wide else 0.95), VSLOT_DZ * (2.0 if wide else 1.0)) * (1.0 if i % 2 == 0 else -1.0)
+	var y := at.y + dz * DEPTH_SCALE
+	if absf(y) > _trail_depth:
+		return Vector2(INF, INF)
+	var dx := sqrt(maxf(0.04, reach * reach * 0.9 - dz * dz * 0.64)) * (0.85 if wide else 1.0)
+	return Vector2(at.x + s * dx * SIM_X_PX, y)
+
+
+func _vslot_release(f: Fighter) -> void:
+	if f.vslot_of != null and f.vslot_i >= 0:
+		var idx := f.vslot_i + (0 if f.vslot_s < 0.0 else 5)
+		if f.vslot_of.vholders[idx] == f:
+			f.vslot_of.vholders[idx] = null
+	f.vslot_of = null
+	f.vslot_i = -1
+
+
+func _vslot_claim(f: Fighter, t: Fighter) -> bool:
+	if f.vslot_of == t and f.vslot_i >= 0 and _vslot_pos(f, t, f.vslot_i, f.vslot_s).x != INF:
+		return true
+	_vslot_release(f)
+	var near := -1.0 if f.unit.x < t.unit.x else 1.0
+	for side: float in [near, -near]:
+		var base := 0 if side < 0.0 else 5
+		var best := -1
+		var best_d := INF
+		for i in 5:
+			var h: Fighter = t.vholders[base + i]
+			if h != null and is_instance_valid(h) and h.unit.alive and h.vslot_of == t:
+				continue
+			var p := _vslot_pos(f, t, i, side)
+			if p.x == INF:
+				continue
+			var d := p.distance_to(f.goal) + i * 18.0
+			if d < best_d:
+				best_d = d
+				best = i
+		if best >= 0:
+			t.vholders[base + best] = f
+			f.vslot_of = t
+			f.vslot_i = best
+			f.vslot_s = side
+			return true
+	return false
+
+
+func _slot_layout() -> void:
+	# Расчёт боя прежний (кто кого бьёт и когда); картинка ставит бойцов ближнего боя по местам вокруг цели:
+	# спереди, наискосок и шире, сначала со своей стороны, при нехватке — обходом на другую сторону.
+	var alive: Array[Fighter] = []
+	for f in _fighters:
+		if not f.unit.alive:
+			if f.vslot_of != null:
+				_vslot_release(f)
+			continue
+		f.spawn_pending = false
+		f.goal = _sim_foot(f, f.layout_point(f.unit.x, f.unit.z))
+		f.contact = null
+		f.placed = true
+		alive.append(f)
+	for f in alive:
+		if not _slot_melee(f):
+			continue
+		var t: LegionSim.Unit = f.unit.target
+		if t == null or not t.alive:
+			continue
+		var tv: Fighter = views.get(t.id)
+		if tv == null:
+			continue
+		var reach := f.unit.range_m + 0.35 * (f.unit.size + t.size - 2.0)
+		if LegionSim.dist(f.unit, t) <= reach + 0.2:
+			f.contact = tv
+			f.placed = false
+	for f in alive:
+		if f.vslot_of != null and f.vslot_of != f.contact:
+			_vslot_release(f)
+		# встречная пара: младший по номеру стоит, где он в бою, второй встаёт к нему
+		var c := f.contact
+		if c != null and c.contact == f and f.unit.id < c.unit.id:
+			f.placed = true
+			_vslot_release(f)
+	for _pass in 4:
+		var moved := false
+		for f in alive:
+			if f.placed or not f.contact.placed:
+				continue
+			var t := f.contact
+			if _vslot_claim(f, t):
+				var goal := _vslot_pos(f, t, f.vslot_i, f.vslot_s)
+				# место за целью: обходим её сверху или снизу, а не сквозь неё
+				var tp := t.position
+				var body := (f.body_half + t.body_half) * 1.1
+				if (goal.x - t.goal.x) * (f.position.x - tp.x) < 0.0 and absf(f.position.y - tp.y) < 40.0 \
+						and absf(f.position.x - tp.x) < body * 1.4:
+					var lane := 1.0 if goal.y >= tp.y else -1.0
+					if absf(tp.y + lane * 52.0) > _trail_depth:
+						lane = -lane
+					goal = Vector2(f.position.x + signf(goal.x - f.position.x) * 14.0, tp.y + lane * 52.0)
+				f.goal = _sim_foot(f, goal)
+			f.placed = true
+			moved = true
+		if not moved:
+			break
+	# в тело большой модели (колесница, слон) никто не встаёт: выходим к ближнему краю по глубине
+	for big in alive:
+		if not (big.wide or not big.long_model.is_empty()):
+			continue
+		var box := Rect2(big.goal + big.outline.position, big.outline.size)
+		for f in alive:
+			if f == big or f.wide or not f.long_model.is_empty():
+				continue
+			var foot := f.goal
+			if foot.x > box.position.x - f.body_half and foot.x < box.end.x + f.body_half and absf(foot.y - big.goal.y) < 34.0:
+				var lane := 1.0 if foot.y >= big.goal.y else -1.0
+				if absf(big.goal.y + lane * 40.0) > _trail_depth:
+					lane = -lane
+				f.goal = _sim_foot(f, Vector2(foot.x, big.goal.y + lane * 40.0))
+	# стрелки и жрецы на картинке не выходят вперёд своих мечей
+	var front := {-1.0: -INF, 1.0: INF}
+	for f in alive:
+		if _slot_melee(f):
+			if f.side_dir < 0.0:
+				front[-1.0] = maxf(float(front[-1.0]), f.goal.x)
+			else:
+				front[1.0] = minf(float(front[1.0]), f.goal.x)
+	for f in alive:
+		if f.rear and not f.rear_mount:
+			var edge := float(front[f.side_dir])
+			if absf(edge) < INF:
+				var gap := maxf(f.body_width() * 1.6, 70.0)
+				var x := minf(f.goal.x, edge - gap) if f.side_dir < 0.0 else maxf(f.goal.x, edge + gap)
+				f.goal = _sim_foot(f, Vector2(x, f.goal.y))
+		f.position = f.goal
 
 
 func _use_layout_positions() -> void:
@@ -1498,6 +1656,13 @@ class Fighter extends Node2D:
 	var display_vel := Vector2.ZERO
 	var display_ready := false
 	var cluster_parent: Fighter
+	# места у цели на картинке (как в Hustle Castle): чьё место занято, какое, с какой стороны
+	var vslot_of: Fighter
+	var vslot_i := -1
+	var vslot_s := 0.0
+	var vholders: Array = [null, null, null, null, null, null, null, null, null, null]
+	var contact: Fighter
+	var placed := false
 	var drawn_foot := Vector2.ZERO
 	var spawn_pending := true
 	var body_half := 25.0
