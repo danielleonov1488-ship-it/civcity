@@ -54,6 +54,15 @@
 		file_server
 	}
 
+	# счётчик посещений: строки журнала уходят серверу CivCity по 127.0.0.1:3001, на диск не пишутся;
+	# сервер хранит только общие числа за день (server/stats.js). Если сервер не слушает — Caddy работает дальше
+	log {
+		output net 127.0.0.1:3001 {
+			soft_start
+		}
+		format json
+	}
+
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin

@@ -441,6 +441,8 @@ require('./social').install({ db, routes, auth, json, limited, Fail, latestSave,
 require('./unions').install({ db, routes, auth, json, limited, Fail, pvpPlayer: uid => pvp.player(uid), hooks });
 // События недели: испытание (бой по правилу недели, таблица очков; победу сервер повторяет сам) — events.js
 require('./events').install({ db, routes, auth, json, limited, Fail, pvpPlayer: uid => pvp.player(uid), checkSquad: pvp.checkSquad, facts: pvp.facts, hooks });
+// счётчик посещений: только общие числа за день, строки журнала шлёт Caddy (см. stats.js)
+require('./stats').install({ db, port: Number(process.env.STATS_PORT || 3001) });
 
 function cors(req, res) {
   const o = req.headers.origin;
