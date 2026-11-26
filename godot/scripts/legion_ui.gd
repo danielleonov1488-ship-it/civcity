@@ -31,6 +31,11 @@ const CH := 604.0                          # высота содержимого
 const MAP := Vector2(784, 441)             # карта провинции на экране (16:9)
 const MAP_PX := Vector2(1672, 941)         # размер картинок карт (точки площадок — в этих координатах)
 const CARD_W := 330.0                      # карточка боя справа от карты
+const CARD_PAD := 14.0                     # поле внутри рамки карточки: золотой край рамки — 11 точек
+const PANEL_PAD := 14.0                    # то же поле у плашек вкладок: текст не ложится на рамку
+const SMALL_BTN := 52.0                    # высота кнопок внутри плашек (обычная — 80: плашки и окно вырастали)
+const SQUAD_BTN_W := 96.0                  # «Состав» в карточке боя
+const CARD_IN := CARD_W - 2.0 * CARD_PAD   # ширина строк внутри карточки
 const SLOT := 62.0                         # место в отряде
 
 const C_INK := Color("4a2c17")
@@ -2283,7 +2288,7 @@ func _region_strip(sliced := false, campaign: Control = null) -> Control:
 
 func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
 	var started := Perf14.begin()
-	var p := _bar_panel(8)
+	var p := _bar_panel(CARD_PAD)
 	p.custom_minimum_size = Vector2(CARD_W, 0)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
@@ -2311,12 +2316,12 @@ func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
 	tv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	if boss:
 		tv.add_child(_l("Босс провинции", 15, true, C_SOFT))
-		tv.add_child(hud._wrap(_title(String(st["name"]), 23), CARD_W - 110))
+		tv.add_child(hud._wrap(_title(String(st["name"]), 23), CARD_IN - 94))
 	elif bool(st.get("junior", false)):
 		tv.add_child(_l("Младший босс · бой %d из %d" % [int(st["s"]) + 1, Legion.stages()], 15, true, C_SOFT))
-		tv.add_child(hud._wrap(_title(String(st["name"]), 23), CARD_W - 90))
+		tv.add_child(hud._wrap(_title(String(st["name"]), 23), CARD_IN - 74))
 	elif String(st.get("theme", "")) != "":
-		tv.add_child(hud._wrap(_title(String(st["theme"]), 23), CARD_W - 90))
+		tv.add_child(hud._wrap(_title(String(st["theme"]), 23), CARD_IN - 74))
 		tv.add_child(_l("Бой %d из %d · %s" % [int(st["s"]) + 1, Legion.stages(), String(st["title"])], 14, true, C_SOFT))
 	else:
 		tv.add_child(_title("Бой %d из %d" % [int(st["s"]) + 1, Legion.stages()], 24))
@@ -2338,11 +2343,18 @@ func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
 	# враги по волнам
 	var waves: Array = st["waves"]
 	v.add_child(_l("Враги — %d %s" % [waves.size(), Hud._plural(waves.size(), "волна", "волны", "волн")], 16, true))
+	# волны — в одну строку (номер волны и её враги); не влезают — переходят на следующую
+	var wf := HFlowContainer.new()
+	wf.add_theme_constant_override("h_separation", 16)
+	wf.add_theme_constant_override("v_separation", 4)
+	wf.custom_minimum_size = Vector2(CARD_IN, 0)
+	v.add_child(wf)
 	for wi in waves.size():
 		var wh := HBoxContainer.new()
 		wh.add_theme_constant_override("separation", 3)
 		var nl := _l("%d" % (wi + 1), 15, true, C_SOFT)
 		nl.custom_minimum_size = Vector2(14, 0)
+		nl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		wh.add_child(nl)
 		var groups := {}
 		var order: Array = []
@@ -2356,6 +2368,7 @@ func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
 			var sz := 50.0 if big else 42.0
 			var holder := Control.new()
 			holder.custom_minimum_size = Vector2(sz, sz)
+			holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER  # рядом с боссом — не вытягивать по высоте
 			holder.mouse_filter = Control.MOUSE_FILTER_PASS
 			holder.tooltip_text = _enemy_tip(st, k)
 			var face := _portrait("enemy", k, sz)
@@ -2364,7 +2377,7 @@ func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
 			if int(groups[k]) > 1:
 				_badge(holder, "×%d" % int(groups[k]), Vector2(1, 1), 13)
 			wh.add_child(holder)
-		v.add_child(wh)
+		wf.add_child(wh)
 	if partial_parent != null:
 		Perf14.detail("battle_map_stage_waves", started)
 		await get_tree().process_frame
@@ -2378,19 +2391,19 @@ func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
 					seen[k] = true
 					var af := Legion.affix_of(st, String(k))
 					bits.append("%s — %s (%s)" % [String(Legion.ENEMIES[k]["name"]).to_lower(), Legion.AFFIX_NAME[af], Legion.AFFIX_TIP[af]])
-		v.add_child(_wl("Ветераны: " + "; ".join(bits) + ".", CARD_W - 24, 13, C_BAD))
+		v.add_child(_wl("Ветераны: " + "; ".join(bits) + ".", CARD_IN - 8, 13, C_BAD))
 	var guide_step := lg.fort_guide_step()
 	var teaching := lg.v3() and guide_step > Legion.FortGuide.INACTIVE and guide_step < Legion.FortGuide.DONE
 	var tips := "" if teaching else lg.tips(st)
 	if tips != "":
-		v.add_child(_wl(tips, CARD_W - 24, 14, C_SOFT))
+		v.add_child(_wl(tips, CARD_IN - 8, 14, C_SOFT))
 	# отряд не под этот бой (пока мест три — загадка на выбор отряда; дальше — лучник в медвежьем бою): совет и кнопка «Под бой»
 	var hint := "" if teaching else lg.squad_hint(st)
 	if hint != "":
 		var hb := HBoxContainer.new()
 		hb.add_theme_constant_override("separation", 6)
 		var off := lg.squad_off(st)
-		hb.add_child(_wl(hint, CARD_W - (128 if off else 24), 14, C_BAD, true))
+		hb.add_child(_wl(hint, CARD_IN - (112 if off else 8), 14, C_BAD, true))
 		if off:
 			var ab := _btn("Под бой", 0, 15, _ic39("battle"), "", func(): lg.use_auto_squad(st))
 			ab.tooltip_text = "«Лучший состав» для этого боя"
@@ -2478,32 +2491,52 @@ func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
 	v.add_child(_hdiv(12))
 	# отряд
 	var qh := HBoxContainer.new()
-	qh.add_theme_constant_override("separation", 3)
-	qh.add_child(_l("Отряд:", 15, true, C_SOFT))
+	qh.add_theme_constant_override("separation", 4)
+	var squad_now: Array = lg.battle_squad() if not sq.is_empty() else []
+	var nq := squad_now.size()
+	# весь отряд — в ширину карточки: до трёх — с подписью, до пяти — без неё, больше — отдельной строкой над «Составом»
+	var with_label := nq <= 3
+	var one_row := nq <= 5
+	var room := CARD_IN - (SQUAD_BTN_W + 8.0 if one_row else 0.0) - (56.0 if with_label else 0.0)  # +8: зазоры у распорки
+	var face_px := clampf(floorf((room - 4.0 * maxi(0, nq - 1)) / maxi(1, nq)), 30.0, 44.0)
+	if with_label:
+		var ql := _l("Отряд:", 15, true, C_SOFT)
+		ql.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		qh.add_child(ql)
 	if sq.is_empty():
-		qh.add_child(_l("никого", 15, true, C_BAD))
-	for u: Dictionary in (lg.battle_squad() if not sq.is_empty() else []):
+		var nobody := _l("никого", 15, true, C_BAD)
+		nobody.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		qh.add_child(nobody)
+	# портреты квадратные: строка выше их из-за кнопки «Состав», растягивать по высоте нельзя
+	for u: Dictionary in squad_now:
 		if String(u["key"]) == "hero":
-			qh.add_child(_hero_slot(36, false))  # герой — на первом месте отряда
+			var hs := _hero_slot(face_px, false)  # герой — на первом месте отряда
+			hs.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			qh.add_child(hs)
 			continue
 		var holder := Control.new()
-		holder.custom_minimum_size = Vector2(36, 36)
+		holder.custom_minimum_size = Vector2(face_px, face_px)
+		holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		holder.mouse_filter = Control.MOUSE_FILTER_PASS
 		holder.tooltip_text = "%s, %d уровень" % [u["name"], int(u["level"])]
 		var person := FortPerson.squad_person(lg, u)
-		var face := FortPerson.portrait(person, 36, lg.worn(person))
+		var face := FortPerson.portrait(person, face_px, lg.worn(person))
 		face.set_anchors_preset(Control.PRESET_FULL_RECT)
 		holder.add_child(face)
 		_badge(holder, str(int(u["level"])), Vector2(1, 1), 12)
 		qh.add_child(holder)
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	qh.add_child(sp)
 	var eb := _btn("Состав", 0, 15, null, "", func(): _select_tab("troops"))
 	eb.tooltip_text = "Кто идёт в бой и в каком порядке — во вкладке «Войска»"
+	eb.custom_minimum_size = Vector2(SQUAD_BTN_W, SMALL_BTN)
 	eb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	qh.add_child(eb)
+	var bh := qh if one_row else HBoxContainer.new()
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bh.add_child(sp)
+	bh.add_child(eb)
 	v.add_child(qh)
+	if bh != qh:
+		v.add_child(bh)
 	var fill := Control.new()
 	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(fill)
@@ -2512,7 +2545,8 @@ func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
 	var fight_title := I18n.t("Повторить бой" if st["done"] else "В бой!")
 	if lg.v3():
 		fight_title += " · " + hud.fmt(lg.ration_cost(st))
-	var fb := _btn(fight_title, CARD_W - 30, 24, Look.resource("rations") if lg.v3() else _ic39("battle"), why, func(): _fight(st))
+	var fb := _btn(fight_title, CARD_IN - 14, 24, Look.resource("rations") if lg.v3() else _ic39("battle"), why, func(): _fight(st))
+	fb.custom_minimum_size.y = 68.0
 	if lg.v3():
 		fb.name = "LegionRationBattle"
 		fb.set_meta("ration_cost", lg.ration_cost(st))
@@ -2522,15 +2556,15 @@ func _stage_card(st: Dictionary, partial_parent: Control = null) -> Control:
 	v.add_child(fb)
 	_fight_btn = fb
 	if why != "":
-		var wl := _wl(why, CARD_W - 24, 14, C_BAD, true, true)
+		var wl := _wl(why, CARD_IN - 8, 14, C_BAD, true, true)
 		v.add_child(wl)
 	elif lg.tutorial_battle(st) and lg.squad_off(st) and lg.slots() <= Legion.SQUAD_BASE:
 		# старое сохранение: лучник в отряде до первого боя — учебный бой посчитан на трёх легионеров
-		v.add_child(_wl("Учебный бой — для трёх легионеров: лучника в лесу некому прикрыть. «Состав» → «Лучший состав».", CARD_W - 24, 13, C_BAD, true, true))
+		v.add_child(_wl("Учебный бой — для трёх легионеров: лучника в лесу некому прикрыть. «Состав» → «Лучший состав».", CARD_IN - 8, 13, C_BAD, true, true))
 	elif lg.tutorial_battle(st):
-		v.add_child(_wl("Учебный бой: в нужный миг подскажем, что нажать.", CARD_W - 24, 13, C_GOOD, true, true))
+		v.add_child(_wl("Учебный бой: в нужный миг подскажем, что нажать.", CARD_IN - 8, 13, C_GOOD, true, true))
 	elif not teaching:
-		v.add_child(_wl("Отряд дерётся сам; ваше — состав и умения в нужный миг." + ("" if st["done"] else " «Авто» — после первой победы."), CARD_W - 24, 13, C_SOFT, false, true))
+		v.add_child(_wl("Отряд дерётся сам; ваше — состав и умения в нужный миг." + ("" if st["done"] else " «Авто» — после первой победы."), CARD_IN - 8, 13, C_SOFT, false, true))
 	if partial_parent != null:
 		Perf14.detail("battle_map_stage_card", started)
 	return p
@@ -2994,9 +3028,8 @@ func _set_slot(which: String, i: int, t: String) -> void:
 
 func _build_troops() -> Control:
 	var v := VBoxContainer.new()
-	v.add_child(_triumph_card())
-	v.add_theme_constant_override("separation", 8)
-	v.add_child(_squad_panel("campaign"))
+	v.add_theme_constant_override("separation", 6)
+	v.add_child(_squad_panel("campaign"))  # Триумф — там же, под «Лучшим составом»
 	# здания Легиона на карте (Д10): уровень, что дают, идущее улучшение; «На карте» — к зданию и его карточке
 	var hh := HBoxContainer.new()
 	hh.add_theme_constant_override("separation", 10)
@@ -3632,7 +3665,7 @@ func _building_tile(bt: String) -> Control:
 	var D: Dictionary = Defs.B[bt]
 	var key := Legion.bkey(bt)
 	var built := lg.b_built(bt)
-	var p := _bar_panel(6)
+	var p := _bar_panel(PANEL_PAD)
 	p.custom_minimum_size = Vector2(277, 0)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 2)
@@ -3683,12 +3716,12 @@ func _building_tile(bt: String) -> Control:
 		row.add_child(_stat("shield", "Броня: часть урона гасится", float(cur["armor"]), 0.0, false))
 		v.add_child(row)
 		if bt == "barracks":
-			v.add_child(_wl("Мест в отряде: %d из %d" % [lg.slots(), Legion.SQUAD_MAX], 260, 13, C_INK, true))
+			v.add_child(_wl("Мест в отряде: %d из %d" % [lg.slots(), Legion.SQUAD_MAX], 248, 13, C_INK, true))
 		else:
-			v.add_child(_wl("%s · %s" % [Legion.UNITS[key]["name"], String(Legion.UNITS[key]["strong"])], 260, 12, C_SOFT))
+			v.add_child(_wl("%s · %s" % [Legion.UNITS[key]["name"], String(Legion.UNITS[key]["strong"])], 248, 12, C_SOFT))
 	else:
 		var ef := String(lg.b_effect(bt, lvl)[0])
-		v.add_child(_wl(ef if built else "Даст: " + ef.left(1).to_lower() + ef.substr(1), 260, 13, C_INK if built else C_SOFT, built))
+		v.add_child(_wl(ef if built else "Даст: " + ef.left(1).to_lower() + ef.substr(1), 248, 13, C_INK if built else C_SOFT, built))
 	p.tooltip_text = "%s\n%s" % [D["name"], D.get("desc", "")]
 	var fill := Control.new()
 	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -3697,7 +3730,7 @@ func _building_tile(bt: String) -> Control:
 	if built and lg.upg.has(key):
 		var tl := _l("До %d уровня: %s" % [int(lg.upg[key]["to"]), Legion.fmt_duration(lg.upgrade_left(key))], 14, true, C_INK)
 		v.add_child(tl)
-		var bar := _bar(262, lg.upgrade_progress(key))
+		var bar := _bar(248, lg.upgrade_progress(key))
 		v.add_child(bar)
 		_live.append({"kind": "upg", "type": key, "label": tl, "bar": bar})
 	elif built:
@@ -3705,7 +3738,7 @@ func _building_tile(bt: String) -> Control:
 		if why == "":
 			v.add_child(_l("Можно улучшить: %s ден." % hud.fmt(float(info["cost"].get("money", 0))), 13, true, C_GOOD))
 		elif not bool(info["max"]):
-			v.add_child(_wl(why, 262, 12, C_SOFT, true))
+			v.add_child(_wl(why, 248, 12, C_SOFT, true))
 	var b: Button
 	if built:
 		b = _btn("На карте", 0, 15, hud.ico("view", 64), "", func(): show_building(bt))
@@ -3714,8 +3747,9 @@ func _building_tile(bt: String) -> Control:
 		b = _btn("Построить", 0, 15, hud.ico("hammer", 64), "", func(): close(); hud.select_build(bt))
 		b.tooltip_text = "%s: %s" % [D["name"], D.get("desc", "")]
 	else:
-		v.add_child(_wl(lg.unit_lock_text(key), 262, 12, C_SOFT, true))
+		v.add_child(_wl(lg.unit_lock_text(key), 248, 12, C_SOFT, true))
 	if b != null:
+		b.custom_minimum_size.y = SMALL_BTN
 		b.size_flags_horizontal = Control.SIZE_SHRINK_END
 		v.add_child(b)
 		if bt == "barracks":
@@ -3736,18 +3770,18 @@ func show_building(bt: String) -> void:
 
 ## Отряд: места по порядку (первые — впереди строя), запертые места — после боссов
 func _squad_panel(which: String) -> Control:
-	var p := _bar_panel(6)
+	var p := _bar_panel(PANEL_PAD)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 10)
 	p.add_child(h)
 	var info := VBoxContainer.new()
 	info.add_theme_constant_override("separation", 0)
-	info.custom_minimum_size = Vector2(240 if which == "campaign" else 0, 0)
+	info.custom_minimum_size = Vector2(312 if which == "campaign" else 0, 0)
 	info.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	if which == "campaign":
 		info.add_child(_title("Отряд в походе", 22))
 		info.add_child(_l("Сила отряда: %s" % hud.fmt(lg.squad_power()), 16, true, C_INK))
-		info.add_child(_wl("Щелчок по месту — выбрать бойца. Легионеры всегда впереди, лучники за ними, машины в тылу.", 236, 13, C_SOFT))
+		info.add_child(_wl("Щелчок по месту — выбрать бойца. Легионеры всегда впереди, лучники за ними, машины в тылу.", 308, 13, C_SOFT))
 		h.add_child(info)
 	h.add_child(_slots_row(which, SLOT if which == "campaign" else 50.0))
 	if which == "campaign":
@@ -3756,14 +3790,21 @@ func _squad_panel(which: String) -> Control:
 		h.add_child(sp)
 		var b := _btn("Лучший состав", 0, 17, _ic39("battle"), "", func(): lg.use_auto_squad(_card_stage()))
 		b.tooltip_text = "Собрать отряд под бой. На три места: против пращников берите лучника, против медведей — трёх легионеров."
-		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		h.add_child(b)
+		b.custom_minimum_size = Vector2(200, 46)
+		b.size_flags_horizontal = Control.SIZE_SHRINK_END
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 6)
+		col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		col.add_child(b)
+		col.add_child(_triumph_card())
+		h.add_child(col)
 	return p
 
 
 func _slots_row(which: String, sz: float) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
+	row.size_flags_vertical = Control.SIZE_SHRINK_CENTER  # места квадратные: строку не растягивает кнопка рядом
 	var src: Array = lg.squad if which == "campaign" or lg.defense.is_empty() else lg.defense
 	var n := lg.slots()
 	# свой герой (Д11): первое место отряда в походах — его; в отряде обороны — тоже, когда сервер боёв знает героя
@@ -3771,10 +3812,13 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 	lg.hero_pvp_check()                         # герой пришёл в бои с городами: боец первого места — на видное
 	for i in Legion.SQUAD_MAX:
 		if i == 0 and hero:
-			row.add_child(_hero_slot(sz, true, which == "campaign"))
+			var hs := _hero_slot(sz, true, which == "campaign")
+			hs.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			row.add_child(hs)
 			continue
 		var holder := Control.new()
 		holder.custom_minimum_size = Vector2(sz, sz)
+		holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		if i >= n:
 			var lk := Panel.new()
 			lk.custom_minimum_size = Vector2(sz, sz)
@@ -3902,7 +3946,7 @@ func _stat(icon: String, tip: String, a: float, b: float, show_next: bool) -> Co
 
 ## Умения в бою: открываются боссами, усиливаются за Славу
 func _perks_panel() -> Control:
-	var p := _bar_panel(6)
+	var p := _bar_panel(PANEL_PAD)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
 	p.add_child(v)
@@ -3927,7 +3971,7 @@ func _perks_panel() -> Control:
 		var P: Dictionary = Legion.PERKS[id]
 		var lvl := int(lg.perks.get(id, 0))
 		var h := HBoxContainer.new()
-		h.custom_minimum_size = Vector2(218, 0)
+		h.custom_minimum_size = Vector2(214, 0)
 		h.add_theme_constant_override("separation", 6)
 		h.tooltip_text = "%s\n%s\nПерезарядка %d с" % [P["name"], P["desc"], int(P["cd"])]
 		h.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -4097,11 +4141,11 @@ func _build_pvp() -> Control:
 	var right := VBoxContainer.new()
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.add_theme_constant_override("separation", 8)
-	var op := _bar_panel(8)
+	var op := _bar_panel(PANEL_PAD)
 	op.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	op.add_child(_opponents())
 	right.add_child(op)
-	var lp := _bar_panel(8)
+	var lp := _bar_panel(PANEL_PAD)
 	lp.custom_minimum_size = Vector2(0, 196)
 	lp.add_child(_pvp_log())
 	right.add_child(lp)
@@ -4319,13 +4363,16 @@ func _ago(t: float) -> String:
 
 ## Праздник форта остаётся во вкладке войск.
 func _triumph_card() -> Control:
-	var tri: PanelContainer = hud._chip(false, 10)
 	var th := HBoxContainer.new()
 	th.add_theme_constant_override("separation", 8)
-	th.add_child(_tr(_ic38("victory"), 36))
+	th.size_flags_horizontal = Control.SIZE_SHRINK_END
+	var ti := _tr(_ic38("victory"), 32)
+	ti.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	th.add_child(ti)
 	var tv := VBoxContainer.new()
 	tv.add_theme_constant_override("separation", -3)
-	tv.add_child(_l("Триумф", 17, true))
+	tv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tv.add_child(_l("Триумф", 16, true))
 	if lg.triumph_left > 0:
 		var days := ceili(lg.triumph_left / 24.0)
 		tv.add_child(_l("форт празднует ещё %d %s" % [days, Hud._plural(days, "день", "дня", "дней")], 13, true, C_GOOD))
@@ -4336,10 +4383,10 @@ func _triumph_card() -> Control:
 		var why := lg.can_triumph()
 		var tb := _btn("%d" % int(Legion.TRIUMPH["glory"]), 0, 16, Look.resource("glory"), why, func(): _do("triumph", ""))
 		tb.tooltip_text = "Устроить Триумф за %d Славы" % int(Legion.TRIUMPH["glory"]) if why == "" else why
+		tb.custom_minimum_size = Vector2(96, 44)
 		tb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		th.add_child(tb)
-	tri.add_child(th)
-	return tri
+	return th
 
 
 # =====================================================================
