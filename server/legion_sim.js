@@ -19,6 +19,9 @@ const FIELD_X0 = -9.5, FIELD_X1 = 14.0;     // Vector2 во float32 — оба �
 const FIELD_Z = 2.6;
 const LANES = [0.0, -1.1, 1.1, -2.1, 2.1, -0.55, 0.55];
 const ENEMY_LANES = [0.0, -1.2, 1.2, -2.2, 2.2, -0.6, 0.6];
+// Места для ближнего боя (как в Hustle Castle) и задний край стрелков — так же, как в legion_sim.gd
+const SLOT_DZ = 0.95;
+const RANGED_BACK = 1.2;
 const PERK_K = { oil: [3.0, 0.15], burn: [0.4, 0.15], volley: [1.2, 0.15], testudo: [0.35, 0.04], bandage: [0.18, 0.03], horn: [1.3, 0.05] };
 const PERKS = { oil: { cd: 14.0 }, testudo: { cd: 20.0 }, bandage: { cd: 22.0 }, volley: { cd: 18.0 }, horn: { cd: 25.0 } };
 const PERK_MAX = 5, LEGACY_MAX_LEVEL = 40, MAX_LEVEL = 50;
@@ -112,7 +115,8 @@ class Unit {
       range_m: 1.0, min_range: 0.0, rate: 1.0, speed: 1.0, shot: '', pierce: false, splash: 0.0, cleave: 0.0, charge: false,
       bites: 0, prefer: '', vs: {}, tags: [], boss: false, size: 1.0, alive: true, timer: 0.0, target: null, retarget: 0.0,
       testudo: 0.0, testudo_k: 0.0, horn: 0.0, horn_k: 1.0, burn: 0.0, burn_dps: 0.0, charge_cd: 4.0, home_x: 0.0, home_z: 0.0,
-      has_home: false, entering: false, wave: -1 });
+      has_home: false, entering: false, wave: -1,
+      slot_of: null, slot_i: -1, slot_s: 0.0, holders: [null, null, null, null, null, null], moving: false });
   }
   ranged() { return this.range_m > 3.0; }
   hpFrac() { return clamp(this.hp / Math.max(1.0, this.max_hp), 0.0, 1.0); }
@@ -283,6 +287,13 @@ class Sim {
       return best;
     }
     let best2 = null, bd = Infinity;
+    if (Sim.slotWalker(u)) {
+      for (const o of pool) {
+        const d = dist(u, o);
+        if (d < bd && this._hasSlotFor(u, o)) { bd = d; best2 = o; }
+      }
+      if (best2 !== null) return best2;
+    }
     for (const o of pool) {
       const d = dist(u, o);
       if (d < bd) { bd = d; best2 = o; }
@@ -338,6 +349,125 @@ class Sim {
     tg.alive = false;
     tg.hp = 0.0;
     tg.target = null;
+    this._releaseSlot(tg);
+    for (let i = 0; i < tg.holders.length; i++) {
+      const h = tg.holders[i];
+      if (h !== null && h.slot_of === tg) { h.slot_of = null; h.slot_i = -1; }
+      tg.holders[i] = null;
+    }
+  }
+
+  static slotWalker(u) { return !u.ranged() && u.speed > 0.0 && (u.heal_pow ?? 0.0) <= 0.0; }
+
+  // место i (0…2) у цели tg со стороны s для бойца u: [x, z] или null, если место за краем поля
+  static slotPos(u, tg, i, s) {
+    const reach = u.range_m + 0.35 * (u.size + tg.size - 2.0);
+    if (i === 0) {
+      let z0 = tg.z;
+      if (tg.target === u && tg.slot_of === u && tg.slot_i === 0) z0 = (u.z + tg.z) * 0.5;
+      return [tg.x + s * reach * 0.88, z0];
+    }
+    const dz = Math.min(reach * 0.8, SLOT_DZ) * (i === 2 ? 1.0 : -1.0);
+    const z = tg.z + dz;
+    if (z < -FIELD_Z || z > FIELD_Z) return null;
+    const dx = Math.sqrt(Math.max(0.04, reach * reach * 0.9 - dz * dz * 0.64));
+    return [tg.x + s * dx, z];
+  }
+
+  static slotSide(u, tg) {
+    if (u.slot_of === tg && u.slot_i >= 0) return u.slot_s;
+    return u.x < tg.x ? -1.0 : 1.0;
+  }
+
+  _hasSlotFor(u, o) {
+    if (u.slot_of === o && u.slot_i >= 0) return true;
+    const near = Sim.slotSide(u, o);
+    for (const s of [near, -near]) {
+      const base = s < 0.0 ? 0 : 3;
+      for (let i = 0; i < 3; i++) {
+        const h = o.holders[base + i];
+        if ((h === null || !h.alive || h.slot_of !== o) && Sim.slotPos(u, o, i, s) !== null) return true;
+      }
+    }
+    return false;
+  }
+
+  _releaseSlot(u) {
+    if (u.slot_of !== null && u.slot_i >= 0) {
+      const idx = u.slot_i + (u.slot_s < 0.0 ? 0 : 3);
+      if (u.slot_of.holders[idx] === u) u.slot_of.holders[idx] = null;
+    }
+    u.slot_of = null;
+    u.slot_i = -1;
+  }
+
+  _claimSlot(u, tg) {
+    if (u.slot_of === tg && u.slot_i >= 0) return true;
+    this._releaseSlot(u);
+    const near = Sim.slotSide(u, tg);
+    for (const s of [near, -near]) {
+      const base = s < 0.0 ? 0 : 3;
+      let best = -1, bestD = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const h = tg.holders[base + i];
+        if (h !== null && h.alive && h.slot_of === tg) continue;
+        const p = Sim.slotPos(u, tg, i, s);
+        if (p === null) continue;
+        const d = Math.sqrt((p[0] - u.x) * (p[0] - u.x) + (p[1] - u.z) * (p[1] - u.z)) + i * 0.3;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      if (best >= 0) {
+        tg.holders[base + best] = u;
+        u.slot_of = tg;
+        u.slot_i = best;
+        u.slot_s = s;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ближний бой: подойти шагом на своё место у цели и бить только оттуда
+  _meleeStep(u, tg, reach, fast, dt) {
+    const hasSlot = this._claimSlot(u, tg);
+    const s = hasSlot ? u.slot_s : Sim.slotSide(u, tg);
+    let gx = tg.x + s * (reach + 1.1);
+    let gz = u.z;
+    if (hasSlot) {
+      const p = Sim.slotPos(u, tg, u.slot_i, s);
+      if (p === null) { gx = tg.x + s * reach * 0.88; gz = tg.z; } else { gx = p[0]; gz = p[1]; }
+    }
+    gx = clamp(gx, FIELD_X0, FIELD_X1);
+    const body = 0.5 * (tg.size + u.size);
+    if (hasSlot && (gx - tg.x) * (u.x - tg.x) < 0.0 && Math.abs(u.z - tg.z) < body + 0.45) {
+      let lane = gz >= tg.z ? 1.0 : -1.0;
+      if (Math.abs(tg.z + lane * (body + 0.6)) > FIELD_Z) lane = -lane;
+      gx = u.x + sign(gx - u.x) * 0.25;
+      gz = tg.z + lane * (body + 0.6);
+    }
+    const tx = gx - u.x, tz = gz - u.z;
+    let gap = Math.sqrt(tx * tx + tz * tz);
+    if (hasSlot && tg.slot_of === u && tg.slot_i > 0 && dist(u, tg) <= reach) gap = 0.0;
+    if (gap > 0.08) {
+      const stride = Math.min(u.speed * fast * dt, gap);
+      u.x += tx / gap * stride;
+      u.z += tz / gap * stride;
+      u.moving = true;
+      const d = dist(u, tg);
+      if (u.charge && d < 4.0 && u.charge_cd <= 0.0) {
+        u.charge_cd = 7.0;
+        this._damage(u.atk, u.vs, u, tg, 1.8);
+        tg.x = clamp(tg.x + sign(tg.x - u.x) * 1.2, FIELD_X0, FIELD_X1);
+      }
+      return;
+    }
+    u.moving = false;
+    if (!hasSlot) return;
+    u.timer -= dt * fast;
+    if (u.timer <= 0.0 && dist(u, tg) <= reach + 0.05) {
+      this._attack(u, tg);
+      u.timer = u.rate * (0.92 + this.rng.randf() * 0.16);
+    }
   }
 
   _attack(u, tg) {
@@ -500,6 +630,14 @@ class Sim {
     }
     for (const side of ['ally', 'enemy']) if (this.auto[side]) this._autoPerks(side);
 
+    const front = { ally: -Infinity, enemy: Infinity };
+    for (const u of this.units) {
+      if (u.alive && !u.entering && Sim.slotWalker(u)) {
+        if (u.side === 'ally') front.ally = Math.max(front.ally, u.x);
+        else front.enemy = Math.min(front.enemy, u.x);
+      }
+    }
+
     for (const u of this.units) {
       if (!u.alive) continue;
       if (u.burn > this.t) {
@@ -514,8 +652,10 @@ class Sim {
       if (u.heal_pow > 0.0) this._priestHeal(u, dt);
       if (u.stun_t > this.t) continue;
       u.retarget -= dt;
-      if (u.target === null || !u.target.alive || u.retarget <= 0.0) {
+      if (u.target === null || !u.target.alive || (u.retarget <= 0.0 && !(u.slot_of === u.target && u.slot_i >= 0))) {
         u.target = this._pickTarget(u);
+        u.retarget = 0.6;
+      } else if (u.retarget <= 0.0) {
         u.retarget = 0.6;
       }
       const tg = u.target;
@@ -529,11 +669,23 @@ class Sim {
       const fast = u.horn > this.t ? u.horn_k : 1.0;
       const reach = u.range_m + 0.35 * (u.size + tg.size - 2.0);
       const d = dist(u, tg);
+      if (Sim.slotWalker(u)) {
+        this._meleeStep(u, tg, reach, fast, dt);
+        u.charge_cd -= dt;
+        continue;
+      }
       if (d > reach && u.speed > 0.0) {
         let dir = sign(tg.x - u.x);
         if (dir === 0.0) dir = 1.0;
         u.x += dir * Math.min(u.speed * fast * dt, d - reach + 0.01);
         u.z += clamp(tg.z - u.z, -1.0, 1.0) * dt * 0.8;
+        if (u.ranged()) {
+          if (u.side === 'ally' && front.ally > -Infinity) {
+            u.x = Math.min(u.x, Math.max(front.ally - RANGED_BACK, u.x - u.speed * fast * dt));
+          } else if (u.side === 'enemy' && front.enemy < Infinity) {
+            u.x = Math.max(u.x, Math.min(front.enemy + RANGED_BACK, u.x + u.speed * fast * dt));
+          }
+        }
         if (u.charge && d < 4.0 && u.charge_cd <= 0.0) {
           u.charge_cd = 7.0;
           this._damage(u.atk, u.vs, u, tg, 1.8);

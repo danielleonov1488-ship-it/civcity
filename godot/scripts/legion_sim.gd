@@ -516,20 +516,21 @@ static func _slot_walker(u: Unit) -> bool:
 	return not u.ranged() and u.speed > 0.0 and u.heal_pow <= 0.0
 
 
-## Место i (0…2) у цели tg со стороны s для бойца u; Vector2(INF, INF), если место за краем поля
-static func _slot_pos(u: Unit, tg: Unit, i: int, s: float) -> Vector2:
+## Место i (0…2) у цели tg со стороны s для бойца u: [x, z]; пустой массив, если место за краем поля.
+## Только числа float (double), без Vector2 — сервер (server/legion_sim.js) считает так же, до бита.
+static func _slot_pos(u: Unit, tg: Unit, i: int, s: float) -> Array:
 	var reach := u.range_m + 0.35 * (u.size + tg.size - 2.0)
 	if i == 0:
 		var z0 := tg.z
 		if tg.target == u and tg.slot_of == u and tg.slot_i == 0:
 			z0 = (u.z + tg.z) * 0.5               # встречная пара сходится посередине
-		return Vector2(tg.x + s * reach * 0.88, z0)
+		return [tg.x + s * reach * 0.88, z0]
 	var dz := minf(reach * 0.8, SLOT_DZ) * (1.0 if i == 2 else -1.0)
 	var z := tg.z + dz
 	if z < -FIELD_Z or z > FIELD_Z:
-		return Vector2(INF, INF)
+		return []
 	var dx := sqrt(maxf(0.04, reach * reach * 0.9 - dz * dz * 0.64))
-	return Vector2(tg.x + s * dx, z)
+	return [tg.x + s * dx, z]
 
 
 static func _slot_side(u: Unit, tg: Unit) -> float:
@@ -546,7 +547,7 @@ func _has_slot_for(u: Unit, o: Unit) -> bool:
 		var base := 0 if s < 0.0 else 3
 		for i in 3:
 			var h: Unit = o.holders[base + i]
-			if (h == null or not h.alive or h.slot_of != o) and _slot_pos(u, o, i, s).x != INF:
+			if (h == null or not h.alive or h.slot_of != o) and not _slot_pos(u, o, i, s).is_empty():
 				return true
 	return false
 
@@ -575,9 +576,11 @@ func _claim_slot(u: Unit, tg: Unit) -> bool:
 			if h != null and h.alive and h.slot_of == tg:
 				continue
 			var p := _slot_pos(u, tg, i, s)
-			if p.x == INF:
+			if p.is_empty():
 				continue
-			var d := Vector2(p.x - u.x, p.y - u.z).length() + i * 0.3
+			var px: float = p[0]
+			var pz: float = p[1]
+			var d := sqrt((px - u.x) * (px - u.x) + (pz - u.z) * (pz - u.z)) + i * 0.3
 			if d < best_d:
 				best_d = d
 				best = i
@@ -594,24 +597,34 @@ func _claim_slot(u: Unit, tg: Unit) -> bool:
 func _melee_step(u: Unit, tg: Unit, reach: float, fast: float, dt: float) -> void:
 	var has_slot := _claim_slot(u, tg)
 	var s := u.slot_s if has_slot else _slot_side(u, tg)
-	var goal := _slot_pos(u, tg, u.slot_i, s) if has_slot else Vector2(tg.x + s * (reach + 1.1), u.z)
-	if goal.x == INF:
-		goal = Vector2(tg.x + s * reach * 0.88, tg.z)
-	goal.x = clampf(goal.x, FIELD_X.x, FIELD_X.y)
-	if has_slot and (goal.x - tg.x) * (u.x - tg.x) < 0.0 and absf(u.z - tg.z) < 0.5 * (tg.size + u.size) + 0.45:
+	var gx := tg.x + s * (reach + 1.1)
+	var gz := u.z
+	if has_slot:
+		var p := _slot_pos(u, tg, u.slot_i, s)
+		if p.is_empty():
+			gx = tg.x + s * reach * 0.88
+			gz = tg.z
+		else:
+			gx = p[0]
+			gz = p[1]
+	gx = clampf(gx, FIELD_X.x, FIELD_X.y)
+	var body := 0.5 * (tg.size + u.size)
+	if has_slot and (gx - tg.x) * (u.x - tg.x) < 0.0 and absf(u.z - tg.z) < body + 0.45:
 		# Место за целью: обходим её сверху или снизу, а не сквозь неё.
-		var lane := 1.0 if goal.y >= tg.z else -1.0
-		if absf(tg.z + lane * (0.5 * (tg.size + u.size) + 0.6)) > FIELD_Z:
+		var lane := 1.0 if gz >= tg.z else -1.0
+		if absf(tg.z + lane * (body + 0.6)) > FIELD_Z:
 			lane = -lane
-		goal = Vector2(u.x + signf(goal.x - u.x) * 0.25, tg.z + lane * (0.5 * (tg.size + u.size) + 0.6))
-	var to := Vector2(goal.x - u.x, goal.y - u.z)
-	var gap := to.length()
+		gx = u.x + signf(gx - u.x) * 0.25
+		gz = tg.z + lane * (body + 0.6)
+	var tx := gx - u.x
+	var tz := gz - u.z
+	var gap := sqrt(tx * tx + tz * tz)
 	if has_slot and tg.slot_of == u and tg.slot_i > 0 and dist(u, tg) <= reach:
 		gap = 0.0                                  # цель уже встала к нам наискосок — не гоняемся за ней
 	if gap > 0.08:
 		var stride := minf(u.speed * fast * dt, gap)
-		u.x += to.x / gap * stride
-		u.z += to.y / gap * stride
+		u.x += tx / gap * stride
+		u.z += tz / gap * stride
 		u.moving = true
 		var d := dist(u, tg)
 		# Минотавр с разбега бьёт сильнее и отбрасывает
