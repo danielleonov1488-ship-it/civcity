@@ -46,7 +46,7 @@ func _ready() -> void:
 	if _check(await _until(func() -> bool: return game.ready_done, 150.0), "ready_done"):
 		game.settings["autosave"] = false
 		DirAccess.make_dir_recursive_absolute(output)
-		for label: String in ["tutorial", "stage", "promo", "britannia", "carthage", "five"]:
+		for label: String in ["tutorial", "stage", "promo", "britannia", "carthage", "five", "pvp", "parthia"]:
 			if only.is_empty() or label in only:
 				if not base_only:
 					await _play(label, false)
@@ -97,6 +97,17 @@ func _setup(label: String) -> Dictionary:
 			return _campaign("carthage", ["elephant", "mercenary", "slinger"])
 		"five":
 			return _campaign("gaul", ["gaul", "gaul", "gaul", "gaulArcher", "druid"], 5)
+		"parthia":
+			# конные лучники, нумидийцы и катафракты (как в BATTLE12 и ENEMY3D)
+			return _campaign("parthia", ["horseArcher", "numidian", "cataphractFoe", "cataphract", "horseArcher"])
+		"pvp":
+			# как в BATTLE12: пять против четырёх, повтор боя с городом
+			var front := [{"type": "legionary", "level": 7}, {"type": "spearman", "level": 7},
+				{"type": "legionary", "level": 7}, {"type": "archer", "level": 7}, {"type": "priest", "level": 7}]
+			var enemies := [{"type": "legionary", "level": 7}, {"type": "spearman", "level": 7},
+				{"type": "legionary", "level": 7}, {"type": "archer", "level": 7}]
+			return legion.make_pvp_battle({"name": "Тускулум", "rating": 240, "city_level": 5,
+				"attack": {"v": 1, "squad": front}, "snapshot": {"v": 1, "squad": enemies}, "seed": 701})
 	return {}
 
 
@@ -156,6 +167,22 @@ func _count_played(_source, _target) -> void:
 	played += 1
 
 
+func _feet_info(f) -> String:
+	var u = f.unit
+	var tgt: String = "-" if u.target == null else "%s#%d" % [u.target.key, u.target.id]
+	var con: String = "-" if not ("contact" in f) or f.contact == null else "%s#%d" % [f.contact.unit.key, f.contact.unit.id]
+	var vs: String = "-"
+	if "vslot_of" in f and f.vslot_of != null:
+		vs = "%s#%d i=%d s=%.0f" % [f.vslot_of.unit.key, f.vslot_of.unit.id, f.vslot_i, f.vslot_s]
+	var lp = f.layout_pos if "layout_pos" in f else Vector2.ZERO
+	var by: Array = []
+	for g in f.view._fighters:
+		if g.unit.alive and g.unit.target == u:
+			by.append("%s#%d%s%s" % [g.unit.key, g.unit.id, "W" if g.wide else "", "L" if not g.long_model.is_empty() else ""])
+	return "%s#%d %s rear=%s wide=%s long=%s pos=%s layout=%s goal=%s sim=(%.2f,%.2f) target=%s contact=%s vslot=%s moving=%s by=%s" % [
+		u.key, u.id, u.side, f.rear, f.wide, not f.long_model.is_empty(), f.position, lp, f.goal, u.x, u.z, tgt, con, vs, u.moving, by]
+
+
 func _play(label: String, old: bool) -> void:
 	var name_ := label + ("_base" if old else "_new")
 	requests = 0
@@ -196,6 +223,10 @@ func _play(label: String, old: bool) -> void:
 	var afk_by := {}
 	var inside_by := {}
 	var behind_by := {}
+	var feet_pairs := 0
+	var feet_low := 0
+	var feet_by := {}
+	var feet_dumped := 0
 	last_attack.clear()
 	for frame in 60 * 182:
 		battle._process(FRAME)
@@ -238,6 +269,20 @@ func _play(label: String, old: bool) -> void:
 				if t == null and not f.unit.moving and f.unit.target != null and f.unit.target.alive and f.travel.length() < 0.05:
 					idle += 1
 			for i in alive.size():
+				var fa = alive[i]
+				for j in i:
+					var fb = alive[j]
+					feet_pairs += 1
+					var fw: float = minf(fa.body_width(), fb.body_width())
+					if fa.body_ground().distance_to(fb.body_ground()) < fw * 0.3:
+						feet_low += 1
+						var fkey := "%s/%s" % [fa.unit.key, fb.unit.key]
+						feet_by[fkey] = int(feet_by.get(fkey, 0)) + 1
+						if feet_dumped < 40 and int(feet_by[fkey]) in [1, 200] and not old:
+							feet_dumped += 1
+							print("BATTLE30 FEET %s t=%.2f %s" % [name_, sim_time, _feet_info(fa)])
+							print("BATTLE30 FEET %s t=%.2f %s" % [name_, sim_time, _feet_info(fb)])
+			for i in alive.size():
 				var a = alive[i]
 				for j in i:
 					var b = alive[j]
@@ -266,6 +311,7 @@ func _play(label: String, old: bool) -> void:
 		"behind_pct": snappedf(100.0 * behind / maxi(1, engaged), 0.01),
 		"behind_goal": behind_goal, "behind_mutual": behind_mutual, "behind": behind,
 		"inside_pct": snappedf(100.0 * inside / maxi(1, pairs), 0.001),
+		"feet_low": feet_low, "feet_pairs": feet_pairs, "feet_by": feet_by,
 		"idle_pct": snappedf(100.0 * idle / maxi(1, melee_samples), 0.01),
 		"afk_seconds": snappedf(afk, 0.01), "afk_by": afk_by, "behind_by": behind_by, "inside_by": inside_by,
 		"strikes_played": played, "strike_requests": requests, "clips": clips,

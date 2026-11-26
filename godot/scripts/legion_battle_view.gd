@@ -479,7 +479,14 @@ func request_strike(source: Fighter, target: Fighter, action := "") -> void:
 		source.attack(action)
 		return
 	melee_event.emit(source, target)
-	if legacy_layout or (SIM_POSITIONS and source.can_strike(target)):
+	if legacy_layout:
+		source.attack(action)
+		melee_pose.emit(source, target)
+		return
+	if SIM_POSITIONS and source.can_strike(target):
+		# удар сразу; цель запоминаем, чтобы боец смотрел на неё, пока бьёт
+		if not source.strike_pending:
+			source.strike_target = target
 		source.attack(action)
 		melee_pose.emit(source, target)
 		return
@@ -920,9 +927,21 @@ func _vslot_release(f: Fighter) -> void:
 	f.vslot_i = -1
 
 
-func _vslot_claim(f: Fighter, t: Fighter) -> bool:
-	if f.vslot_of == t and f.vslot_i >= 0 and _vslot_pos(f, t, f.vslot_i, f.vslot_s).x != INF:
-		return true
+## Место занято, если там уже стоит свой боец, чьё место задаёт бой (встречная пара или боец на месте у цели).
+func _vslot_blocked(f: Fighter, p: Vector2, fixed: Array[Fighter]) -> bool:
+	for o in fixed:
+		if o != f and o.side_dir == f.side_dir:
+			var need := minf(f.body_half, o.body_half) * 1.24
+			if o.goal.distance_squared_to(p) < need * need:
+				return true
+	return false
+
+
+func _vslot_claim(f: Fighter, t: Fighter, fixed: Array[Fighter] = []) -> bool:
+	if f.vslot_of == t and f.vslot_i >= 0:
+		var held := _vslot_pos(f, t, f.vslot_i, f.vslot_s)
+		if held.x != INF and not _vslot_blocked(f, held, fixed):
+			return true
 	_vslot_release(f)
 	var near := -1.0 if f.unit.x < t.unit.x else 1.0
 	for side: float in [near, -near]:
@@ -934,7 +953,7 @@ func _vslot_claim(f: Fighter, t: Fighter) -> bool:
 			if h != null and is_instance_valid(h) and h.unit.alive and h.vslot_of == t:
 				continue
 			var p := _vslot_pos(f, t, i, side)
-			if p.x == INF:
+			if p.x == INF or _vslot_blocked(f, p, fixed):
 				continue
 			var d := p.distance_to(f.goal) + i * 18.0
 			if d < best_d:
@@ -993,13 +1012,18 @@ func _slot_layout() -> void:
 		if c != null and c.contact == f and f.unit.id < c.unit.id:
 			f.placed = true
 			_vslot_release(f)
+	# кто уже стоит на своём месте в бою: встречные пары, потом занявшие место у цели
+	var fixed: Array[Fighter] = []
+	for f in alive:
+		if f.placed and f.contact != null and not f.wide and f.long_model.is_empty():
+			fixed.append(f)
 	for _pass in 8:
 		var moved := false
 		for f in alive:
 			if f.placed or not f.contact.placed:
 				continue
 			var t := f.contact
-			if _vslot_claim(f, t):
+			if _vslot_claim(f, t, fixed):
 				var goal := _vslot_pos(f, t, f.vslot_i, f.vslot_s)
 				# место за целью: обходим её сверху или снизу, а не сквозь неё
 				var tp := t.position
@@ -1011,26 +1035,36 @@ func _slot_layout() -> void:
 						lane = -lane
 					goal = Vector2(f.position.x + signf(goal.x - f.position.x) * 14.0, tp.y + lane * 52.0)
 				f.goal = _sim_foot(f, goal)
+				if f.vslot_i >= 0:
+					fixed.append(f)
 			f.placed = true
 			moved = true
 		if not moved:
 			break
+	_swap_crossed_slots(alive)
 	for f in alive:
 		f.position = f.goal
-	# в тело большой модели никто не встаёт: выходим к ближнему краю по глубине
-	for big in alive:
-		if not (big.wide or not big.long_model.is_empty()):
+	_feet_apart(alive)
+	# в тело большой модели никто не встаёт
+	_out_of_big_bodies(alive)
+	# морда колесницы, слона или всадника встречает свою цель вплотную
+	var met := {}
+	for g in alive:
+		if (g.long_model.is_empty() and not g.wide) or g.rear:
 			continue
-		var box := Rect2(big.position + big.outline.position, big.outline.size)
-		for f in alive:
-			if f == big or f.wide or not f.long_model.is_empty():
-				continue
-			var foot := f.position
-			if foot.x > box.position.x - f.body_half and foot.x < box.end.x + f.body_half and absf(foot.y - big.position.y) < 34.0:
-				var lane := 1.0 if foot.y >= big.position.y else -1.0
-				if absf(big.position.y + lane * 40.0) > _trail_depth:
-					lane = -lane
-				f.position = _sim_foot(f, Vector2(foot.x, big.position.y + lane * 40.0))
+		var gt: LegionSim.Unit = g.unit.target
+		if gt == null or not gt.alive:
+			continue
+		var tv: Fighter = views.get(gt.id)
+		if tv == null or tv.wide or not tv.long_model.is_empty():
+			continue
+		var greach := g.unit.range_m + 0.35 * (g.unit.size + gt.size - 2.0)
+		if LegionSim.dist(g.unit, gt) > greach + 0.2:
+			continue
+		var dir := -1.0 if g.flip_h else 1.0
+		var y := tv.position.y if absf(tv.position.y - g.position.y) < 40.0 else g.position.y
+		tv.position = _sim_foot(tv, Vector2(g.position.x + dir * (g.edge_toward(dir) + tv.edge_toward(-dir) + 5.0), y))
+		met[tv.unit.id] = true
 	# стрелки и жрецы на картинке стоят позади всех своих бойцов ближнего боя (кроме тех, кого уже рубят вплотную)
 	var front := {-1.0: INF, 1.0: -INF}
 	for f in alive:
@@ -1067,24 +1101,112 @@ func _slot_layout() -> void:
 			var dx := (q.position.x - p.position.x) * q.side_dir
 			if dx < need:
 				q.position = _sim_foot(q, q.position + Vector2(q.side_dir * (need - dx), 0.0))
+	_out_of_big_bodies(alive, met)
+	# после всех сдвигов (обход больших тел, стрелки назад, морда колесницы) ещё раз: никто не стоит в своём
+	_feet_apart(alive, true)
 
 
-	# морда колесницы, слона или всадника встречает свою цель вплотную
-	for g in alive:
-		if (g.long_model.is_empty() and not g.wide) or g.rear:
+## Двое у одной цели не идут к местам крест-накрест: если поменяться местами короче, меняются.
+func _swap_crossed_slots(alive: Array[Fighter]) -> void:
+	for t in alive:
+		for base: int in [0, 5]:
+			var side := -1.0 if base == 0 else 1.0
+			for i in 3:
+				for j in range(i + 1, 3):
+					var a: Fighter = t.vholders[base + i]
+					var b: Fighter = t.vholders[base + j]
+					if a == null or b == null or not is_instance_valid(a) or not is_instance_valid(b):
+						continue
+					if not a.unit.alive or not b.unit.alive or a.vslot_of != t or b.vslot_of != t:
+						continue
+					var pa := _vslot_pos(a, t, i, side)
+					var pb := _vslot_pos(b, t, j, side)
+					var qa := _vslot_pos(a, t, j, side)
+					var qb := _vslot_pos(b, t, i, side)
+					if pa.x == INF or pb.x == INF or qa.x == INF or qb.x == INF:
+						continue
+					var sa := _sim_foot(a, a.layout_point(a.unit.x, a.unit.z))
+					var sb := _sim_foot(b, b.layout_point(b.unit.x, b.unit.z))
+					if sa.distance_to(qa) + sb.distance_to(qb) + 12.0 < sa.distance_to(pa) + sb.distance_to(pb):
+						t.vholders[base + i] = b
+						t.vholders[base + j] = a
+						a.vslot_i = j
+						b.vslot_i = i
+						a.goal = _sim_foot(a, qa)
+						b.goal = _sim_foot(b, qb)
+
+
+## В тело большой модели (колесница, слон, конь) никто не встаёт: выходим к ближнему краю по глубине.
+func _out_of_big_bodies(alive: Array[Fighter], keep := {}) -> void:
+	for big in alive:
+		if not (big.wide or not big.long_model.is_empty()):
 			continue
-		var gt: LegionSim.Unit = g.unit.target
-		if gt == null or not gt.alive:
+		var box := Rect2(big.position + big.outline.position, big.outline.size)
+		for f in alive:
+			if f == big or f.wide or not f.long_model.is_empty() or keep.has(f.unit.id):
+				continue
+			var foot := f.position
+			if foot.x > box.position.x - f.body_half and foot.x < box.end.x + f.body_half and absf(foot.y - big.position.y) < 34.0:
+				var lane := 1.0 if foot.y >= big.position.y else -1.0
+				if absf(big.position.y + lane * 40.0) > _trail_depth:
+					lane = -lane
+				f.position = _sim_foot(f, Vector2(foot.x, big.position.y + lane * 40.0))
+
+
+## Двое не стоят в одной точке: кто не на месте у цели, отходит по глубине (вверх или вниз по тропе).
+## Бойцы на местах у цели и сами цели не двигаются — их места задают удары.
+func _feet_apart(alive: Array[Fighter], split_fixed := false) -> void:
+	var small: Array[Fighter] = []
+	var fixed := {}
+	for f in alive:
+		if f.wide or not f.long_model.is_empty():
 			continue
-		var tv: Fighter = views.get(gt.id)
-		if tv == null or tv.wide or not tv.long_model.is_empty():
-			continue
-		var greach := g.unit.range_m + 0.35 * (g.unit.size + gt.size - 2.0)
-		if LegionSim.dist(g.unit, gt) > greach + 0.2:
-			continue
-		var dir := -1.0 if g.flip_h else 1.0
-		var y := tv.position.y if absf(tv.position.y - g.position.y) < 40.0 else g.position.y
-		tv.position = _sim_foot(tv, Vector2(g.position.x + dir * (g.edge_toward(dir) + tv.edge_toward(-dir) + 12.0), y))
+		small.append(f)
+		if f.contact != null:
+			fixed[f.unit.id] = true
+			fixed[f.contact.unit.id] = true
+	for _pass in 4:
+		var moved := false
+		for i in small.size():
+			var a := small[i]
+			for j in i:
+				var b := small[j]
+				var d := a.position - b.position
+				var need := minf(a.body_half, b.body_half) * 1.24
+				if d.length_squared() >= need * need:
+					continue
+				var fa := fixed.has(a.unit.id)
+				var fb := fixed.has(b.unit.id)
+				if fa and fb:
+					if not split_fixed:
+						continue
+					# оба на своих местах, но их свели сдвиги: расходятся поровну
+					fa = false
+					fb = false
+				# вверх или вниз: как они уже стоят, а почти на одной линии — по номеру, чтобы не дёргались
+				var sy := signf(d.y) if absf(d.y) > 2.0 else (1.0 if a.unit.id > b.unit.id else -1.0)
+				var want := sqrt(maxf(0.0, need * need - d.x * d.x)) + 0.5
+				var add := want - d.y * sy
+				if add <= 0.0:
+					continue
+				var share_a := 0.0 if fa else (1.0 if fb else 0.5)
+				var share_b := 1.0 - share_a
+				var na := _sim_foot(a, a.position + Vector2(0.0, sy * add * share_a))
+				var nb := _sim_foot(b, b.position - Vector2(0.0, sy * add * share_b))
+				# у края тропы места нет: остаток берёт второй, если он свободен
+				var left := add - (na.y - a.position.y) * sy - (b.position.y - nb.y) * sy
+				if left > 0.5:
+					if not fb:
+						nb = _sim_foot(b, nb - Vector2(0.0, sy * left))
+					elif not fa:
+						na = _sim_foot(a, na + Vector2(0.0, sy * left))
+				a.position = na
+				b.position = nb
+				moved = true
+		if not moved:
+			break
+
+
 func _use_layout_positions() -> void:
 	for f in _fighters:
 		if f.unit.alive and f.display_ready:
@@ -1129,8 +1251,47 @@ func _advance_display(gdt: float) -> void:
 		if step.length() > distance:
 			step = delta
 			f.display_vel = delta / gdt
+		step = _step_around(f, step, distance, cap * gdt)
 		f.position += step
 		f.travel = step
+
+
+## Идущий к своему месту обходит стоящих на пути по глубине (не сквозь них); у самого места — не мешает.
+func _step_around(f: Fighter, step: Vector2, distance: float, limit: float) -> Vector2:
+	if f.wide or not f.long_model.is_empty() or f.unit.entering:
+		return step
+	var next := f.position + step
+	var side := 0.0
+	for o in _fighters:
+		if o == f or not o.unit.alive or not o.display_ready:
+			continue
+		if o.wide or not o.long_model.is_empty():
+			# мимо коня, колесницы или слона — по глубине, не сквозь тело
+			if distance <= 30.0:
+				continue
+			var bx := o.position.x + o.outline.position.x
+			var by := next.y - o.position.y
+			if next.x > bx and next.x < bx + o.outline.size.x and absf(by) < 30.0:
+				side += (signf(by) if absf(by) > 1.0 else (1.0 if f.unit.id > o.unit.id else -1.0)) * (30.0 - absf(by))
+			continue
+		var need := minf(f.body_half, o.body_half) * 1.24
+		if distance <= need:
+			continue
+		var d := next - o.position
+		var gap := d.length()
+		if gap >= need:
+			continue
+		var sy := signf(d.y) if absf(d.y) > 1.0 else (1.0 if f.unit.id > o.unit.id else -1.0)
+		side += sy * (need - gap)
+	if side == 0.0:
+		return step
+	var push := clampf(side, -limit, limit)
+	next.y = clampf(next.y + push, -_trail_depth, _trail_depth)
+	var out := next - f.position
+	var longest := maxf(step.length(), limit)
+	if out.length() > longest:
+		out = out * (longest / out.length())
+	return out
 
 
 func _layout_finish() -> void:
