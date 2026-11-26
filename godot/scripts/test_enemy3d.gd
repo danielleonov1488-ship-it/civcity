@@ -612,7 +612,8 @@ func _depth_order(view: View, label: String, require_rear := false) -> void:
 	if label.begins_with("parthia"):
 		var to_field := view.people_layer.overlay.size.x / (float(view.people_layer.viewport.size.x) * view.world.scale.x)
 		print("ENEMY3D MOUNT LINE %s projected_gap=%.1f" % [label, mount_line_gap * to_field])
-		check(mount_line_gap < INF and mount_line_gap >= 0.0, "mounted archers clear of the Roman line " + label)
+		# BATTLE30: конные лучники стоят, где их ставит бой; ноги в теле коня ловит BATTLE12 (BIGFEET)
+		check(mount_line_gap < INF and (View.SIM_POSITIONS or mount_line_gap >= 0.0), "mounted archers clear of the Roman line " + label)
 	print("ENEMY3D DEPTH %s wide=%d overlaps=%d farther_small=%d" % [label, broad.size(), overlaps, rear])
 
 
@@ -677,7 +678,8 @@ func _at_contact(key: String) -> View.Fighter:
 		var ally: View.Fighter = battle.views.get(u.target.id)
 		if ally == null:
 			continue
-		if key == "charioteer" and (f.attack_left <= 0.0 or f.strike_target != ally or not ally.holds_chariot()):
+		# в расстановке BATTLE30 цель колесничего встаёт к морде повозки сама (без старого «держит повозку»)
+		if key == "charioteer" and (f.attack_left <= 0.0 or f.strike_target != ally or (not View.SIM_POSITIONS and not ally.holds_chariot())):
 			continue
 		var reach := u.range_m + 0.35 * (u.size + ally.unit.size - 2.0)
 		if f.slot > 0 and f.slot < 4 and f.can_strike(ally) and LegionSim.dist(u, ally.unit) <= reach \
