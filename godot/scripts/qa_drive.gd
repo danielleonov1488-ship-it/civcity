@@ -376,7 +376,8 @@ func _legion_flow() -> void:
 	var back := find_button(b, "В лагерь")
 	if check("кнопка «В лагерь»", back != null):
 		await click(back)
-	await wait_until(func(): return not closed.is_empty(), 15.0)
+	# окно «Легион» открывается снова за пару кадров после battle_closed — бой отпускает себя после этого
+	await wait_until(func(): return not closed.is_empty() and LegionBattle.current == null, 15.0)
 	check("бой закрылся, город вернулся", not closed.is_empty() and LegionBattle.current == null and g.hud.visible)
 	var o: Dictionary = closed[0] if not closed.is_empty() else {}
 	print("QA battle win=", o.get("win"), " alive=", o.get("alive"), "/", o.get("total"), " reward=", o.get("reward"), " progress ", p0, "->", lg.progress)
